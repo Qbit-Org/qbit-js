@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # pnpm-workspace.yaml sets minimumReleaseAge to 1 day, and a frozen install
+    # rejects a lockfile entry younger than that, so wait out the same window.
+    cooldown:
+      default-days: 2
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+
+  # Actions are pinned to full commit SHAs; Dependabot keeps them pinned and
+  # updates the trailing version comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 2

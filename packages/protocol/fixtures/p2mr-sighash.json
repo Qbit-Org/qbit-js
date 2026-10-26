@@ -1,0 +1,1106 @@
+{
+  "schemaVersion": 1,
+  "name": "qbit-p2mr-sighash",
+  "tag": "P2MRSighash",
+  "source": {
+    "repository": "Qbit-Org/qbit",
+    "commit": "7ebcddb622d6e639041f005a189b048ec2a221fe",
+    "files": [
+      "src/script/interpreter.cpp",
+      "test/functional/test_framework/script.py",
+      "src/test/data/bip341_wallet_vectors.json"
+    ],
+    "generator": "packages/protocol/scripts/gen-sighash-fixtures.py",
+    "integrity": "Self-checked: framework==Core (bip341 key-path), our copy==framework (script path)."
+  },
+  "bip341KeyPath": {
+    "version": 2,
+    "locktime": 500000000,
+    "inputs": [
+      {
+        "txid": "7de20cbff686da83a54981d2b9bab3586f4ca7e48f57f5b55963115f3b334e9c",
+        "vout": 1,
+        "sequence": 0
+      },
+      {
+        "txid": "d7b7cab57b1393ace2d064f4d4a2cb8af6def61273e127517d44759b6dafdd99",
+        "vout": 0,
+        "sequence": 4294967295
+      },
+      {
+        "txid": "f8e1f583384333689228c5d28eac13366be082dc57441760d957275419a41842",
+        "vout": 0,
+        "sequence": 4294967295
+      },
+      {
+        "txid": "f0689180aa63b30cb162a73c6d2a38b7eeda2a83ece74310fda0843ad604853b",
+        "vout": 1,
+        "sequence": 4294967294
+      },
+      {
+        "txid": "aa5202bdf6d8ccd2ee0f0202afbbb7461d9264a25e5bfd3c5a52ee1239e0ba6c",
+        "vout": 0,
+        "sequence": 4294967294
+      },
+      {
+        "txid": "956149bdc66faa968eb2be2d2faa29718acbfe3941215893a2a3446d32acd050",
+        "vout": 0,
+        "sequence": 0
+      },
+      {
+        "txid": "e664b9773b88c09c32cb70a2a3e4da0ced63b7ba3b22f848531bbb1d5d5f4c94",
+        "vout": 1,
+        "sequence": 0
+      },
+      {
+        "txid": "e9aa6b8e6c9de67619e6a3924ae25696bb7b694bb677a632a74ef7eadfd4eabf",
+        "vout": 0,
+        "sequence": 4294967295
+      },
+      {
+        "txid": "a778eb6a263dc090464cd125c466b5a99667720b1c110468831d058aa1b82af1",
+        "vout": 1,
+        "sequence": 4294967295
+      }
+    ],
+    "outputs": [
+      {
+        "valueSats": "1000000000",
+        "scriptPubKey": "76a91406afd46bcdfd22ef94ac122aa11f241244a37ecc88ac"
+      },
+      {
+        "valueSats": "3410000000",
+        "scriptPubKey": "ac9a87f5594be208f8532db38cff670c450ed2fea8fcdefcc9a663f78bab962b"
+      }
+    ],
+    "spentOutputs": [
+      {
+        "valueSats": "420000000",
+        "scriptPubKey": "512053a1f6e454df1aa2776a2814a721372d6258050de330b3c6d10ee8f4e0dda343"
+      },
+      {
+        "valueSats": "462000000",
+        "scriptPubKey": "5120147c9c57132f6e7ecddba9800bb0c4449251c92a1e60371ee77557b6620f3ea3"
+      },
+      {
+        "valueSats": "294000000",
+        "scriptPubKey": "76a914751e76e8199196d454941c45d1b3a323f1433bd688ac"
+      },
+      {
+        "valueSats": "504000000",
+        "scriptPubKey": "5120e4d810fd50586274face62b8a807eb9719cef49c04177cc6b76a9a4251d5450e"
+      },
+      {
+        "valueSats": "630000000",
+        "scriptPubKey": "512091b64d5324723a985170e4dc5a0f84c041804f2cd12660fa5dec09fc21783605"
+      },
+      {
+        "valueSats": "378000000",
+        "scriptPubKey": "00147dd65592d0ab2fe0d0257d571abf032cd9db93dc"
+      },
+      {
+        "valueSats": "672000000",
+        "scriptPubKey": "512075169f4001aa68f15bbed28b218df1d0a62cbbcf1188c6665110c293c907b831"
+      },
+      {
+        "valueSats": "546000000",
+        "scriptPubKey": "5120712447206d7a5238acc7ff53fbe94a3b64539ad291c7cdbc490b7577e4b17df5"
+      },
+      {
+        "valueSats": "588000000",
+        "scriptPubKey": "512077e30a5522dd9f894c3f8b8bd4c4b2cf82ca7da8a3ea6a239655c39c050ab220"
+      }
+    ],
+    "midstates": {
+      "prevouts": "e3b33bb4ef3a52ad1fffb555c0d82828eb22737036eaeb02a235d82b909c4c3f",
+      "amounts": "58a6964a4f5f8f0b642ded0a8a553be7622a719da71d1f5befcefcdee8e0fde6",
+      "scriptPubKeys": "23ad0f61ad2bca5ba6a7693f50fce988e17c3780bf2b1e720cfbb38fbdd52e21",
+      "sequences": "18959c7221ab5ce9e26c3cd67b22c24f8baa54bac281d8e6b05e400e6c3a957e",
+      "outputs": "a2e6dab7c1f0dcd297c8d61647fd17d821541ea69c3cc37dcbad7f90d4eb4bc5"
+    },
+    "cases": [
+      {
+        "inputIndex": 0,
+        "hashType": 3,
+        "sigHash": "2514a6272f85cfa0f45eb907fcb0d121b808ed37c6ea160a5a9046ed5526d555"
+      },
+      {
+        "inputIndex": 1,
+        "hashType": 131,
+        "sigHash": "325a644af47e8a5a2591cda0ab0723978537318f10e6a63d4eed783b96a71a4d"
+      },
+      {
+        "inputIndex": 3,
+        "hashType": 1,
+        "sigHash": "bf013ea93474aa67815b1b6cc441d23b64fa310911d991e713cd34c7f5d46669"
+      },
+      {
+        "inputIndex": 4,
+        "hashType": 0,
+        "sigHash": "4f900a0bae3f1446fd48490c2958b5a023228f01661cda3496a11da502a7f7ef"
+      },
+      {
+        "inputIndex": 6,
+        "hashType": 2,
+        "sigHash": "15f25c298eb5cdc7eb1d638dd2d45c97c4c59dcaec6679cfc16ad84f30876b85"
+      },
+      {
+        "inputIndex": 7,
+        "hashType": 130,
+        "sigHash": "cd292de50313804dabe4685e83f923d2969577191a3e1d2882220dca88cbeb10"
+      },
+      {
+        "inputIndex": 8,
+        "hashType": 129,
+        "sigHash": "cccb739eca6c13a8a89e6e5cd317ffe55669bbda23f2fd37b0f18755e008edd2"
+      }
+    ]
+  },
+  "p2mr": [
+    {
+      "label": "single-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 0,
+        "inputs": [
+          {
+            "txid": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "vout": 1,
+            "sequence": 4294967293
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "50000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "49000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "100000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 0,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "a22877d685013f9c72c0120b13a4e79d9f60c7e50151c318ddd9488f6e1e6cd8"
+    },
+    {
+      "label": "single-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 0,
+        "inputs": [
+          {
+            "txid": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "vout": 1,
+            "sequence": 4294967293
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "50000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "49000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "100000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 1,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "7bc214ceb58094a3ed6de29a9791cfd9df97cd49d999fda90de07feb645341f8"
+    },
+    {
+      "label": "single-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 0,
+        "inputs": [
+          {
+            "txid": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "vout": 1,
+            "sequence": 4294967293
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "50000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "49000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "100000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 2,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "0cc29087357ac7651c937f5a4d57a0087d7192b704fdc805b6617c5b37e395bd"
+    },
+    {
+      "label": "single-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 0,
+        "inputs": [
+          {
+            "txid": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "vout": 1,
+            "sequence": 4294967293
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "50000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "49000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "100000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 3,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "ee595c4b1c67bba429384c0a762f70d855d75b4ba4b85a6bd71f15548c551c75"
+    },
+    {
+      "label": "single-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 0,
+        "inputs": [
+          {
+            "txid": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "vout": 1,
+            "sequence": 4294967293
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "50000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "49000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "100000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 129,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "61c42ce2abaa773a1471fec0a581cafad30ba5708b9e3153cc47062c39ff541c"
+    },
+    {
+      "label": "single-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 0,
+        "inputs": [
+          {
+            "txid": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "vout": 1,
+            "sequence": 4294967293
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "50000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "49000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "100000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 130,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "e439358b5649722173916e45c5cc4f50baf612dec9541fb05f87d17540567829"
+    },
+    {
+      "label": "single-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 0,
+        "inputs": [
+          {
+            "txid": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+            "vout": 1,
+            "sequence": 4294967293
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "50000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "49000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "100000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 131,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "73dcb7cab1e99c3fabd4bb48700ea5926744c4d935a40ff0bcab15f131b39cab"
+    },
+    {
+      "label": "two-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 0,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "dfa9b10071c4e80d54766f5cde918f1648ea979a5c523494b8fcbccd5937c9b6"
+    },
+    {
+      "label": "two-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 1,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "9cddf2267c315840f82677957bc46f6a48badc63dd3f29887a1a5e64fbd82576"
+    },
+    {
+      "label": "two-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 2,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "9ffb5c084a62467934462f5a0e5b20853f1a1b900b60144bd9f483625636fa88"
+    },
+    {
+      "label": "two-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 3,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "2744e675f3c2375e6d8dcfa7c49c898907dd0b8d4dfe9ba9c91e9cc85ded0719"
+    },
+    {
+      "label": "two-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 129,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "2a45b8ab343c6b2eb664dd05ad3dd8361785fb454f1aa6089396e857f7032b86"
+    },
+    {
+      "label": "two-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 130,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "f4a0cec76d01e73bde30fd3ef201f790f89eb2a351bae60e44df6bdf5d7042ae"
+    },
+    {
+      "label": "two-input#0",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 0,
+      "hashType": 131,
+      "leaf": {
+        "pubkey": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da",
+        "leafScript": "2001080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3dab3",
+        "leafVersion": 192,
+        "leafHash": "afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+      },
+      "sigHash": "3af7b5cb4f97d582a20d536ed53bdd09ad648b05f0dce27f97c4654f604a99ca"
+    },
+    {
+      "label": "two-input#1",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 1,
+      "hashType": 0,
+      "leaf": {
+        "pubkey": "090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4",
+        "leafScript": "20090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4b3",
+        "leafVersion": 192,
+        "leafHash": "ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+      },
+      "sigHash": "fa4da4a424462fe6a0ba343a3533be65bfa04f27ed9ba6b9fa8a76ea4dbb13a5"
+    },
+    {
+      "label": "two-input#1",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 1,
+      "hashType": 1,
+      "leaf": {
+        "pubkey": "090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4",
+        "leafScript": "20090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4b3",
+        "leafVersion": 192,
+        "leafHash": "ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+      },
+      "sigHash": "7ddad2f8654b9942f9ea86197c2041ffb7d069208981987ab319e31d2a86b5f2"
+    },
+    {
+      "label": "two-input#1",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 1,
+      "hashType": 2,
+      "leaf": {
+        "pubkey": "090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4",
+        "leafScript": "20090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4b3",
+        "leafVersion": 192,
+        "leafHash": "ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+      },
+      "sigHash": "8667826269af791fef65a4d33e67191e11b661ed7352dbe13ffa77e25cdb886b"
+    },
+    {
+      "label": "two-input#1",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 1,
+      "hashType": 3,
+      "leaf": {
+        "pubkey": "090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4",
+        "leafScript": "20090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4b3",
+        "leafVersion": 192,
+        "leafHash": "ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+      },
+      "sigHash": "9fd998a02244c2fa8e6c9a4917b9d2885be95e65eb2914b24bc1aafa97f3c08a"
+    },
+    {
+      "label": "two-input#1",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 1,
+      "hashType": 129,
+      "leaf": {
+        "pubkey": "090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4",
+        "leafScript": "20090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4b3",
+        "leafVersion": 192,
+        "leafHash": "ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+      },
+      "sigHash": "c6b52a6dcafff1346532f14ddd6d32b279be57b8f11ae261bac9a41b1a4ec455"
+    },
+    {
+      "label": "two-input#1",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 1,
+      "hashType": 130,
+      "leaf": {
+        "pubkey": "090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4",
+        "leafScript": "20090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4b3",
+        "leafVersion": 192,
+        "leafHash": "ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+      },
+      "sigHash": "70ba12b9c91519f967ba46263c0ac4934d4480bdcf6c24d55d22a02587f718b2"
+    },
+    {
+      "label": "two-input#1",
+      "tx": {
+        "version": 2,
+        "locktime": 21,
+        "inputs": [
+          {
+            "txid": "0708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20212223242526",
+            "vout": 3,
+            "sequence": 4294967294
+          },
+          {
+            "txid": "28292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f4041424344454647",
+            "vout": 0,
+            "sequence": 4294967295
+          }
+        ],
+        "outputs": [
+          {
+            "valueSats": "70000",
+            "scriptPubKey": "52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445"
+          },
+          {
+            "valueSats": "80000",
+            "scriptPubKey": "522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c"
+          }
+        ],
+        "spentOutputs": [
+          {
+            "valueSats": "90000",
+            "scriptPubKey": "5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38"
+          },
+          {
+            "valueSats": "95000",
+            "scriptPubKey": "5220ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+          }
+        ]
+      },
+      "inputIndex": 1,
+      "hashType": 131,
+      "leaf": {
+        "pubkey": "090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4",
+        "leafScript": "20090e13181d22272c31363b40454a4f54595e63686d72777c81868b90959a9fa4b3",
+        "leafVersion": 192,
+        "leafHash": "ff4a1bbe82786974002fd64dc1e8103f05df2191c90de79497a99b3b22e32c50"
+      },
+      "sigHash": "4de02d7691e60a084283f7f13ed803e8d84d9ae340e9befcce299c8d0f3541d0"
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+{
+  "name": "@qbit-oss/protocol",
+  "version": "0.1.0",
+  "description": "qbit protocol primitives: P2MR addresses and scripts, descriptors, PSBT creation, signing and finalizing, sighash, message proofs, and qbit: URIs",
+  "main": "lib/index.js",
+  "module": "lib/index.mjs",
+  "types": "lib/index.d.ts",
+  "files": [
+    "lib/**/*",
+    "src/**/*",
+    "docs/**/*",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./lib/index.d.mts",
+        "default": "./lib/index.mjs"
+      },
+      "require": {
+        "types": "./lib/index.d.ts",
+        "default": "./lib/index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsup",
+    "prepack": "tsup",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf lib coverage"
+  },
+  "keywords": [
+    "qbit",
+    "p2mr",
+    "protocol"
+  ],
+  "author": "Qbit",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Qbit-Org/qbit-js.git",
+    "directory": "packages/protocol"
+  },
+  "bugs": {
+    "url": "https://github.com/Qbit-Org/qbit-js/issues"
+  },
+  "homepage": "https://github.com/Qbit-Org/qbit-js/tree/main/packages/protocol#readme",
+  "dependencies": {
+    "@noble/hashes": "^1.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
