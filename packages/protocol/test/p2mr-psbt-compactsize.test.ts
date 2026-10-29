@@ -133,7 +133,11 @@ function psbtBytes(
 /** `fc <identifier-length> 'qbit' <subtype> [key data]`; type and identifier length can be widened. */
 function qbitProprietaryKey(
   subtype: number,
-  options: { identifierWidth?: CompactSizeWidth; typeWidth?: CompactSizeWidth; keyData?: Uint8Array } = {}
+  options: {
+    identifierWidth?: CompactSizeWidth | undefined
+    typeWidth?: CompactSizeWidth | undefined
+    keyData?: Uint8Array
+  } = {}
 ): Uint8Array {
   return concat(
     compactSize(PSBT_IN_PROPRIETARY, options.typeWidth),

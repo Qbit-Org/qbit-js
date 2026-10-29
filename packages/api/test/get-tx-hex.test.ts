@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 
-import { sha256 } from '@noble/hashes/sha256'
+import { sha256 } from '@noble/hashes/sha2'
 import { describe, expect, it } from 'vitest'
 
 import { EsploraClient, MempoolQbitClient, QbitApiError, txidFromRawTx } from '../src/index'

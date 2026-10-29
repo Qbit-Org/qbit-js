@@ -338,6 +338,7 @@ describe('redacted error causes', () => {
           url,
         })
         return Object.assign(
+          // @ts-expect-error the ES2020 lib lacks Error's options argument (ES2022), which Node.js 22+ has
           new TypeError('Unable to connect. Is the computer able to access the url?', { cause: inner }),
           { path: url, code: 'ConnectionRefused' }
         )
@@ -354,7 +355,7 @@ describe('redacted error causes', () => {
       path: `${SAFE_BASE}/blocks/tip/height`,
       code: 'ConnectionRefused',
     })
-    const cause = error.cause as Error & { path: string }
+    const cause = error.cause as Error & { path: string; cause: unknown }
     expect(cause.stack).toMatch(/^TypeError: Unable to connect/)
     expect(cause.cause).toMatchObject({
       message: `connect ECONNREFUSED ${SAFE_BASE}/blocks/tip/height`,
@@ -417,7 +418,7 @@ describe('redacted error causes', () => {
       retries: 0,
       sleepFn: noSleep,
       fetchFn: throwingFetch(url => {
-        const error = new TypeError(`fetch failed: ${url}`)
+        const error: TypeError & { cause?: unknown } = new TypeError(`fetch failed: ${url}`)
         error.cause = error
         return error
       }),
@@ -427,7 +428,7 @@ describe('redacted error causes', () => {
 
     expectNoSecret(error)
     let depth = 0
-    for (let cause = error.cause; cause instanceof Error; cause = cause.cause) depth += 1
+    for (let cause = error.cause; cause instanceof Error; cause = (cause as { cause?: unknown }).cause) depth += 1
     expect(depth).toBe(5)
   })
 

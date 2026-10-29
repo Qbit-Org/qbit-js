@@ -8,7 +8,7 @@ name: Publish
 # only the locked dev dependencies and each package's prepack, packs the
 # tarballs, and reports their SHA-256 sums and the artifact's ID. `smoke` runs
 # every other check: the packed-consumer check, the consumer smoke (which
-# installs whatever @noble/hashes 1.x the registry serves) and the fixture
+# installs whatever @noble/hashes 1.8.x the registry serves) and the fixture
 # check (a qbit Core clone, run by the Python that setup-python installs),
 # the last two being the ones that fetch code nothing pins. Neither job
 # holds a secret or an id-token. `publish` holds both, but checks out
@@ -122,6 +122,9 @@ jobs:
 
       - name: Typecheck
         run: pnpm typecheck
+
+      - name: Typecheck tests
+        run: pnpm typecheck:test
 
       - name: Test
         run: pnpm test

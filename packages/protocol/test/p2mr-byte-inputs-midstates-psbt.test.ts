@@ -136,12 +136,17 @@ describe('byte inputs: cached midstates, proprietary key data, PSBT maps', () =>
       it.each(lookAlikes(midstates[field]))('rejects a %s before any signer call', (_, value) => {
         const sign = vi.fn()
         for (const hashType of [undefined, SIGHASH_ALL, SIGHASH_ANYONECANPAY | SIGHASH_ALL]) {
-          expect(() => sign(p2mrSighash({ ...params, hashType, midstates: withField(field, value) }))).toThrow(
-            invalidBytes(`midstates.${field}`)
-          )
+          expect(() =>
+            sign(p2mrSighash({ ...params, hashType: hashType as number, midstates: withField(field, value) }))
+          ).toThrow(invalidBytes(`midstates.${field}`))
           expect(() =>
             sign(
-              schnorrSignatureHash({ ...params, hashType, sigVersion: 'taproot', midstates: withField(field, value) })
+              schnorrSignatureHash({
+                ...params,
+                hashType: hashType as number,
+                sigVersion: 'taproot',
+                midstates: withField(field, value),
+              })
             )
           ).toThrow(invalidBytes(`midstates.${field}`))
         }
@@ -161,7 +166,8 @@ describe('byte inputs: cached midstates, proprietary key data, PSBT maps', () =>
 
     it('still computes the midstates when none are given', () => {
       expect(p2mrSighash({ ...params, midstates })).toEqual(genuine)
-      expect(p2mrSighash({ ...params, midstates: undefined })).toEqual(genuine)
+      // exactOptionalPropertyTypes rejects the explicit undefined a JavaScript caller can pass.
+      expect(p2mrSighash({ ...params, midstates: undefined as unknown as SighashMidstates })).toEqual(genuine)
     })
   })
 

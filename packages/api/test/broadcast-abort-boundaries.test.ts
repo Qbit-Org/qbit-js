@@ -17,9 +17,9 @@ type Handler = (callIndex: number, url: string, init: RequestInit | undefined) =
 
 function makeFetch(handler: Handler): {
   fetchFn: typeof fetch
-  calls: { url: string; init?: RequestInit }[]
+  calls: { url: string; init?: RequestInit | undefined }[]
 } {
-  const calls: { url: string; init?: RequestInit }[] = []
+  const calls: { url: string; init?: RequestInit | undefined }[] = []
   const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const index = calls.length

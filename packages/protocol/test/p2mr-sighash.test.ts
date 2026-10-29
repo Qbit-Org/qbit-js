@@ -93,6 +93,16 @@ describe('p2mrSighash vs P2MR-tag vectors', () => {
     expect(vectors.some(v => v.label.startsWith('two-input'))).toBe(true)
   })
 
+  it('covers uint32 field extremes and amounts above 2^53', () => {
+    const extremes = vectors.filter(v => v.label.startsWith('field-extremes'))
+    expect(extremes).toHaveLength(14)
+    const { tx } = extremes[0]!
+    expect([tx.version, tx.locktime]).toEqual([0xffffffff, 0xffffffff])
+    expect(tx.inputs.map(input => input.sequence)).toEqual(expect.arrayContaining([0, 0xffffffff]))
+    expect(tx.inputs.some(input => input.vout === 0xffffffff)).toBe(true)
+    expect([...tx.outputs, ...tx.spentOutputs].every(output => BigInt(output.valueSats) > 2n ** 53n)).toBe(true)
+  })
+
   it.each(vectors)('$label hashType $hashType', vector => {
     const tx = toTransaction(vector.tx)
     const spent = toSpentOutputs(vector.tx)

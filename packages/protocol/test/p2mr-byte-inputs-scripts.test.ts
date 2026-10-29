@@ -92,7 +92,9 @@ describe('script, annex and witness-signature byte inputs must be a Uint8Array',
       const sign = vi.fn()
       const params = sighashParams({ spentScript: script })
       for (const hashType of [undefined, SIGHASH_ALL, SIGHASH_ANYONECANPAY | SIGHASH_ALL]) {
-        expect(() => sign(p2mrSighash({ ...params, hashType }))).toThrow(invalidBytes('spent output 0 scriptPubKey'))
+        expect(() => sign(p2mrSighash({ ...params, hashType: hashType as number }))).toThrow(
+          invalidBytes('spent output 0 scriptPubKey')
+        )
       }
       // A cached midstate cannot stand in for the unchecked script.
       const midstates = precomputeSighashMidstates(sighashParams().tx, sighashParams().spentOutputs)
@@ -106,7 +108,9 @@ describe('script, annex and witness-signature byte inputs must be a Uint8Array',
     it.each(lookAlikes(SPK))('rejects a %s output scriptPubKey', (_, script) => {
       const params = sighashParams({ outputScript: script })
       for (const hashType of [undefined, SIGHASH_SINGLE]) {
-        expect(() => p2mrSighash({ ...params, hashType })).toThrow(invalidBytes('output 0 scriptPubKey'))
+        expect(() => p2mrSighash({ ...params, hashType: hashType as number })).toThrow(
+          invalidBytes('output 0 scriptPubKey')
+        )
       }
     })
 
@@ -136,7 +140,7 @@ describe('script, annex and witness-signature byte inputs must be a Uint8Array',
           createP2mrPsbt({
             inputs: [psbtInput(script)],
             outputs: [{ value: 1000n, scriptPubKey: SPK }],
-            restrictedOutputMode,
+            restrictedOutputMode: restrictedOutputMode as boolean,
           })
         ).toThrow(invalidBytes('input 0 witness UTXO scriptPubKey'))
       }

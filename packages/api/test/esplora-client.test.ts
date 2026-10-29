@@ -22,10 +22,10 @@ type Handler = (callIndex: number, url: string, init: RequestInit | undefined) =
 
 function makeFetch(handler: Handler): {
   fetchFn: typeof fetch
-  calls: { url: string; init?: RequestInit }[]
+  calls: { url: string; init?: RequestInit | undefined }[]
   responses: Response[]
 } {
-  const calls: { url: string; init?: RequestInit }[] = []
+  const calls: { url: string; init?: RequestInit | undefined }[] = []
   const responses: Response[] = []
   const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
@@ -34,7 +34,7 @@ function makeFetch(handler: Handler): {
     const reply = await handler(index, url, init)
     const response = new Response(reply.body ?? '', {
       status: reply.status ?? 200,
-      headers: reply.headers,
+      ...(reply.headers ? { headers: reply.headers } : {}),
     })
     responses.push(response)
     return response
@@ -1224,7 +1224,7 @@ describe('EsploraClient resilience', () => {
         ).toThrow(/maxRetryAfterMs must be an integer from 0 to 2147483647/)
       }
       for (const maxRetryAfterMs of [0, 2_147_483_647, undefined]) {
-        expect(() => new EsploraClient({ baseUrl: BASE, maxRetryAfterMs })).not.toThrow()
+        expect(() => new EsploraClient({ baseUrl: BASE, maxRetryAfterMs: maxRetryAfterMs as number })).not.toThrow()
       }
       expect(() => new MempoolQbitClient({ baseUrl: BASE, maxRetryAfterMs: -1 })).toThrow(QbitApiError)
     })
@@ -1369,15 +1369,17 @@ describe('EsploraClient constructor options', () => {
   })
 
   it('treats explicitly undefined numeric options as omitted', async () => {
-    const sleep = vi.fn(noSleep)
+    const sleep = vi.fn((_ms: number) => noSleep())
     const { fetchFn, calls } = makeFetch(() => ({ status: 503, body: 'busy' }))
+    // exactOptionalPropertyTypes rejects the explicit undefined a JavaScript caller can pass.
+    const unset = undefined as unknown as number
     const client = new EsploraClient({
       baseUrl: BASE,
       fetchFn,
       sleepFn: sleep,
-      timeoutMs: undefined,
-      retries: undefined,
-      retryBaseDelayMs: undefined,
+      timeoutMs: unset,
+      retries: unset,
+      retryBaseDelayMs: unset,
     })
     await expect(client.getTipHeight()).rejects.toMatchObject({ kind: 'http', status: 503 })
     expect(calls).toHaveLength(3)

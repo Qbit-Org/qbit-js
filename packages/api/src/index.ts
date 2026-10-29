@@ -6,7 +6,7 @@
 // no device-id / channel / client telemetry headers. The test suite enforces
 // this by construction (see the guard in test/).
 
-import { sha256 } from '@noble/hashes/sha256'
+import { sha256 } from '@noble/hashes/sha2'
 
 // ---------------------------------------------------------------------------
 // Esplora response types

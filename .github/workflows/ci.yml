@@ -61,6 +61,11 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The package tsconfigs exclude test/, and vitest strips types without
+      # checking them, so each package's test/tsconfig.json checks the tests.
+      - name: Typecheck tests
+        run: pnpm typecheck:test
+
       - name: Check npm package contents
         run: pnpm pack:check
 

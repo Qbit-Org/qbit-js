@@ -15,15 +15,18 @@ type Handler = (callIndex: number, url: string, init: RequestInit | undefined) =
 
 function makeFetch(handler: Handler): {
   fetchFn: typeof fetch
-  calls: { url: string; init?: RequestInit }[]
+  calls: { url: string; init?: RequestInit | undefined }[]
 } {
-  const calls: { url: string; init?: RequestInit }[] = []
+  const calls: { url: string; init?: RequestInit | undefined }[] = []
   const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input)
     const index = calls.length
     calls.push({ url, init })
     const reply = await handler(index, url, init)
-    return new Response(reply.body ?? '', { status: reply.status ?? 200, headers: reply.headers })
+    return new Response(reply.body ?? '', {
+      status: reply.status ?? 200,
+      ...(reply.headers ? { headers: reply.headers } : {}),
+    })
   }) as typeof fetch
   return { fetchFn, calls }
 }

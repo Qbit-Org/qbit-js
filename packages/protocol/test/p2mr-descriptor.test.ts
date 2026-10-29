@@ -1,4 +1,4 @@
-import { sha256 } from '@noble/hashes/sha256'
+import { sha256 } from '@noble/hashes/sha2'
 import { describe, expect, it } from 'vitest'
 
 import {

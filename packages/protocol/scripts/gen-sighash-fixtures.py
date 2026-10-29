@@ -183,6 +183,7 @@ def generate(args, root):
         CTxIn,
         CTxOut,
         COutPoint,
+        MAX_MONEY,
         ser_uint256,
         tx_from_hex,
     )
@@ -315,7 +316,25 @@ def generate(args, root):
     spent2 = [CTxOut(90_000, spk_a), CTxOut(95_000, spk_b)]
     leaf2 = [(leaf_script_a, leaf_hash_a, pk_a), (leaf_script_b, leaf_hash_b, pk_b)]
 
-    txs = [("single-input", tx1, spent1, leaf1), ("two-input", tx2, spent2, leaf2)]
+    # tx3: field extremes. version, nLockTime, one nSequence and one prevout
+    # index are the uint32 maximum, and the other nSequence is 0. Every amount
+    # is above 2^53, past which JavaScript numbers are not exact: the odd ones
+    # have no double, and one spent output is qbit's MAX_MONEY (210,000,000 QBT).
+    tx3 = CTransaction()
+    tx3.version = 0xFFFFFFFF
+    tx3.nLockTime = 0xFFFFFFFF
+    extreme_prevout = outpoint(90)
+    extreme_prevout.n = 0xFFFFFFFF
+    tx3.vin = [CTxIn(outpoint(60), b"", 0), CTxIn(extreme_prevout, b"", 0xFFFFFFFF)]
+    tx3.vout = [CTxOut(2**53 + 1, out_spk1), CTxOut(2**53 + 3, out_spk2)]
+    spent3 = [CTxOut(MAX_MONEY, spk_a), CTxOut(2**53 + 5, spk_b)]
+    leaf3 = leaf2
+
+    txs = [
+        ("single-input", tx1, spent1, leaf1),
+        ("two-input", tx2, spent2, leaf2),
+        ("field-extremes", tx3, spent3, leaf3),
+    ]
 
     # --- Self-check B: our copy (TapLeaf) == framework TaprootSignatureMsg ---
     checkB = 0
