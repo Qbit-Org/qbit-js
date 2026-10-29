@@ -60,7 +60,7 @@ function redirectingFetch(route: (url: string, method: string) => Reply): {
       const reply = route(url, method)
       const response = new Response(reply.body ?? '', {
         status: reply.status ?? 200,
-        headers: reply.headers,
+        ...(reply.headers ? { headers: reply.headers } : {}),
       })
       responses.push(response)
       const location = response.headers.get('location')

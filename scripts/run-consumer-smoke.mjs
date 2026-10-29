@@ -78,7 +78,7 @@ try {
     cwd: consumerDir,
   })
   // Record which @noble/hashes release the smoke actually exercised: with no
-  // lockfile this is whatever 1.x the registry serves today.
+  // lockfile this is the newest 1.8.x the registry serves today.
   console.log(`consumer resolved @noble/hashes@${resolvedVersion(consumerDir, '@noble/hashes')}`)
 
   // 3) Run the consumer assertions against the installed packages.

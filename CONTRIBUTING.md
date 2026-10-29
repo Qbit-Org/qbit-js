@@ -34,10 +34,10 @@ pins. It installs global `pnpm` shims, so it can need write access to the
 directory that holds the `node` binary.
 
 `verify` runs CI's offline checks in CI's order and stops at the first failure:
-`format:check`, `build`, `test`, `typecheck`, `pack:check` and
-`consumer:check`. CI also checks that pnpm matches `packageManager`, and runs
-two network checks that `verify` leaves out: `smoke:consumer`, which installs
-the packed packages with npm and resolves their dependencies from the
+`format:check`, `build`, `test`, `typecheck`, `typecheck:test`, `pack:check`
+and `consumer:check`. CI also checks that pnpm matches `packageManager`, and
+runs two network checks that `verify` leaves out: `smoke:consumer`, which
+installs the packed packages with npm and resolves their dependencies from the
 registry, and `fixtures:check`, which clones qbit Core and also needs git and
 Python (see `scripts/check-core-fixtures.sh`). Both run locally too, given
 network access.
@@ -59,6 +59,10 @@ dispatch:
 - **Build**: `pnpm build` builds each package's `lib/` with tsup.
 - **Test**: `pnpm test` runs each package's vitest suite.
 - **Typecheck**: `pnpm typecheck` runs `tsc --noEmit` in each package.
+- **Typecheck tests**: `pnpm typecheck:test` runs `tsc -p test` in each
+  package. The package `tsconfig.json` leaves `test/` out and vitest strips
+  types without checking them, so `test/tsconfig.json` type-checks the tests,
+  and the `src` they import, under the package's own strict settings.
 - **Check npm package contents**: `pnpm pack:check` fails if a package's
   tarball misses a required file, would publish anything outside the expected
   set, or has a LICENSE that differs from the root one.
@@ -99,7 +103,9 @@ regenerate or re-vendor them as the
 vectors in `packages/protocol/fixtures/core/` have their re-vendoring steps in
 [their README](packages/protocol/fixtures/core/README.md), and
 `packages/api/test/fixtures/p2mr-witness-tx.json` records its own derivation
-in `source.method`.
+in `source.method`. qbit-wallet vendors the generated P2MR fixtures and their
+generators, so keep the playbook's contract for their paths, generator flags
+and `schemaVersion`.
 
 ## Changes and releases
 

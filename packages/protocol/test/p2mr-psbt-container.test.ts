@@ -45,15 +45,15 @@ describe('PSBT container (BIP174 v0, qbit-aware)', () => {
     expect(summary.fee).toBe(BigInt(expected.fee))
 
     const [in0, in1] = summary.inputs
-    expect(in0!.witnessUtxo?.value).toBe(BigInt(expected.inputs[0].witnessValue))
-    expect(in0!.leafScripts.length).toBe(expected.inputs[0].leafScripts)
-    expect(in0!.scriptSigs.length).toBe(expected.inputs[0].scriptSigs)
-    expect(bytesToHex(in0!.merkleRoot!)).toBe(expected.inputs[0].merkleRoot)
-    expect(bytesToHex(in0!.scriptSigs[0]!.pubkey)).toBe(expected.inputs[0].scriptSigPubkey)
-    expect(bytesToHex(in0!.scriptSigs[0]!.leafHash)).toBe(expected.inputs[0].scriptSigLeafHash)
+    expect(in0!.witnessUtxo?.value).toBe(BigInt(expected.inputs[0]!.witnessValue))
+    expect(in0!.leafScripts.length).toBe(expected.inputs[0]!.leafScripts)
+    expect(in0!.scriptSigs.length).toBe(expected.inputs[0]!.scriptSigs)
+    expect(bytesToHex(in0!.merkleRoot!)).toBe(expected.inputs[0]!.merkleRoot)
+    expect(bytesToHex(in0!.scriptSigs[0]!.pubkey)).toBe(expected.inputs[0]!.scriptSigPubkey)
+    expect(bytesToHex(in0!.scriptSigs[0]!.leafHash)).toBe(expected.inputs[0]!.scriptSigLeafHash)
     expect(in0!.finalized).toBe(false)
 
-    expect(in1!.witnessUtxo?.value).toBe(BigInt(expected.inputs[1].witnessValue))
+    expect(in1!.witnessUtxo?.value).toBe(BigInt(expected.inputs[1]!.witnessValue))
     expect(in1!.finalized).toBe(true)
   })
 })
@@ -76,7 +76,7 @@ describe('combinePsbts', () => {
     const b = parsePsbt(PSBT_BYTES)
     const witnessEntry = b.inputs[0]!.find(entry => entry.key.length === 1 && entry.key[0] === PSBT_IN_WITNESS_UTXO)!
     witnessEntry.value = witnessEntry.value.slice()
-    witnessEntry.value[0] ^= 0xff
+    witnessEntry.value[0]! ^= 0xff
     expect(() => combinePsbts([a, b])).toThrow(/conflicting/)
   })
 
@@ -85,7 +85,7 @@ describe('combinePsbts', () => {
     const b = parsePsbt(PSBT_BYTES)
     const txEntry = b.global.find(entry => entry.key.length === 1 && entry.key[0] === 0x00)!
     txEntry.value = txEntry.value.slice()
-    txEntry.value[4] ^= 0xff // perturb the unsigned tx bytes
+    txEntry.value[4]! ^= 0xff // perturb the unsigned tx bytes
     expect(() => combinePsbts([a, b])).toThrow(/different unsigned transactions/)
   })
 })

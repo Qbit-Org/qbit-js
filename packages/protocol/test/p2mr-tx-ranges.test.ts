@@ -1,4 +1,4 @@
-import { sha256 } from '@noble/hashes/sha256'
+import { sha256 } from '@noble/hashes/sha2'
 import { describe, expect, it } from 'vitest'
 
 import {
@@ -67,12 +67,12 @@ function withInput(overrides: { vout?: number; sequence?: number }): P2mrTransac
 }
 
 function psbtParams(overrides: {
-  version?: number
-  locktime?: number
-  vout?: number
-  sequence?: number
-  utxoValue?: bigint
-  outputValue?: bigint
+  version?: number | undefined
+  locktime?: number | undefined
+  vout?: number | undefined
+  sequence?: number | undefined
+  utxoValue?: bigint | undefined
+  outputValue?: bigint | undefined
 }) {
   // Keys that are present are passed through verbatim, even when null/undefined.
   const input: Parameters<typeof createP2mrPsbt>[0]['inputs'][number] = {

@@ -39,4 +39,15 @@ For a candidate qbit Core pin bump:
 
 5. Update the pinned commit references in docs and fixtures together.
 
+The generated fixtures and their generators are also a contract with
+[`Qbit-Org/qbit-wallet`](https://github.com/Qbit-Org/qbit-wallet). Its
+`scripts/conformance/qbit-js/` vendors `packages/protocol/fixtures/p2mr-sighash.json`,
+`packages/protocol/fixtures/p2mr-psbt.json` and both generators by those paths.
+Its conformance checks run the fixtures against the installed
+`@qbit-oss/protocol` and regenerate them with the generators' `--qbit`, `--out`,
+`--repository` and `--commit` flags. Keep those paths and flags, and keep
+changes under `schemaVersion: 1` additive: add vectors or fields, and leave
+every existing entry and field as it is. Any other change to a fixture's layout
+needs a new `schemaVersion` and a matching qbit-wallet change.
+
 When a new protocol or signing surface lands here, add a live check for it to the downstream conformance matrix.

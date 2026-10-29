@@ -780,7 +780,10 @@ describe('multi_a leaf scripts vs Core CScript() << k', () => {
     128: '028000',
     255: '02ff00',
     256: '020001',
+    999: '02e703',
   }
+  // Core MAX_PUBKEYS_PER_MULTI_A (src/script/script.h:37).
+  const MAX_PUBKEYS = 999
   // Core P2MR_V1_MAX_STANDARD_SIGNATURES (src/script/p2mr_sizing.h:18-24): a
   // leaf that needs more signatures can never be spent, so multiALeafScript may
   // refuse it and is called directly only up to this threshold.
@@ -797,7 +800,7 @@ describe('multi_a leaf scripts vs Core CScript() << k', () => {
       Array.from({ length: n }, (_, i) => `20${bytesToHex(key(i))}${i === 0 ? 'b3' : 'ba'}`).join('') + `${push}9c`
     )
   const cases = Object.entries(CORE_THRESHOLD_PUSH).flatMap(([k, push]) =>
-    [Number(k), Number(k) + 1].map(n => ({ k: Number(k), n, push }))
+    [Number(k), Number(k) + 1].filter(n => n <= MAX_PUBKEYS).map(n => ({ k: Number(k), n, push }))
   )
 
   it.each(cases.filter(({ k }) => k <= MAX_SPENDABLE_THRESHOLD))(
@@ -826,4 +829,30 @@ describe('multi_a leaf scripts vs Core CScript() << k', () => {
       expect(bytesToHex(p2mrRootFromDescriptor(descriptor))).toBe(bytesToHex(expectedRoot))
     }
   )
+})
+
+// Core sorts sortedmulti_a keys with std::sort before building the multi_a leaf
+// (src/script/descriptor.cpp:1744-1757), and CPQCPubKey orders by its raw bytes
+// (src/crypto/pqc.h:72-76), so the leaf lists the keys in lexicographic order.
+describe('sortedmulti_a key order vs Core', () => {
+  /** Core's multi_a leaf for keys already in order, written out by hand. */
+  const coreLeafScript = (k: number, keys: readonly string[]): Uint8Array =>
+    hexToBytes(keys.map((key, i) => `20${key}${i === 0 ? 'b3' : 'ba'}`).join('') + `${(0x50 + k).toString(16)}9c`)
+
+  // Core parse_sortedmulti_a_infers_as_multi_a (src/test/descriptor_p2mr_tests.cpp:148-165).
+  it('sortedmulti_a(2,k3,k1,k2) commits to the multi_a(2,k1,k2,k3) leaf, as Core infers it', () => {
+    const [k1, k2, k3] = ['11', '22', '33'].map(byte => byte.repeat(32)) as [string, string, string]
+    const sorted = p2mrRootFromDescriptor(`mr(sortedmulti_a(2,${k3},${k1},${k2}))`)
+    expect(bytesToHex(sorted)).toBe(bytesToHex(p2mrRootFromDescriptor(`mr(multi_a(2,${k1},${k2},${k3}))`)))
+    expect(bytesToHex(sorted)).toBe(bytesToHex(nodeLeafHash(P2MR_LEAF_VERSION_V1, coreLeafScript(2, [k1, k2, k3]))))
+  })
+
+  it('compares whole keys byte by byte, from the first byte', () => {
+    // Ascending: the first differing byte decides, wherever it is.
+    const keys = [`02${'ff'.repeat(31)}`, `03${'00'.repeat(31)}`, `${'11'.repeat(31)}12`, `${'11'.repeat(31)}13`]
+    const shuffled = [keys[3], keys[1], keys[2], keys[0]].join(',')
+    expect(bytesToHex(p2mrRootFromDescriptor(`mr(sortedmulti_a(3,${shuffled}))`))).toBe(
+      bytesToHex(nodeLeafHash(P2MR_LEAF_VERSION_V1, coreLeafScript(3, keys)))
+    )
+  })
 })

@@ -29,6 +29,20 @@ breaking changes bump MINOR.
   worker), for example a `Buffer`, or with `@noble/hashes` before 1.3.3 any
   `Uint8Array` from another realm. It threw a bare `TypeError` from
   `@noble/hashes`, which rejects such arrays.
+- Requires `@noble/hashes` `~1.8.0` (was `^1.3.0`) and imports its `sha2`
+  entry point instead of the deprecated `sha256` one. A fresh install already
+  resolved 1.8.0, and a lockfile that keeps an older 1.x now gets a separate
+  1.8.x copy. An `overrides` or `resolutions` entry still forces its version,
+  and `@noble/hashes` has no `sha2` entry point before 1.3.3, so this release
+  fails to load with an override below 1.3.3. `@noble/hashes` 1.8.0 declares
+  `engines` `node: ^14.21.3 || >=16`, where 1.3.0 declared none.
+
+### @qbit-oss/api
+
+- Requires `@noble/hashes` `~1.8.0` (was `^1.3.0`) and imports its `sha2`
+  entry point instead of the deprecated `sha256` one, as `@qbit-oss/protocol`
+  does, with the same effect on lockfiles and overrides. `@noble/hashes` 1.8.0
+  declares `engines` `node: ^14.21.3 || >=16`, where 1.3.0 declared none.
 
 ## 0.1.0 (unreleased)
 

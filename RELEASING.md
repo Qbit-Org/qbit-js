@@ -116,7 +116,8 @@ such as a fork or a mirror. It has three jobs:
      `X.Y.Z-rc.N` (under `candidate`);
    - CHANGELOG.md has a `## <version>` section;
    - the tagged commit is on `release/X.Y`;
-   - install, build, typecheck, tests and `pack:check` pass on that commit.
+   - install, build, typecheck (sources and tests), tests and `pack:check`
+     pass on that commit.
 
    It then packs both packages, records the two tarballs' SHA-256 sums in
    the same step, and uploads the tarballs as the run's `npm-tarballs`
@@ -126,7 +127,7 @@ such as a fork or a mirror. It has three jobs:
    `consumer:check`, which type-checks and loads the packed packages offline
    with the lockfile's dependencies, and the checks that fetch code nothing
    pins: the fresh-consumer smoke, which installs whatever `@noble/hashes`
-   1.x the registry serves, and `fixtures:check`, which clones qbit Core and
+   1.8.x the registry serves, and `fixtures:check`, which clones qbit Core and
    runs the Python that `setup-python` installs. `consumer:check` and the
    smoke pack their own copies of the packages from the tagged commit.
 3. `publish` runs once both pass, in the `npm` environment, so it starts

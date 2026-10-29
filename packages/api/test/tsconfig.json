@@ -1,0 +1,14 @@
+{
+  // Type-checks the tests (and the src they import) under the package's own
+  // strict settings; the package tsconfig.json excludes test/. Run by
+  // `pnpm typecheck:test`.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "..",
+    "noEmit": true,
+    // The tests run on Node.js 22+, which has AggregateError.
+    "lib": ["ES2020", "ES2021.Promise", "DOM"]
+  },
+  "include": ["**/*"],
+  "exclude": []
+}

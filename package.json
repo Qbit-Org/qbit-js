@@ -11,6 +11,7 @@
     "build": "pnpm -r --if-present build",
     "test": "pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
+    "typecheck:test": "pnpm -r --if-present typecheck:test",
     "fixtures:check": "bash scripts/check-core-fixtures.sh",
     "clean": "pnpm -r --if-present clean",
     "pack:check": "node scripts/check-pack.mjs",
@@ -18,7 +19,7 @@
     "smoke:consumer": "pnpm --filter @qbit-oss/protocol --filter @qbit-oss/api build && node scripts/run-consumer-smoke.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "verify": "pnpm format:check && pnpm build && pnpm test && pnpm typecheck && pnpm pack:check && pnpm consumer:check"
+    "verify": "pnpm format:check && pnpm build && pnpm test && pnpm typecheck && pnpm typecheck:test && pnpm pack:check && pnpm consumer:check"
   },
   "keywords": [
     "qbit",

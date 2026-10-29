@@ -17,7 +17,10 @@ function makeFetch(handler: (callIndex: number) => MockReply) {
   const fetchFn = (async (input: RequestInfo | URL) => {
     calls.push(String(input))
     const reply = handler(calls.length - 1)
-    return new Response(reply.body ?? '', { status: reply.status ?? 200, headers: reply.headers })
+    return new Response(reply.body ?? '', {
+      status: reply.status ?? 200,
+      ...(reply.headers ? { headers: reply.headers } : {}),
+    })
   }) as typeof fetch
   return { fetchFn, calls }
 }
