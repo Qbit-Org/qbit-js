@@ -115,15 +115,20 @@ See [Signing and finalization](docs/signing-and-finalization.md).
   stateful signer must still treat that key use as consumed, so it records
   each key use inside `sign`, before signing. Key that record by the digest it
   signs: the retry below asks for the same digest again, which the signer may
-  sign from the same state, while a different digest must be refused. A signer
-  that cannot sign the same digest twice must be left out of the retry's
-  `keys`; the other plans are then signed without it. In phase `'onSigned'` the
-  signature for `failed` is
-  stored and is the last entry of `signed`; only the callback failed. Retry by
-  calling `signP2mrPsbt` with `error.psbt` and only the keys not listed in
-  `error.signed`; a key whose signature is already present is refused before
-  any signer call, but a `'sign'`-phase `failed` is sent to the signer again
-  with the same digest.
+  sign from the same state, while a different digest must be refused. For a
+  signer that cannot sign the same digest twice, throwing would stop the retry
+  at the same plan again, so drop its entry from the retry's `keys` (or have
+  `sign` return `undefined` for it, which skips the plan). Then drop every
+  entry that can no longer help finalize the transaction: the other entries
+  for a leaf that cannot complete without that key (a `multi_a` leaf left
+  short of its threshold, say), and every entry when an input is left with no
+  leaf that can complete, since the transaction can then never be finalized.
+  Signing those would spend key uses for nothing. In phase `'onSigned'` the
+  signature for `failed` is stored and is the last entry of `signed`; only the
+  callback failed. Retry by calling `signP2mrPsbt` with `error.psbt` and only
+  the keys not listed in `error.signed`; a key whose signature is already
+  present is refused before any signer call, but a `'sign'`-phase `failed` is
+  sent to the signer again with the same digest.
   [Signing and finalization](docs/signing-and-finalization.md)
 
 ## Topic pages

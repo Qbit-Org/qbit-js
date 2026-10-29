@@ -13,11 +13,15 @@ recover from partial signing, enforce sighash types and pick a witness.
   signature is already stored), so a retry passes that PSBT back in with only
   the unsigned plans, which include a `'sign'`-phase failed plan: the signer
   is called for it again with the same digest, so a stateful signer keys its
-  record by digest, signs that same digest again, and refuses any other (a
-  signer that cannot re-sign the same digest is left out of the retry's
-  `keys`); `sign` and `onSigned` must both
-  be synchronous, and one that returns a promise fails its plan the same way
-  (the promise is never left unhandled);
+  record by digest, signs that same digest again, and refuses any other (for
+  a signer that cannot re-sign the same digest, the retry drops its entry from
+  `keys`, or `sign` returns `undefined` for it, and the retry also drops every
+  entry that can no longer help finalize the transaction: the other entries
+  for a leaf that cannot complete without that key, such as a `multi_a` leaf
+  left short of its threshold, and every entry when an input is left with no
+  leaf that can complete); `sign` and `onSigned` must both be synchronous, and
+  one that returns a promise fails its plan the same way (the promise is never
+  left unhandled);
   a signature `Uint8Array` from another realm (vm, iframe, worker) is accepted
 - sighash-type guardrails on the signing path: `signP2mrPsbt` /
   `validateP2mrSigningPlans` accept only `SIGHASH_DEFAULT` unless the caller

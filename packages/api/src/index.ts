@@ -1474,7 +1474,7 @@ export class EsploraClient {
 
   /**
    * POST a transaction submission under the submission retry policy and
-   * classify the reply as the outcome table in `docs/broadcasting.md` says.
+   * classify the reply as the [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes) says.
    * `txid` identifies the submission in `unknown_outcome` errors and, when
    * known, is the result for already-known non-2xx replies. An abort or
    * deadline once the POST may have been sent, including while the reply body
@@ -1622,7 +1622,7 @@ export class EsploraClient {
    * transient statuses. Any other method is a submission: an attempt is only
    * repeated when it provably was not processed (a 429 within the retry and
    * `Retry-After` limits, or a connection failure before anything was sent;
-   * see `docs/broadcasting.md`). Any other attempt is never re-sent: a reply
+   * see [Broadcasting](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md)). Any other attempt is never re-sent: a reply
    * that arrives whole is returned for the caller to judge, and one that may
    * have been processed without such a reply (a transport failure, an abort or
    * deadline in flight unless the reply is a 429, or a refused redirect) fails
@@ -3107,7 +3107,7 @@ const DEFINITE_REJECTION_REPLY =
  * the node, or, when the body carries no code at all, one of Core's reject
  * reasons. It is consulted only for a 5xx other than 501, 505 and 511, where
  * a match makes the reply a definite `http` error instead of an
- * `unknown_outcome`; see the outcome table in `docs/broadcasting.md`.
+ * `unknown_outcome`; see the [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes).
  * Already-known replies are resolved before this is consulted.
  */
 function isDefiniteNodeRejection(reply: BroadcastReply): boolean {
