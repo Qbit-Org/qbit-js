@@ -4,6 +4,32 @@ Notable changes to `@qbit-oss/protocol` and `@qbit-oss/api`. Both packages share
 version (see [RELEASING.md](RELEASING.md)). Versions follow SemVer. Below 1.0,
 breaking changes bump MINOR.
 
+## 0.1.1 (unreleased)
+
+### @qbit-oss/protocol
+
+- `createP2mrPsbt`, `precomputeSighashMidstates`, `validateP2mrSigningPlans`,
+  `signP2mrPsbt` and `extractP2mrTransaction` handle transactions with any
+  number of inputs and outputs, as do `p2mrSighash` and `schnorrSignatureHash`
+  without cached `midstates`. They spread one call argument per input, output
+  or witness item, so past about 120,000 of them they threw a bare
+  `RangeError` on Node's main thread. A 1-input, 131,000-output PSBT that
+  `parsePsbt` accepts at the default limits could not be signed (the signer
+  was never called) or extracted, and a 40,000-input PSBT could not be
+  extracted. Output bytes and signature hashes are unchanged.
+- `decodePsbt`, and so `finalizeP2mrPsbt`, `validateP2mrSigningPlans` and
+  `signP2mrPsbt`, checks a PSBT's keys for duplicates by the ids `parsePsbt`
+  uses, so a key over 64 bytes is compared by its SHA-256. It built the full
+  hex of every key, and V8 hashes a string longer than 16,383 characters by its
+  length alone, so 2,000 distinct 8 KiB keys, within the default limits, took
+  2.5 to 3.7 s in our measurements instead of about 60 ms, and held twice the
+  key bytes in strings on the heap. Results and errors are unchanged.
+- `combinePsbts` accepts a map key over 64 bytes, such as a 65-byte script-sig
+  key, that is a `Uint8Array` subclass from another realm (vm, iframe,
+  worker), for example a `Buffer`, or with `@noble/hashes` before 1.3.3 any
+  `Uint8Array` from another realm. It threw a bare `TypeError` from
+  `@noble/hashes`, which rejects such arrays.
+
 ## 0.1.0 (unreleased)
 
 This is the first release line, and nothing has been published before. Changes
