@@ -2608,11 +2608,12 @@ export interface P2mrSighashParams {
 
 /**
  * Compute the qbit P2MR signature hash for one input. Byte-exact with qbit
- * Core `SignatureHashP2MR`. See docs/p2mr-sighash.md. Every txid, output and
- * spent-output `scriptPubKey` and the `annex` must be a `Uint8Array`, even
- * when `midstates` is given, and each `midstates` field a 32-byte one;
- * anything else throws `INVALID_BYTES` instead of returning a digest over
- * different bytes.
+ * Core `SignatureHashP2MR`. See
+ * [P2MR Signature Hash](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-sighash.md).
+ * Every txid, output and spent-output `scriptPubKey` and the `annex` must be
+ * a `Uint8Array`, even when `midstates` is given, and each `midstates` field
+ * a 32-byte one; anything else throws `INVALID_BYTES` instead of returning a
+ * digest over different bytes.
  *
  * @param params - The transaction, input index, spent outputs and leaf hash,
  * and optionally the sighash type, code-separator position, annex and cached
@@ -3761,7 +3762,14 @@ export type P2mrPsbtSigningPhase = 'sign' | 'onSigned'
  * phase `'sign'` has no stored signature, so the retry sends it to the signer
  * again with the same digest: a stateful signer must already have recorded
  * that key use when `sign` was called (see {@link P2mrPsbtSignFn}), and decide
- * from that record whether it may sign again.
+ * from that record whether it may sign again. If it may not, throwing would
+ * stop the retry at the same plan again, so drop its entry from the retry's
+ * `keys` (or have `sign` return `undefined` for it, which skips the plan).
+ * Then drop every entry that can no longer help finalize the transaction:
+ * the other entries for a leaf that cannot complete without that key (a
+ * `multi_a` leaf left short of its threshold, say), and every entry when an
+ * input is left with no leaf that can complete, since the transaction can
+ * then never be finalized. Signing those would spend key uses for nothing.
  *
  * @remarks
  * Its `code` is always `SIGNING_FAILED`. Recognize it with

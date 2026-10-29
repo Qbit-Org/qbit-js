@@ -103,7 +103,9 @@ Prettier skips what `.gitignore` lists and what `.prettierignore` excludes:
 anything: it reports undocumented exports, documented types that reference
 unexported ones, and `{@link}` tags that do not resolve. It then runs
 `scripts/check-doc-links.mjs`, which checks that every topic-page link in the
-doc comments names an existing page and heading.
+doc comments names an existing page and heading, and fails on a relative path
+into a `docs` directory anywhere in a doc comment outside code, in a link or
+in plain text: link a topic page by its https URL instead.
 `.github/workflows/docs.yml` runs both on pull requests and publishes the
 reference to GitHub Pages on pushes to `main`.
 
