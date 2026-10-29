@@ -37,6 +37,12 @@ export interface StubEsploraOptions {
   confirmedSats?: number
   mempoolSats?: number
   utxos?: EsploraUtxo[]
+  /**
+   * The most `utxos` rows the stub lists (default 500). Above it,
+   * `GET /address/:address/utxo` answers 400, as qbit-electrs does above its
+   * `--utxos-limit`, whose default is 500.
+   */
+  utxosLimit?: number
   /** Height of the chain tip (default 2,000). */
   tipHeight?: number
   /**
@@ -115,7 +121,16 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
         mempool_stats: stats(options.mempoolSats ?? 0, history.mempool.length),
       })
     }
-    if (method === 'GET' && path === `/address/${address}/utxo`) return json(options.utxos ?? [])
+    if (method === 'GET' && path === `/address/${address}/utxo`) {
+      const utxos = options.utxos ?? []
+      const limit = options.utxosLimit ?? 500
+      if (utxos.length > limit) {
+        return new Response(`Too many unspent transaction outputs (>${limit}). Contact support to raise limits.`, {
+          status: 400,
+        })
+      }
+      return json(utxos)
+    }
     if (method === 'GET' && path === `/address/${address}/txs/mempool`) return json(history.mempool)
     if (method === 'GET' && path === `/address/${address}/txs/chain`) return json(history.confirmed)
     if (method === 'GET' && path.startsWith(`/address/${address}/txs/chain/`)) return json([]) // after the one page

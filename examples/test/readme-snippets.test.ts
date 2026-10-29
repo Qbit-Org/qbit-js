@@ -30,9 +30,9 @@ function checkout(): string {
 }
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe' })
-const run = (root: string, mode: '--check' | '--write') =>
-  spawnSync(process.execPath, ['examples/scripts/readme-snippets.mjs', mode], { cwd: root, encoding: 'utf8' })
-const check = (root: string) => run(root, '--check')
+const run = (root: string, mode: '--check' | '--write', env?: NodeJS.ProcessEnv) =>
+  spawnSync(process.execPath, ['examples/scripts/readme-snippets.mjs', mode], { cwd: root, encoding: 'utf8', env })
+const check = (root: string, env?: NodeJS.ProcessEnv) => run(root, '--check', env)
 const read = (root: string, file: string) => readFileSync(join(root, file), 'utf8')
 
 const README = 'packages/api/README.md'
@@ -100,6 +100,36 @@ describe('readme-snippets.mjs', () => {
     expect(failed.stderr).toContain(`${other}:1: snippet markers are read only in the READMEs`)
   })
 
+  it('checks the READMEs without git, or outside a git checkout, and skips only the scan of other Markdown files', () => {
+    // A source tarball or a Docker context: the files, but no .git. Git must
+    // not find a repository above the copy either.
+    const unpacked = checkout()
+    rmSync(join(unpacked, '.git'), { recursive: true, force: true })
+    const outside = { ...process.env, GIT_CEILING_DIRECTORIES: dirname(unpacked) }
+    // A checkout on a machine without git.
+    const gitless = checkout()
+    const noGit = { ...process.env, PATH: join(gitless, 'no-git-here') }
+
+    for (const [root, env, reason] of [
+      [unpacked, outside, 'this is not a git checkout'],
+      [gitless, noGit, 'git is not installed'],
+    ] as const) {
+      const result = check(root, env)
+
+      expect(result.status, reason).toBe(0)
+      expect(result.stderr, reason).toContain(
+        `note: skipped the scan of other Markdown files for snippet markers: ${reason}`
+      )
+
+      // A block that differs from its region still fails.
+      writeFileSync(join(root, README), withStaleBlock(read(root, README)))
+      const stale = check(root, env)
+
+      expect(stale.status, reason).toBe(1)
+      expect(stale.stderr, reason).toContain(`the block differs from ${REGION}`)
+    }
+  })
+
   it('checks a CRLF checkout, and a README whose lines end in a mix of CRLF and LF', () => {
     const root = checkout()
     convertToCrlf(root)
@@ -123,7 +153,7 @@ describe('readme-snippets.mjs', () => {
     expect(stale.stderr).toContain(`${README}:${marker + 3}: the block differs from ${REGION}`)
   })
 
-  it('writes a README with the line ending most of its lines use, and never \\r\\r\\n', () => {
+  it('writes a block with the line ending most of its README uses, and never \\r\\r\\n', () => {
     const root = checkout()
     convertToCrlf(root)
     const current = read(root, README)
@@ -134,19 +164,42 @@ describe('readme-snippets.mjs', () => {
     expect(run(root, '--write').status).toBe(0)
     expect(read(root, README)).toBe(current)
 
-    // An LF README with one line pasted with CRLF: what --write writes ends in LF.
-    const lf = current.replace(/\r\n/g, '\n')
-    writeFileSync(join(root, README), withStaleBlock(lf.replace('\n', '\r\n')))
-
-    expect(run(root, '--write').status).toBe(0)
-    expect(read(root, README)).toBe(lf)
-    expect(check(root).status).toBe(0)
-
     // A README whose blocks match is left as it is, whatever its line endings.
-    const mixed = lf.replace('\n', '\r\n')
+    const mixed = current.replace(/\r\n/g, '\n').replace('\n', '\r\n')
     writeFileSync(join(root, README), mixed)
 
     expect(run(root, '--write').status).toBe(0)
     expect(read(root, README)).toBe(mixed)
+  })
+
+  it('keeps every line outside a block it rewrites as it was, ending included', () => {
+    const root = checkout()
+    const lines = read(root, README)
+      .replace(/\r\n/g, '\n')
+      .split(/(?<=\n)/)
+    const marker = lines.findIndex(line => line.startsWith('<!-- snippet: '))
+    const close = lines.findIndex((line, index) => index > marker + 1 && line.startsWith('```'))
+    const lf = (line: string) => line
+    const crlf = (line: string) => line.replace(/\n$/, '\r\n')
+    const endsOtherwise = (index: number) => index === 0 || index === marker || index === close
+    const inBlock = (index: number) => index > marker + 1 && index < close
+
+    // Most lines end in LF, then in CRLF. The title, the marker and the closing
+    // fence end in the other, and so do the block's lines until --write
+    // rewrites them with the ending most lines use.
+    for (const [usual, other] of [
+      [lf, crlf],
+      [crlf, lf],
+    ] as const) {
+      const written = lines.map((line, index) => (endsOtherwise(index) ? other(line) : usual(line))).join('')
+      const stale = lines
+        .map((line, index) => (endsOtherwise(index) || inBlock(index) ? other(line) : usual(line)))
+        .join('')
+      writeFileSync(join(root, README), withStaleBlock(stale))
+
+      expect(run(root, '--write').status).toBe(0)
+      expect(read(root, README)).toBe(written)
+      expect(check(root).status).toBe(0)
+    }
   })
 })

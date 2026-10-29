@@ -41,6 +41,18 @@ which derives them from fixed, public bytes so that every run signs the same
 transaction. Anyone can recompute those keys: never fund their addresses or
 derive keys that way in a wallet.
 
+## Addresses with many outputs
+
+`send-payment.ts` lists the address's unspent outputs with one
+`GET /address/:address/utxo`. qbit-electrs refuses that for an address with
+more outputs than its `--utxos-limit`, 500 by default, and the payment then
+fails with a `too_many_utxos` `SendPaymentError` before any key is used. A
+regtest wallet that mined to its own address the 1,000 or more blocks a
+coinbase output needs to mature holds a coinbase output for each block, so it
+has more than 500. Raise the backend's `--utxos-limit`, consolidate the outputs
+into fewer with a backend that lists them all, or mine to an address other than
+the wallet's and send the wallet only what it needs.
+
 ## Broadcasting
 
 `send-payment.ts` follows
@@ -57,13 +69,16 @@ transaction may already be on the network, so it looks the txid up with `getTx`
 before it resubmits anything, resubmits only the same hex, and never rebuilds
 the payment. A lookup finds the transaction only when the reply's `txid` is its
 txid, since `getTx` returns the reply as parsed, without checking that it is the
-transaction requested. Until less than two poll intervals are left, every
-lookup and resubmission must end a poll interval before the deadline, so one
-that stalls leaves that time to a last round. That round looks the
-transaction up once more, with at most half of the time then left, resubmits
-once with the rest if that lookup does not find it, and stops, so a short
-deadline still settles a transaction that never reached the node, even when
-the indexer or an earlier resubmission stalls, without a burst of requests. A
+transaction requested. The first broadcast must end a poll interval before the
+deadline, and so must every lookup and resubmission until less than two poll
+intervals are left, so one that stalls leaves that time to a last round. That
+round looks the transaction up once more, with at most half of the time then
+left, resubmits once with the rest if that lookup does not find it, and stops,
+so a short deadline still settles a transaction that never reached the node,
+even when the first broadcast, the indexer or an earlier resubmission stalls,
+without a burst of requests. Only when no more than a poll interval is left
+before the first broadcast does it get all of that time, since there is no
+room for a later round. A
 `not_found` lookup only means the indexer does not know the transaction yet.
 `getTxStatus` cannot tell either way, since qbit-electrs answers
 `{ confirmed: false }` for a txid it has never seen. One deadline covers the
@@ -88,7 +103,11 @@ a payment built from other inputs.
 // or sent if it did, or if the deadline passed.
 await sleep(0, signal)
 signal.throwIfAborted()
-const deadlineMs = msLeft(end) // a deadline that has passed sends nothing
+// The POST ends a poll interval before the deadline, so that if it stalls,
+// reconcileBroadcast still has its last round to resubmit. With no more
+// than that left, there is no room for that round: the POST gets it all.
+const left = msLeft(end) // a deadline that has passed sends nothing
+const deadlineMs = left > pollMs ? left - pollMs : left
 // Another call may have stored a payment while this one scanned and signed.
 // Check again, with no await before the save, so that only one of them pays.
 refuseWhilePending(store)
@@ -127,7 +146,10 @@ when a copy differs from its region. The script lists every copied block, so
 it also fails when a marker is deleted or a new one is not listed. It reads
 markers only in `README.md`, `examples/README.md` and `packages/*/README.md`,
 and fails on a marker in any other Markdown file git tracks, whose block it
-would never check. A tracked file missing from the working tree holds no
-marker, so it skips that file with a note. Line endings do not count, so a CRLF
-checkout checks the same as an LF one, and `--write` writes a README with the
-line ending most of its lines use.
+would never check. Without git, or outside a git checkout, as in a source
+tarball, it skips that scan with a note and still checks the READMEs. A tracked
+file missing from the working tree holds no marker, so it skips that file with
+a note. Line endings do not count, so a CRLF
+checkout checks the same as an LF one. `--write` keeps every line outside the
+blocks it changes as it was, ending included, and ends the lines it writes with
+the line ending most of the README's lines use.

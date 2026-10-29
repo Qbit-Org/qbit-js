@@ -25,12 +25,15 @@
 // Only the READMEs are scanned: README.md, examples/README.md and
 // packages/*/README.md. A marker in any other Markdown file that git tracks
 // fails both modes too, since its block would never be checked; listing those
-// files needs git. A tracked file missing from the working tree, deleted but
-// not yet removed with `git rm`, holds no marker: it is skipped with a note.
+// files needs git. Without git, or outside a git checkout, such as in a source
+// tarball, that scan alone is skipped with a note, and the READMEs are still
+// checked. A tracked file missing from the working tree, deleted but not yet
+// removed with `git rm`, holds no marker: it is skipped with a note.
 //
 // Line endings do not count, so a CRLF checkout, or a README whose lines end
-// in a mix of CRLF and LF, checks the same as an LF one. --write rewrites a
-// README whose blocks it changes with the line ending most of its lines use.
+// in a mix of CRLF and LF, checks the same as an LF one. --write keeps every
+// line outside the blocks it changes as it was, ending included, and ends the
+// lines it writes with the line ending most of the README's lines use.
 //
 //   node examples/scripts/readme-snippets.mjs --check   exit 1 if a block is out of date
 //   node examples/scripts/readme-snippets.mjs --write   rewrite the blocks that are
@@ -74,10 +77,14 @@ const drift = []
 const problems = []
 for (const readme of readmes) {
   const original = readFileSync(join(repoRoot, readme), 'utf8')
-  // The lines without their endings, and the ending most of them use.
+  // The lines without their endings, each line's own ending, which --write
+  // keeps outside the blocks it changes, and the ending most lines use, which
+  // it gives the lines it writes.
   const lines = original.split(/\r?\n/)
-  const crlf = original.split('\r\n').length - 1
-  const eol = crlf > lines.length - 1 - crlf ? '\r\n' : '\n'
+  const endings = original.match(/\r?\n/g) ?? []
+  endings.push('') // the last line has none
+  const crlf = endings.filter(ending => ending === '\r\n').length
+  const eol = crlf > endings.length - 1 - crlf ? '\r\n' : '\n'
   let changed = false
   for (let index = 0; index < lines.length; index += 1) {
     const marker = MARKER.exec(lines[index])
@@ -118,19 +125,20 @@ for (const readme of readmes) {
           `  example: ${JSON.stringify(expected[first] ?? '(region ends)')}`
       )
       lines.splice(start, end - start, ...expected)
+      endings.splice(start, end - start, ...expected.map(() => eol))
       changed = true
     }
     index = start + expected.length
   }
   if (mode === '--write' && changed) {
-    writeFileSync(join(repoRoot, readme), lines.join(eol))
+    writeFileSync(join(repoRoot, readme), lines.map((line, i) => line + endings[i]).join(''))
     console.log(`updated ${readme}`)
   }
 }
 
 // A marker outside the READMEs scanned above would leave its block unchecked.
-const tracked = execFileSync('git', ['ls-files', '-z', '--', '*.md'], { cwd: repoRoot, encoding: 'utf8' })
-for (const path of tracked.split('\0').filter(path => path !== '' && !readmes.includes(path))) {
+const tracked = trackedMarkdown().split('\0')
+for (const path of tracked.filter(path => path !== '' && !readmes.includes(path))) {
   // git lists the index, which still holds a file deleted from the working tree.
   if (!existsSync(join(repoRoot, path))) {
     console.warn(`note: skipped ${path}: git tracks it, but it is not in the working tree`)
@@ -159,6 +167,33 @@ if (mode === '--check' && drift.length > 0) {
 }
 if (problems.length > 0 || (mode === '--check' && drift.length > 0)) process.exit(1)
 console.log(`readme snippets: ${found.length} ${mode === '--check' ? 'checked' : 'up to date'}`)
+
+/**
+ * The Markdown files git tracks, NUL-separated, or none, after a note, when
+ * git is missing or the repository root is not in a git checkout. Any other
+ * failure of git throws.
+ */
+function trackedMarkdown() {
+  try {
+    return execFileSync('git', ['ls-files', '-z', '--', '*.md'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      // Untranslated messages, so that "not a git repository" can be recognized.
+      env: { ...process.env, LC_ALL: 'C' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+  } catch (error) {
+    const reason =
+      error.code === 'ENOENT'
+        ? 'git is not installed'
+        : /not a git repository/.test(String(error.stderr))
+          ? 'this is not a git checkout'
+          : undefined
+    if (reason === undefined) throw error
+    console.warn(`note: skipped the scan of other Markdown files for snippet markers: ${reason}`)
+    return ''
+  }
+}
 
 /** The lines of region `name` in `source`, each part dedented and parts joined by a blank line. */
 function readRegion(source, name) {

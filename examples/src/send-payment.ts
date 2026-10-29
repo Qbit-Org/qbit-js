@@ -114,7 +114,11 @@ export interface SendPaymentParams {
   deadlineMs: number
   /** Cancels the payment. Once the transaction may have been sent, the outcome stays unknown. */
   signal: AbortSignal
-  /** Wait between status checks after an unknown outcome (default 2 s), at most 2,147,483,647 ms. */
+  /**
+   * Wait between status checks after an unknown outcome, and the time the
+   * first broadcast leaves them before the deadline (default 2 s), at most
+   * 2,147,483,647 ms.
+   */
   pollMs?: number
 }
 
@@ -129,6 +133,16 @@ export interface SendPaymentParams {
  *   most 2,147,483,647, the longest delay a timer supports. `reconcileBroadcast`
  *   applies the same rules to its `pollMs`, and to the time left before its
  *   `end` unless `end` has passed; its transaction stays pending.
+ * - `too_many_utxos`: the backend refuses to list the address's unspent
+ *   outputs because there are more than it lists for one address.
+ *   qbit-electrs refuses above its `--utxos-limit`, 500 by default, with a
+ *   400 whose body starts "Too many unspent transaction outputs"; it is
+ *   recognized by that status and body, and any other failure of the scan is
+ *   the client's `QbitApiError`, unchanged. A regtest wallet that mined the
+ *   blocks its coinbase outputs need to mature to its own address has more
+ *   than 500. Raise the backend's `--utxos-limit`, consolidate the outputs
+ *   into fewer with a backend that lists them all, or mine to an address
+ *   other than the wallet's and send the wallet only what it needs.
  * - `invalid_utxos`: the backend's UTXO list is malformed or lists an outpoint twice.
  * - `insufficient_funds`: the confirmed outputs worth more than the fee to
  *   spend them cannot cover the amount and the fee.
@@ -149,6 +163,7 @@ export type SendPaymentErrorCode =
   | 'invalid_amount'
   | 'invalid_fee_rate'
   | 'invalid_options'
+  | 'too_many_utxos'
   | 'invalid_utxos'
   | 'insufficient_funds'
   | 'too_many_inputs'
@@ -211,12 +226,25 @@ const MAX_INPUTS = Math.floor((400_000 - OVERHEAD_BYTES - 2 * OUTPUT_BYTES) / IN
  * The fewest confirmations a coinbase output needs before a payment spends it,
  * 1,001: `QBIT_COINBASE_MATURITY` plus one, as qbit Core's own wallet counts
  * it (`CWallet::GetTxBlocksToMaturity`, src/wallet/wallet.cpp:4386-4395 @
- * v1.0.0, 7ebcddb622d6e639041f005a189b048ec2a221fe). The mempool takes a spend
- * at 1,000 confirmations (src/consensus/tx_verify.cpp:179), but the tip height
- * comes from the indexer, which may be a block ahead of the node that checks
- * the broadcast, and the node checks a coinbase spend again at its new tip
- * after a reorg (src/validation.cpp:956), so one made at exactly 1,000 leaves
- * its mempool if a reorg leaves the tip a block lower.
+ * v1.0.0, 7ebcddb622d6e639041f005a189b048ec2a221fe). A node's mempool takes a
+ * spend once the output has 1,000 confirmations at the node's own tip
+ * (src/consensus/tx_verify.cpp:179), and after a reorg it checks a coinbase
+ * spend again at its new tip and evicts one that is no longer mature
+ * (src/validation.cpp:406-407).
+ *
+ * The extra block keeps the spend mature while the node's tip is at most one
+ * block below the indexer's tip height that the payment counted from. That
+ * covers an indexer one block ahead of the node that checks the broadcast, or
+ * a reorg that leaves that node's tip one block lower after it took the spend,
+ * but not both together. Two or more blocks below, the spend is premature.
+ * Then the node rejects the broadcast with
+ * `bad-txns-premature-spend-of-coinbase`, which `broadcastTx` reports as `http`
+ * (packages/api/docs/broadcasting.md), so `sendPayment` drops the transaction
+ * and rejects with that error, having paid nothing. Or, if the node took the
+ * spend first, a reorg evicts it from the mempool although `sendPayment`
+ * resolved: the transaction stays pending until the wallet settles it with
+ * `reconcileBroadcast`, whose resubmission of the same hex the node takes once
+ * the output is mature at its tip again.
  */
 const COINBASE_SPEND_DEPTH = QBIT_COINBASE_MATURITY + 1
 
@@ -258,7 +286,10 @@ const NOT_ACCEPTED = new Set<QbitApiErrorKind>([
  * lookups; a lookup fails with `parse` when the reply is not that transaction
  * or does not say whether it is a coinbase transaction. Only a payment that
  * became pending while this one signed is found after signing, still before
- * anything is stored or sent.
+ * anything is stored or sent. The signer loads within the same deadline: if
+ * it has not loaded when the deadline passes or `signal` aborts, the payment
+ * rejects with a `timeout` QbitApiError or the signal's reason, while the
+ * load, which later calls share, carries on.
  *
  * If signing fails, it rejects with the `P2mrPsbtSigningError` and stores or
  * sends no transaction. Starting over is safe, since nothing was sent. To
@@ -271,6 +302,13 @@ const NOT_ACCEPTED = new Set<QbitApiErrorKind>([
  * the store missed the signature for `error.failed`, so save it from
  * `error.psbt` first. Then finalize, extract, store and broadcast as steps 5
  * to 7 below do.
+ *
+ * The first broadcast must end a poll interval before the deadline, as each
+ * request before `reconcileBroadcast`'s last round must, so that if it stalls,
+ * that round still has time to look the transaction up and resubmit it. When
+ * no more than a poll interval is left before it, there is no room for a later
+ * round, so the broadcast gets all that is left; if it then stalls, the
+ * payment rejects with `unknown_outcome` and the transaction stays pending.
  */
 export async function sendPayment(params: SendPaymentParams): Promise<{ txid: string; rawTxHex: string }> {
   const { client, key, to, amountSats, feeRate, store, signal, pollMs = 2_000 } = params
@@ -286,11 +324,16 @@ export async function sendPayment(params: SendPaymentParams): Promise<{ txid: st
 
   // 1. Find the outputs to spend, and the chain's height, while the WASM
   // signer loads (init() loads it once; later calls share it). Every step gets
-  // what is left of the one deadline.
+  // what is left of the one deadline. The clock is read once for both
+  // requests: had the deadline passed between two readings, msLeft would throw
+  // with the scan already started and nothing to handle its rejection.
   const from = p2mrAddressFromPubkey(key.pk32, network)
-  const scan = client.getAddressUtxos(from, { signal, deadlineMs: msLeft(end) })
-  const tip = client.getTipHeight({ signal, deadlineMs: msLeft(end) })
-  const [pqc, rows, tipHeight] = await Promise.all([init(), scan, tip])
+  const requestMs = msLeft(end)
+  const scan = client.getAddressUtxos(from, { signal, deadlineMs: requestMs }).catch((error: unknown) => {
+    throw tooManyUtxos(error, from) ?? error
+  })
+  const tip = client.getTipHeight({ signal, deadlineMs: requestMs })
+  const [pqc, rows, tipHeight] = await Promise.all([waitWithin(init(), end, signal), scan, tip])
   const utxos = checkedUtxos(rows, message => new SendPaymentError('invalid_utxos', message)).filter(
     utxo => utxo.status?.confirmed === true // this example spends confirmed outputs only
   )
@@ -363,7 +406,11 @@ export async function sendPayment(params: SendPaymentParams): Promise<{ txid: st
   // or sent if it did, or if the deadline passed.
   await sleep(0, signal)
   signal.throwIfAborted()
-  const deadlineMs = msLeft(end) // a deadline that has passed sends nothing
+  // The POST ends a poll interval before the deadline, so that if it stalls,
+  // reconcileBroadcast still has its last round to resubmit. With no more
+  // than that left, there is no room for that round: the POST gets it all.
+  const left = msLeft(end) // a deadline that has passed sends nothing
+  const deadlineMs = left > pollMs ? left - pollMs : left
   // Another call may have stored a payment while this one scanned and signed.
   // Check again, with no await before the save, so that only one of them pays.
   refuseWhilePending(store)
@@ -479,7 +526,8 @@ export async function reconcileBroadcast(
  * released nothing.
  *
  * - `invalid_options`: `deadlineMs` is not a number above 0 and at most 2,147,483,647.
- * - `not_pending`: the store holds no pending transaction `txid`.
+ * - `not_pending`: the store holds no pending transaction `txid`, or the hex
+ *   it holds for it is not that transaction, or not a whole transaction.
  * - `known`: the indexer knows the transaction, in its mempool or in a block,
  *   so it is not stuck: settle it with `reconcileBroadcast`.
  * - `invalid_utxos`: the backend's UTXO list is malformed or lists an outpoint twice.
@@ -743,10 +791,35 @@ function refuseWhilePending(store: PaymentStore): void {
 /** The hex `store` holds for its pending transaction `txid`; throws a `not_pending` AbandonPaymentError otherwise. */
 function pendingHex(store: PaymentStore, txid: string): string {
   const pending = store.pendingTransaction()
-  if (pending === undefined || pending.txid !== txid || txidFromRawTx(pending.rawTxHex) !== txid) {
+  if (pending === undefined || pending.txid !== txid || txidOf(pending.rawTxHex) !== txid) {
     throw new AbandonPaymentError('not_pending', `transaction ${txid} is not pending`, txid)
   }
   return pending.rawTxHex
+}
+
+/** `txidFromRawTx(rawTxHex)`, or undefined when `rawTxHex` is not a whole transaction. */
+function txidOf(rawTxHex: string): string | undefined {
+  try {
+    return txidFromRawTx(rawTxHex)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * A `too_many_utxos` SendPaymentError when `error` is qbit-electrs refusing to
+ * list `address`'s unspent outputs because there are more than its
+ * `--utxos-limit`: an `http` error for a 400 whose body starts "Too many
+ * unspent transaction outputs". Undefined for any other error.
+ */
+function tooManyUtxos(error: unknown, address: string): SendPaymentError | undefined {
+  if (!QbitApiError.is(error) || error.kind !== 'http' || error.status !== 400) return undefined
+  const body = error.responseBody ?? ''
+  if (!body.startsWith('Too many unspent transaction outputs')) return undefined
+  return new SendPaymentError(
+    'too_many_utxos',
+    `the backend refuses to list the unspent outputs of ${address}, which has more than it lists for one address ("${body}"): raise its --utxos-limit, or consolidate the outputs`
+  )
 }
 
 /**
@@ -840,8 +913,38 @@ async function isCoinbaseTx(client: EsploraClient, txid: string, options: Reques
  */
 function msLeft(end: number): number {
   const left = end - Date.now()
-  if (left <= 0) throw new QbitApiError('timeout', 'the payment deadline passed')
+  if (left <= 0) throw deadlinePassed()
   return left
+}
+
+/** The `timeout` QbitApiError for a payment whose deadline passed. */
+function deadlinePassed(): QbitApiError {
+  return new QbitApiError('timeout', 'the payment deadline passed')
+}
+
+/**
+ * Settle as `promise` does, unless `end` passes or `signal` aborts first: then
+ * reject with the `timeout` QbitApiError `msLeft` throws, or with the signal's
+ * reason, as `signal.throwIfAborted()` does. Only the wait stops, not the work
+ * behind `promise`, and a rejection that comes after the wait stopped is
+ * handled here, never left unhandled. Cleans up its timer and listener either way.
+ */
+function waitWithin<T>(promise: Promise<T>, end: number, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const settle = (finish: () => void) => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', onAbort)
+      finish()
+    }
+    const onAbort = () => settle(() => reject(signal.reason))
+    const timer = setTimeout(() => settle(() => reject(deadlinePassed())), end - Date.now())
+    signal.addEventListener('abort', onAbort)
+    if (signal.aborted) onAbort()
+    promise.then(
+      value => settle(() => resolve(value)),
+      (error: unknown) => settle(() => reject(error))
+    )
+  })
 }
 
 /** Wait `ms`, or less if `signal` aborts. Cleans up its timer and listener either way. */
