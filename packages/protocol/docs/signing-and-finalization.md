@@ -12,7 +12,10 @@ recover from partial signing, enforce sighash types and pick a witness.
   each key use in `sign` before signing, not in `onSigned`; `'onSigned'`: its
   signature is already stored), so a retry passes that PSBT back in with only
   the unsigned plans, which include a `'sign'`-phase failed plan: the signer
-  is called for it again with the same digest; `sign` and `onSigned` must both
+  is called for it again with the same digest, so a stateful signer keys its
+  record by digest, signs that same digest again, and refuses any other (a
+  signer that cannot re-sign the same digest is left out of the retry's
+  `keys`); `sign` and `onSigned` must both
   be synchronous, and one that returns a promise fails its plan the same way
   (the promise is never left unhandled);
   a signature `Uint8Array` from another realm (vm, iframe, worker) is accepted
