@@ -1,0 +1,13 @@
+{
+  // The repository's strict settings. The examples import @qbit-oss/protocol
+  // and @qbit-oss/api as a consumer does, through their built lib/ type
+  // declarations, so run `pnpm build` first.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "test"]
+}

@@ -1,5 +1,7 @@
 packages:
   - 'packages/*'
+  # Private, never published: runnable examples that test against the built packages.
+  - 'examples'
 
 # pnpm 11 reads only camelCase settings from this file; kebab-case keys are ignored.
 preferWorkspacePackages: true

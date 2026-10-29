@@ -15,6 +15,28 @@ importers:
         specifier: 0.28.20
         version: 0.28.20(typescript@5.9.3)
 
+  examples:
+    dependencies:
+      '@qbit-oss/api':
+        specifier: workspace:*
+        version: link:../packages/api
+      '@qbit-oss/pqc':
+        specifier: 0.1.0
+        version: 0.1.0
+      '@qbit-oss/protocol':
+        specifier: workspace:*
+        version: link:../packages/protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^22.20.5
+        version: 22.20.5
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(@types/node@22.20.5)(vite@8.3.5(@types/node@22.20.5)(esbuild@0.27.7)(yaml@2.9.1))
+
   packages/api:
     dependencies:
       '@noble/hashes':
@@ -240,6 +262,10 @@ packages:
 
   '@oxc-project/types@0.155.0':
     resolution: {integrity: sha512-SeE8JPwW1xs1tHeNycjUtUBdhorRa8o4jlvjwk49R7/Z291i+4DQa7JJIgOm/TaYQZx+QrPQbVJ/9c8dMIZN8Q==}
+
+  '@qbit-oss/pqc@0.1.0':
+    resolution: {integrity: sha512-NZAWoRggBtQHdCyXFfA4odcgnxedrwV57nZMHkhutS/UnPpzNBGwVPUMQcmIfxlF9IPU5Q0FRtJ5VnoQ59vqCA==}
+    engines: {node: ^20.19.0 || >=22.12.0}
 
   '@rolldown/binding-android-arm-eabi@1.2.15':
     resolution: {integrity: sha512-aLcgK9gIJ3YRvrrtfSBbRa27F5WrpiTaPulnFpsHPxpUHgFlSgnU4854MHwoRGEBhfRJDWCS2WQ7lIjskE9Olw==}
@@ -1113,6 +1139,8 @@ snapshots:
   '@noble/hashes@1.8.0': {}
 
   '@oxc-project/types@0.155.0': {}
+
+  '@qbit-oss/pqc@0.1.0': {}
 
   '@rolldown/binding-android-arm-eabi@1.2.15':
     optional: true

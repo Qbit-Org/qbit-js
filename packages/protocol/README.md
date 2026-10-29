@@ -51,9 +51,19 @@ another realm (vm, iframe, worker) is accepted; see
 
 ## Quick start
 
+<!-- snippet: examples/src/protocol-quick-start.ts#quick-start -->
 ```ts
-import { addressToScriptPubKey, buildControlBlock, createP2mrPsbt, hexToBytes, p2mrAddressFromPubkey,
-  p2mrLeafHash, P2MR_LEAF_VERSION_V1, singleKeyLeafScript, validateP2mrSigningPlans } from '@qbit-oss/protocol'
+import {
+  addressToScriptPubKey,
+  buildControlBlock,
+  createP2mrPsbt,
+  hexToBytes,
+  p2mrAddressFromPubkey,
+  p2mrLeafHash,
+  P2MR_LEAF_VERSION_V1,
+  singleKeyLeafScript,
+  validateP2mrSigningPlans,
+} from '@qbit-oss/protocol'
 
 const fundingTxid = '0123456789abcdef'.repeat(4) // placeholder: the txid of the output you spend
 const pubkey = hexToBytes('02'.repeat(32)) // placeholder: 32-byte public key from your PQC signer
@@ -62,7 +72,14 @@ const scriptPubKey = addressToScriptPubKey(address, 'regtest')
 const leafScript = singleKeyLeafScript(pubkey)
 const txid = hexToBytes(fundingTxid).reverse() // fundingTxid as an explorer shows it, reversed to internal order
 const psbt = createP2mrPsbt({
-  inputs: [{ prevout: { txid, vout: 0 }, witnessUtxo: { value: 100_000n, scriptPubKey }, leafScript, controlBlock: buildControlBlock() }],
+  inputs: [
+    {
+      prevout: { txid, vout: 0 },
+      witnessUtxo: { value: 100_000n, scriptPubKey },
+      leafScript,
+      controlBlock: buildControlBlock(),
+    },
+  ],
   outputs: [{ value: 99_000n, scriptPubKey }], // pays back to the same address
 })
 const keys = [{ inputIndex: 0, pubkey, leafHash: p2mrLeafHash(P2MR_LEAF_VERSION_V1, leafScript) }]
@@ -75,6 +92,7 @@ sighash it is given. Pass the `psbt` it returns to `finalizeP2mrPsbt`, then
 `extractP2mrTransaction` returns the transaction as bytes. `@qbit-oss/api`'s
 `broadcastTx` takes hex, so send `bytesToHex(tx)`.
 See [Signing and finalization](docs/signing-and-finalization.md).
+The whole payment, signed with `@qbit-oss/pqc`, is in [examples/src/send-payment.ts](https://github.com/Qbit-Org/qbit-js/blob/main/examples/src/send-payment.ts).
 
 ## Common tasks
 
