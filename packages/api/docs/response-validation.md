@@ -20,11 +20,9 @@ witness stack is empty (a stack holding one empty item is not empty); the
 same rules apply to `txidFromRawTx`. Spaces, tabs and line breaks around the
 hex are ignored, such as the line break qbit Core's REST interface appends.
 Anything else throws a `parse` `QbitApiError`, and the hex is returned in
-lowercase.
-mempool.qbit.org currently answers this route with `200` and an empty body, so
-`getTxHex` throws there until the backend is fixed. The txid does not commit
-to witness data, so a reply whose witnesses were altered or stripped still
-passes; compare the wtxid if you rely on them.
+lowercase. The txid does not commit to witness data, so a reply whose
+witnesses were altered or stripped still passes; compare the wtxid if you rely
+on them.
 
 `getFeeTiers()` and `feeTiersFromEstimates()` require every confirmation
 target to be a decimal block count from 1 to 1008 (the longest horizon Core's

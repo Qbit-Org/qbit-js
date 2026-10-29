@@ -5,18 +5,15 @@ every client method.
 
 - Per-request timeout (`AbortController`) covering both the response headers
   and the full body, error bodies included; a body that stalls is cancelled.
-  For a read, not a submission, it fails as `timeout` (retried with backoff,
-  not `Retry-After`). A submission whose reply stalls or cannot be read is
-  never re-sent, since the node may already have it: it rejects with
-  `unknown_outcome` (see [Broadcasting](broadcasting.md)). The exception is a `429`, which
-  proves nothing was processed even when its body is lost: it is retried with
-  backoff, and rejects as `rate_limit` once retries run out.
-- Retry with exponential backoff on network errors, timeouts, `5xx`, and `429`
-  (honoring `Retry-After` up to `maxRetryAfterMs`, default 30 s) for reads. When
+  For a read it fails as `timeout` (retried with backoff, not `Retry-After`);
+  for a submission, see the [outcome table](broadcasting.md#outcomes).
+- Retry with exponential backoff on network errors, timeouts, `500`, `502`,
+  `503`, `504` and `429` (honoring `Retry-After` up to `maxRetryAfterMs`,
+  default 30 s) for reads; other `5xx` replies are not retried. When
   the server asks for a longer wait, the client does not sleep: it throws the
   `rate_limit` / `http` error immediately with `retryAfterMs` set so the UI can
-  decide when to try again. Submissions follow the stricter policy in
-  [Broadcasting](broadcasting.md): an attempt that may have reached the node is never re-sent.
+  decide when to try again. Submissions are retried only as the
+  [outcome table](broadcasting.md#outcomes) says.
 - Cancellation and an overall deadline per call: every method accepts a final
   `{ signal, deadlineMs }` options argument (`getAddressHistory` takes them
   alongside `maxPages`/`maxTransactions`, `broadcastTx` alongside `txid`).
@@ -26,17 +23,9 @@ every client method.
   `cause` is the signal's reason; an expired `deadlineMs` rejects with kind
   `timeout` and is not retried. A constructor `signal` cancels every call on
   the client.
-- **`broadcastTx`** (either client, including the mempool-qbit `/tx/push`
-  fallback): an abort or expired deadline before the POST is sent rejects with
-  `aborted` / `timeout`, and nothing was submitted. Once the POST may have been
-  sent — while it is in flight or its reply body is being read — the call
-  rejects with `unknown_outcome` carrying `txid`, with the `aborted` /
-  `timeout` error as `cause`; check `getTxStatus(error.txid)` before
-  resubmitting (see [Broadcasting](broadcasting.md)). The client never re-sends a POST after an
-  abort, an expired deadline, or an attempt that hit `timeoutMs`. A `429`
-  reply is the exception: it proves nothing was submitted, so an abort or
-  deadline while its body is read rejects with `aborted` / `timeout`, and a
-  `429` whose body hit `timeoutMs` is retried like any other `429`.
+- **`broadcastTx`** (either client, including the `/tx/push` fallback): what an
+  abort, an expired deadline or an attempt timeout means for a submission is in
+  the [outcome table](broadcasting.md#outcomes).
 - An abort or expired deadline while a response body is still streaming
   cancels that body stream, releasing the connection. For de-duplicated
   `GET`s, the shared body is cancelled only once every caller reading it has
@@ -50,7 +39,8 @@ every client method.
   (413), `not_found` (404), `http`, `network`, `timeout`, `aborted`, `parse`,
   `pagination_limit` (a history scan hit `maxPages` / `maxTransactions`),
   `invalid_cursor` (a history scan could not be shown complete; retry it), and
-  `unknown_outcome` (a submission may have reached the node; carries `txid`).
+  `unknown_outcome` (a submission may have reached the node; carries `txid`
+  when one is known).
 - `QbitApiError.is(error)` recognizes a `QbitApiError` from any copy of this
   package. Use it instead of `instanceof` where the app can load both the
   CommonJS and the ESM build (an ESM app with a CommonJS dependency, or a

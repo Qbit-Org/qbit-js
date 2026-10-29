@@ -52,12 +52,12 @@ was created and is kept as it is.
 
 Two values are your own and pass through unchanged: an `aborted` error's
 `cause` is your signal's `reason`, and a `QbitApiError` thrown by a custom
-`fetchFn` propagates as it is (or becomes the `cause` of an
-`unknown_outcome`), so redact those yourself if they can carry the base URL.
+`fetchFn` propagates as it is or as the `cause` of another error (for a
+submission, see the [outcome table](broadcasting.md#outcomes)), so redact those
+yourself if they can carry the base URL.
 That includes a `QbitApiError` from another copy of this package (the other
 build, recognized as `QbitApiError.is` does). The client judges such an error
 by its public fields only, since its original cause and response body stay
-private to the copy that created it: on a submission, a `network` error from
-another copy never counts as proof that nothing was sent (it becomes
-`unknown_outcome`), and its response body never triggers the `/tx/push`
-fallback.
+private to the copy that created it; the
+[outcome table](broadcasting.md#outcomes) says what that means for a
+submission.

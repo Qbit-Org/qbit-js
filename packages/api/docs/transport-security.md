@@ -25,13 +25,8 @@ means for React Native and custom `fetchFn`s.
   dropped, but the request is still sent. If your `headers` need protecting on
   such a runtime, pass a `fetchFn` that honours `redirect: 'manual'`. The same
   applies to any custom `fetchFn`.
-- On `broadcastTx` (either client) a refused redirect of any kind rejects with
-  `unknown_outcome` carrying `txid` instead, with the `http` refusal as
-  `cause`. The `POST` reached the backend, which may have accepted it before
-  redirecting (a `303` can follow an accepted submission), and a runtime that
-  followed the redirect may have re-sent it to the target (`307` / `308`). It
-  is never re-sent, retried or sent to the `/tx/push` fallback: check
-  `getTxStatus(error.txid)` as for any `unknown_outcome`.
+- On `broadcastTx`, a refused redirect is an `unknown_outcome`, not an `http`
+  error ([outcome table](broadcasting.md#outcomes)).
 - A custom `fetchFn` must return a `Response` whose `url` is the URL it was
   given, or empty. A wrapper that rewrites the request URL (to add a query
   parameter or a path prefix, say) and returns the rewritten `url` has every

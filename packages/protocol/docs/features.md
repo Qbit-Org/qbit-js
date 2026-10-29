@@ -4,6 +4,13 @@ Everything `@qbit-oss/protocol` provides; entries with more detail link to their
 own page.
 
 - network parameters for qbit mainnet, testnet4, signet, and regtest
+- `QBIT_COINBASE_MATURITY` (1000): a coinbase output can be spent once it has
+  this many confirmations, on every qbit network (qbit Core
+  `src/consensus/consensus.h` `COINBASE_MATURITY`). No helper in this package
+  applies it, so wallet coin selection must skip a coinbase output until it has
+  at least 1000 confirmations: qbit Core rejects a spend whose block height is
+  less than 1000 above the coinbase's as `bad-txns-premature-spend-of-coinbase`
+  (`src/consensus/tx_verify.cpp`)
 - strict P2MR bech32m address encode/decode (printable ASCII only, 90-character
   limit, and no mixed case, matching qbit Core's `bech32::Decode`)
 - P2MR single-key leaf scripts, merkle roots, control blocks, and scriptPubKeys

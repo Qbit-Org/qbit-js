@@ -5,8 +5,8 @@ import { describe, expect, it } from 'vitest'
 
 import { EsploraClient, MempoolQbitClient, QbitApiError, txidFromRawTx } from '../src/index'
 
-// mempool.qbit.org answers `GET /api/tx/<txid>/hex` with 200 and an empty
-// text/plain body, and getTxHex used to resolve with ''. It now checks the
+// mempool.qbit.org once answered `GET /api/tx/<txid>/hex` with 200 and an
+// empty text/plain body, and getTxHex resolved with ''. It now checks the
 // reply is the requested transaction before returning it.
 
 const BASE = 'https://esplora.example/regtest/api'
@@ -49,7 +49,7 @@ function wtxid(hex: string): string {
 }
 
 describe.each(CLIENTS)('%s.getTxHex reply validation', (_name, Client) => {
-  it('rejects the empty 200 reply mempool.qbit.org serves as parse', async () => {
+  it('rejects an empty 200 reply as parse', async () => {
     const { client, urls } = serving(Client, '')
 
     const error = await client.getTxHex(P2MR_TX.txid).catch((caught: unknown) => caught)

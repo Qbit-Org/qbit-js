@@ -26,12 +26,10 @@ describes, and issues in `@qbit-oss/pqc` through
 
 ## Supported versions
 
-Nothing has been published yet, so both packages are pre-release: report
-against the latest commit of `main` or `release/0.1`. Once a release line is
-published, the latest one is supported. A fix ships as a patch release on that
-line, or as the next minor release when it makes the packages reject input
-they used to accept, which [RELEASING.md](RELEASING.md) counts as a breaking
-change below 1.0.
+The latest published release line is supported. A fix ships as a patch release
+on that line, or as the next minor release when it makes the packages reject
+input they used to accept, which [RELEASING.md](RELEASING.md) counts as a
+breaking change below 1.0.
 
 ## Security boundaries
 

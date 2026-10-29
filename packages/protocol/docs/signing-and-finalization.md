@@ -7,7 +7,8 @@ recover from partial signing, enforce sighash types and pick a witness.
   signature through the synchronous `onSigned` callback as soon as it is
   stored, and a failed signer call or callback throws `P2mrPsbtSigningError`
   carrying the partially signed PSBT, the plans signed so far, and the `phase`
-  (`'sign'`: nothing stored for the failed plan; `'onSigned'`: its signature is
+  (`'sign'`: nothing stored for the failed plan, but a stateful signer must
+  still treat its key use as consumed; `'onSigned'`: its signature is
   already stored), so a retry passes that PSBT back in with only the unsigned
   plans; `sign` and `onSigned` must both be synchronous, and one that returns
   a promise fails its plan the same way (the promise is never left unhandled);
