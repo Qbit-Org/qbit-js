@@ -18,6 +18,8 @@ export const BASE_URL = 'https://esplora.example/regtest/api'
  *   node reports its inputs as spent.
  * - `reject, fee too low`: the node's mempool is full and asks a higher fee
  *   rate than the transaction pays.
+ * - `stall`: the request never reaches the node, and no reply arrives until
+ *   the client aborts it.
  */
 export type BroadcastReply =
   | 'accept'
@@ -27,6 +29,7 @@ export type BroadcastReply =
   | 'reject'
   | 'reject, already confirmed'
   | 'reject, fee too low'
+  | 'stall'
 
 export interface StubEsploraOptions {
   address: string
@@ -96,9 +99,7 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
     const history = options.history ?? { confirmed: [], mempool: [] }
     const signal = init?.signal
     const stalls = options.stallReads || (options.stallLookups && /^\/tx\/[0-9a-f]{64}$/.test(path))
-    if (method === 'GET' && stalls && signal) {
-      return new Promise<Response>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)))
-    }
+    if (method === 'GET' && stalls && signal) return unanswered(signal)
 
     if (method === 'GET' && path === `/address/${address}`) {
       const stats = (fundedSum: number, txCount: number) => ({
@@ -163,6 +164,8 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
           return rpcError(-25, 'bad-txns-inputs-missingorspent')
         case 'reject, fee too low':
           return rpcError(-26, 'mempool min fee not met')
+        case 'stall':
+          if (signal) return unanswered(signal) // EsploraClient always passes one
       }
     }
     return new Response('not found', { status: 404 })
@@ -179,4 +182,9 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
   }
 
   return { fetchFn, requests, broadcasts, known }
+}
+
+/** A reply that never comes: the request fails only when `signal` aborts. */
+function unanswered(signal: AbortSignal): Promise<Response> {
+  return new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)))
 }

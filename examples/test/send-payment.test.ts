@@ -576,16 +576,19 @@ describe('send-payment example', () => {
   })
 
   it('stops a stalled reconciliation at the deadline with the outcome still unknown', async () => {
-    const stalled = stubEsplora({ address: from, stallReads: true })
+    // Neither the indexer nor the node ever answers.
+    const stalled = stubEsplora({ address: from, stallReads: true, broadcastReplies: ['stall'] })
     const client = new EsploraClient({ baseUrl: BASE_URL, fetchFn: stalled.fetchFn })
     const started = Date.now()
 
-    const error = await caught(reconcileBroadcast(client, paid.rawTxHex, reconcileOptions(200)))
+    const error = await caught(reconcileBroadcast(client, paid.rawTxHex, reconcileOptions(1_000, 200)))
 
     expect(QbitApiError.is(error) && error.kind).toBe('unknown_outcome')
     expect(Date.now() - started).toBeLessThan(5_000)
-    expect(lookups(stalled.requests)).toBe(1)
-    expect(stalled.broadcasts).toEqual([])
+    // The first lookup stops 200 ms before the end, and the last round looks
+    // the transaction up and resubmits it once, both stalling too.
+    expect(lookups(stalled.requests)).toBe(2)
+    expect(stalled.broadcasts).toEqual([paid.rawTxHex])
   })
 
   it('lets only one of two overlapping payments store and send a transaction', async () => {
@@ -858,11 +861,12 @@ describe('send-payment example', () => {
     expect(failing.requests).toEqual([`GET /tx/${paid.txid}`, 'POST /tx'])
   })
 
-  it('skips a coinbase output with fewer than 1,000 confirmations, and spends one with 1,000', async () => {
-    // A wallet funded by mining, at tip 2,000. qbit Core refuses to spend the
-    // larger coinbase output, at height 1,002, until the next block.
-    const immature = confirmedAt(1_002, 'c0'.repeat(32), 500_000)
-    const mature = confirmedAt(1_001, 'c1'.repeat(32), 200_000)
+  it('skips a coinbase output with 1,000 confirmations, and spends one with 1,001', async () => {
+    // A wallet funded by mining, at tip 2,000. qbit Core's mempool would take
+    // a spend of the larger coinbase output, at height 1,001, but its wallet
+    // waits a block more, and so does the payment.
+    const immature = confirmedAt(1_001, 'c0'.repeat(32), 500_000)
+    const mature = confirmedAt(1_000, 'c1'.repeat(32), 200_000)
 
     const { tx, requests } = await plannedTransaction({
       utxos: [immature, mature],
@@ -931,6 +935,28 @@ describe('send-payment example', () => {
     expect(codeOf(error)).toBe('immature_funds')
     expect(error instanceof Error && error.message).toContain('did not check')
     expect(lookups(esplora.requests)).toBe(106)
+    expect(reservations).toEqual([])
+  })
+
+  it('takes at most 106 inputs, and looks up no output past them', async () => {
+    // A young coinbase output that alone could pay, then 106 outputs of one
+    // young transaction no coinbase made, then one of another.
+    const immature = young('c0'.repeat(32), 1_000_000)
+    const spendable = Array.from({ length: 106 }, (_, vout) => young('e5'.repeat(32), 10_000, vout))
+    const next = young('e6'.repeat(32), 9_000)
+    const { esplora, send, reservations } = setUp({
+      utxos: [immature, ...spendable, next],
+      coinbase: [immature.txid],
+    })
+
+    // The 106 pay at most 106 * (10,000 - 3,763) - 55 = 661,067 sats at 1 sat/vB.
+    const error = await caught(send(20_000, { amountSats: 700_000n, feeRate: 1 }))
+
+    expect(codeOf(error)).toBe('immature_funds')
+    expect(esplora.requests.filter(request => request.startsWith('GET /tx/'))).toEqual([
+      `GET /tx/${immature.txid}`,
+      `GET /tx/${'e5'.repeat(32)}`,
+    ])
     expect(reservations).toEqual([])
   })
 
@@ -1022,6 +1048,45 @@ describe('send-payment example', () => {
     expect(lookups(stalled.requests)).toBe(1)
     expect(stalled.broadcasts).toEqual([paid.rawTxHex])
     expect(stalled.known.has(paid.txid)).toBe(true)
+  })
+
+  it('leaves the last round time to resubmit when a lookup in an earlier round stalls', async () => {
+    // The first POST never reached the node, and the indexer never answers.
+    // 1,000 ms are left, at least two 400 ms polls, so the first round is not the last.
+    let resubmittedAt: number | undefined
+    const stalled = stubEsplora({
+      address: from,
+      stallReads: true,
+      onBroadcast: () => {
+        resubmittedAt = Date.now()
+      },
+    })
+    const client = new EsploraClient({ baseUrl: BASE_URL, fetchFn: stalled.fetchFn })
+    const options = reconcileOptions(1_000, 400)
+
+    await reconcileBroadcast(client, paid.rawTxHex, options)
+
+    // The first lookup stops 400 ms before the end, and the last round looks
+    // the transaction up again, then resubmits the same hex once.
+    expect(lookups(stalled.requests)).toBe(2)
+    expect(stalled.broadcasts).toEqual([paid.rawTxHex])
+    expect(resubmittedAt).toBeLessThan(options.end)
+    expect(stalled.known.has(paid.txid)).toBe(true)
+  })
+
+  it('leaves the last round time to resubmit when a resubmission in an earlier round stalls', async () => {
+    // The first POST never reached the node. Three lookups miss, the
+    // resubmission that follows never gets a reply, and the next is accepted.
+    const esplora = stubEsplora({ address: from, broadcastReplies: ['stall'] })
+    const client = new EsploraClient({ baseUrl: BASE_URL, fetchFn: esplora.fetchFn })
+
+    await reconcileBroadcast(client, paid.rawTxHex, reconcileOptions(1_500, 200))
+
+    // The stalled resubmission stops 200 ms before the end, and the last
+    // round looks the transaction up once more, then resubmits it again.
+    expect(lookups(esplora.requests)).toBe(4)
+    expect(esplora.broadcasts).toEqual([paid.rawTxHex, paid.rawTxHex])
+    expect(esplora.known.has(paid.txid)).toBe(true)
   })
 
   it('abandons a transaction no node will take any more, and returns the inputs a fee bump must spend', async () => {

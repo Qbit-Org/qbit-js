@@ -135,11 +135,12 @@ export interface SendPaymentParams {
  * - `too_many_inputs`: they can, but only with more than 106 inputs, which
  *   would make the transaction too large for qbit Core to relay.
  * - `immature_funds`: they can with at most 106 inputs, but not without
- *   coinbase outputs younger than `QBIT_COINBASE_MATURITY`, 1,000 blocks,
- *   which qbit Core does not let a transaction spend yet. It looks up at most
- *   106 funding transactions to tell, and counts as unspendable too any output
- *   younger than 1,000 blocks whose funding transaction it did not look up.
- *   Either way, it can pay with them once they are 1,000 blocks deep.
+ *   coinbase outputs with fewer than 1,001 confirmations,
+ *   `QBIT_COINBASE_MATURITY` plus one, which it does not spend yet: qbit
+ *   Core's own wallet waits that long. It looks up at most 106 funding
+ *   transactions to tell, and counts as unspendable too any output with fewer
+ *   than 1,001 confirmations whose funding transaction it did not look up.
+ *   Either way, it can pay with them once they have 1,001 confirmations.
  * - `pending`: an earlier payment, `txid`, is still pending. Checked before
  *   the UTXO scan, and again after signing, right before the transaction is
  *   stored.
@@ -207,11 +208,17 @@ const MIN_RELAY_FEE_RATE = 250 / 1_000
 const MAX_INPUTS = Math.floor((400_000 - OVERHEAD_BYTES - 2 * OUTPUT_BYTES) / INPUT_BYTES)
 
 /**
- * The most funding transactions a payment looks up to tell whether a coinbase
- * made an output, 106: one for each input it can spend, so that only coinbase
- * outputs in the way can make it run out.
+ * The fewest confirmations a coinbase output needs before a payment spends it,
+ * 1,001: `QBIT_COINBASE_MATURITY` plus one, as qbit Core's own wallet counts
+ * it (`CWallet::GetTxBlocksToMaturity`, src/wallet/wallet.cpp:4386-4395 @
+ * v1.0.0, 7ebcddb622d6e639041f005a189b048ec2a221fe). The mempool takes a spend
+ * at 1,000 confirmations (src/consensus/tx_verify.cpp:179), but the tip height
+ * comes from the indexer, which may be a block ahead of the node that checks
+ * the broadcast, and the node checks a coinbase spend again at its new tip
+ * after a reorg (src/validation.cpp:956), so one made at exactly 1,000 leaves
+ * its mempool if a reorg leaves the tip a block lower.
  */
-const MAX_FUNDING_LOOKUPS = MAX_INPUTS
+const COINBASE_SPEND_DEPTH = QBIT_COINBASE_MATURITY + 1
 
 /** The longest delay a timer supports, and the largest `deadlineMs` the client accepts. */
 const MAX_TIMER_MS = 2_147_483_647
@@ -240,8 +247,9 @@ const NOT_ACCEPTED = new Set<QbitApiErrorKind>([
  * Pay `amountSats` to `to` from `key`'s address, spending its largest
  * confirmed outputs first, only as many as the amount and the fee need, and
  * returning the change, and resolve once the node has the transaction. Change
- * below the dust threshold goes to the fee instead. It never spends a coinbase
- * output before qbit Core does, at `QBIT_COINBASE_MATURITY` confirmations.
+ * below the dust threshold goes to the fee instead. It spends a coinbase output
+ * only once it has `QBIT_COINBASE_MATURITY` plus one confirmations, 1,001, as
+ * qbit Core's own wallet does: a block later than the mempool allows.
  *
  * It rejects with a `SendPaymentError` (see `SendPaymentErrorCode`), with a
  * `QbitProtocolError` when `to` is not a regtest P2MR address, or with the
@@ -293,8 +301,8 @@ export async function sendPayment(params: SendPaymentParams): Promise<{ txid: st
   }
 
   // Spend the largest outputs first, only as many as the payment needs, and
-  // no coinbase output qbit Core will not spend yet, which takes a lookup for
-  // each output younger than 1,000 blocks it reaches. Change below the dust
+  // no coinbase output that is not mature, which takes a lookup for each
+  // output with fewer than 1,001 confirmations it reaches. Change below the dust
   // threshold would make the transaction nonstandard, so it goes to the fee
   // instead of to an output.
   const spent = await selectInputs(utxos, amountSats, feeRate, tipHeight, txid =>
@@ -386,12 +394,20 @@ export async function sendPayment(params: SendPaymentParams): Promise<{ txid: st
  * which only means this indexer does not know the transaction yet: the request
  * may never have reached the node, or the indexer may lag its node. After
  * three `not_found` replies in a row, it resubmits the **same** hex, which
- * cannot pay twice, and resolves when the node accepts it. When less than two
- * poll intervals are left, it makes one last round: it waits half of what is
- * left, looks the transaction up with at most half of the rest, and unless
- * that finds it, resubmits once with what remains and stops. So a short
- * deadline still settles a transaction that never reached the node, even when
- * that lookup stalls, without a burst of requests as the deadline nears.
+ * cannot pay twice, and resolves when the node accepts it.
+ *
+ * Each round waits, then looks the transaction up. A round before the last
+ * waits one poll interval, and each request it makes, the lookup and any
+ * resubmission, must end a poll interval before `end`, so that the last round
+ * keeps that interval however the earlier ones go: a request that stalls is
+ * stopped then, and a round with no time left for a request sends none and
+ * leaves the rest to the last round. The last round starts when less than two
+ * poll intervals are left: it waits half of what is left, looks the
+ * transaction up with at most half of the rest, and unless that finds it,
+ * resubmits once with what remains and stops. So a short deadline still
+ * settles a transaction that never reached the node, even when the indexer or
+ * an earlier resubmission stalls, without a burst of requests as the deadline
+ * nears.
  * `broadcastTx` resolves an already-known reply too, since this passes the
  * txid. Rebuilding the payment with other inputs instead could pay twice.
  *
@@ -426,15 +442,21 @@ export async function reconcileBroadcast(
   while (Date.now() < end && !signal.aborted) {
     const lastPoll = end - Date.now() < 2 * pollMs // no time to poll again after this
     await sleep(lastPoll ? (end - Date.now()) / 2 : pollMs, signal) // give the transaction time to propagate
+    // Before the last round, every request must end a poll interval before
+    // `end`, so that a stalled one cannot take the last round's time. msLeft
+    // throws before the request once that point has passed: such a round sends
+    // nothing, and the next one is the last.
+    const requestEnd = lastPoll ? end : end - pollMs
     let lookup: 'found' | 'absent' | 'unknown'
     try {
       // The last lookup leaves half of what is left to the resubmission, so a
       // stalled indexer cannot use it up.
-      await lookUpTx(client, txid, { signal, deadlineMs: lastPoll ? msLeft(end) / 2 : msLeft(end) })
+      await lookUpTx(client, txid, { signal, deadlineMs: lastPoll ? msLeft(end) / 2 : msLeft(requestEnd) })
       lookup = 'found' // in the mempool or in a block
     } catch (error) {
       // `not_found`: not known to this indexer yet. Any other failure, a reply
-      // that is not this transaction included, tells us nothing.
+      // that is not this transaction or a lookup with no time left included,
+      // tells us nothing.
       lookup = QbitApiError.is(error) && error.kind === 'not_found' ? 'absent' : 'unknown'
     }
     if (lookup === 'found') return
@@ -442,7 +464,7 @@ export async function reconcileBroadcast(
     if (absentReplies < 3 && !lastPoll) continue
     absentReplies = 0
     try {
-      await client.broadcastTx(rawTxHex, { txid, signal, deadlineMs: msLeft(end) })
+      await client.broadcastTx(rawTxHex, { txid, signal, deadlineMs: msLeft(requestEnd) })
       return
     } catch {
       // Whatever went wrong, a rejection included, keep looking.
@@ -626,15 +648,14 @@ function feeFor(inputs: number, outputs: number, feeRate: number): bigint {
  * `SendPaymentError` when they cannot cover the payment, or can only with more
  * than `MAX_INPUTS` inputs, before any lookup.
  *
- * Nor does it spend a coinbase output with fewer than `QBIT_COINBASE_MATURITY`
- * confirmations, counted from `tipHeight`: qbit Core rejects the transaction.
- * The UTXO rows do not say which outputs a coinbase made, so `isCoinbase`
- * looks up the funding transaction of each output it reaches that is younger,
- * or whose row has no usable block height: one at a time, once per
- * transaction, and at most `MAX_FUNDING_LOOKUPS` transactions. Such an output
- * whose funding transaction it did not look up counts as unspendable. When the
- * outputs left cannot cover the payment with at most `MAX_INPUTS` inputs, it
- * throws `immature_funds`.
+ * Nor does it spend a coinbase output with fewer than `COINBASE_SPEND_DEPTH`
+ * confirmations, counted from `tipHeight`. The UTXO rows do not say which
+ * outputs a coinbase made, so `isCoinbase` looks up the funding transaction of
+ * each output it reaches that has fewer, or whose row has no usable block
+ * height: one at a time, once per transaction, and at most `MAX_INPUTS`
+ * transactions. Such an output whose funding transaction it did not look up
+ * counts as unspendable. When the outputs left cannot cover the payment with
+ * at most `MAX_INPUTS` inputs, it throws `immature_funds`.
  */
 async function selectInputs(
   utxos: EsploraUtxo[],
@@ -651,54 +672,61 @@ async function selectInputs(
     .filter(utxo => utxo.value > INPUT_BYTES * feeRate)
     .sort((a, b) => b.value - a.value || depth(b) - depth(a))
   const covers = (inputs: number, totalSats: bigint) => totalSats - amountSats >= feeFor(inputs, 1, feeRate)
+  /**
+   * The outputs worth spending that `spendable` allows, in order, until they
+   * cover the payment or `cap` of them are taken, and whether they cover it.
+   * `spendable` is asked only about the outputs the walk reaches.
+   */
+  const walk = async (cap: number, spendable: (utxo: EsploraUtxo) => boolean | Promise<boolean>) => {
+    const selected: EsploraUtxo[] = []
+    let totalSats = 0n
+    for (const utxo of worthSpending) {
+      if (covers(selected.length, totalSats) || selected.length === cap) break
+      if (!(await spendable(utxo))) continue
+      selected.push(utxo)
+      totalSats += BigInt(utxo.value)
+    }
+    return { selected, covered: covers(selected.length, totalSats) }
+  }
 
   // First as if every output could be spent, which takes no request: if they
   // cannot pay even then, no output maturing would help.
-  let inputs = 0
-  let totalSats = 0n
-  for (const utxo of worthSpending) {
-    inputs += 1
-    totalSats += BigInt(utxo.value)
-    if (covers(inputs, totalSats)) break
-  }
-  if (!covers(inputs, totalSats)) {
+  const unfiltered = await walk(Infinity, () => true)
+  if (!unfiltered.covered) {
     throw new SendPaymentError('insufficient_funds', 'insufficient confirmed funds')
   }
-  if (inputs > MAX_INPUTS) {
+  if (unfiltered.selected.length > MAX_INPUTS) {
     throw new SendPaymentError(
       'too_many_inputs',
-      `the payment needs ${inputs} confirmed outputs, and a standard transaction spends at most ${MAX_INPUTS}: consolidate them first`
+      `the payment needs ${unfiltered.selected.length} confirmed outputs, and a standard transaction spends at most ${MAX_INPUTS}: consolidate them first`
     )
   }
 
-  // Then the same without the coinbase outputs qbit Core will not spend yet.
-  const selected: EsploraUtxo[] = []
+  // Then the same without the coinbase outputs it does not spend yet, and with
+  // at most MAX_INPUTS inputs.
   /** Whether a coinbase made each funding transaction looked up, by lowercase txid. */
   const coinbase = new Map<string, boolean>()
   let unchecked = false
-  totalSats = 0n
-  for (const utxo of worthSpending) {
-    if (covers(selected.length, totalSats) || selected.length > MAX_INPUTS) break
-    if (depth(utxo) < QBIT_COINBASE_MATURITY) {
-      const txid = utxo.txid.toLowerCase()
-      if (!coinbase.has(txid)) {
-        if (coinbase.size === MAX_FUNDING_LOOKUPS) {
-          unchecked = true // counts as unspendable
-          continue
-        }
-        coinbase.set(txid, await isCoinbase(txid))
+  const { selected, covered } = await walk(MAX_INPUTS, async utxo => {
+    if (depth(utxo) >= COINBASE_SPEND_DEPTH) return true
+    const txid = utxo.txid.toLowerCase()
+    if (!coinbase.has(txid)) {
+      // At most one lookup for each input a payment can spend, so that only
+      // coinbase outputs in the way can use them up.
+      if (coinbase.size === MAX_INPUTS) {
+        unchecked = true // counts as unspendable
+        return false
       }
-      if (coinbase.get(txid) === true) continue // immature
+      coinbase.set(txid, await isCoinbase(txid))
     }
-    selected.push(utxo)
-    totalSats += BigInt(utxo.value)
-  }
-  if (!covers(selected.length, totalSats) || selected.length > MAX_INPUTS) {
+    return coinbase.get(txid) === false // unless a coinbase made it, which is not mature yet
+  })
+  if (!covered) {
     throw new SendPaymentError(
       'immature_funds',
       unchecked
-        ? `the payment needs outputs younger than ${QBIT_COINBASE_MATURITY} blocks that are coinbase outputs, which qbit Core does not spend yet, or that it did not check, since it looks up at most ${MAX_FUNDING_LOOKUPS} funding transactions: wait for more blocks`
-        : `the payment needs coinbase outputs younger than ${QBIT_COINBASE_MATURITY} blocks, which qbit Core does not spend yet: wait for more blocks`
+        ? `the payment needs outputs with fewer than ${COINBASE_SPEND_DEPTH} confirmations that are coinbase outputs, which it does not spend yet, or that it did not check, since it looks up at most ${MAX_INPUTS} funding transactions: wait for more blocks`
+        : `the payment needs coinbase outputs with fewer than ${COINBASE_SPEND_DEPTH} confirmations, which it does not spend yet: wait for more blocks`
     )
   }
   return selected

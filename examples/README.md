@@ -57,12 +57,14 @@ transaction may already be on the network, so it looks the txid up with `getTx`
 before it resubmits anything, resubmits only the same hex, and never rebuilds
 the payment. A lookup finds the transaction only when the reply's `txid` is its
 txid, since `getTx` returns the reply as parsed, without checking that it is the
-transaction requested. When less than two poll intervals are left, it looks
-the transaction up once more, with at most half of the time then left,
-resubmits once with the rest if that lookup does not find it, and stops, so a
-short deadline still settles a transaction that never reached the node, even
-when that lookup stalls, without a burst of requests. A `not_found` lookup only
-means the indexer does not know the transaction yet.
+transaction requested. Until less than two poll intervals are left, every
+lookup and resubmission must end a poll interval before the deadline, so one
+that stalls leaves that time to a last round. That round looks the
+transaction up once more, with at most half of the time then left, resubmits
+once with the rest if that lookup does not find it, and stops, so a short
+deadline still settles a transaction that never reached the node, even when
+the indexer or an earlier resubmission stalls, without a burst of requests. A
+`not_found` lookup only means the indexer does not know the transaction yet.
 `getTxStatus` cannot tell either way, since qbit-electrs answers
 `{ confirmed: false }` for a txid it has never seen. One deadline covers the
 whole payment. Signing blocks the thread, so a cancel issued meanwhile takes
@@ -126,4 +128,6 @@ it also fails when a marker is deleted or a new one is not listed. It reads
 markers only in `README.md`, `examples/README.md` and `packages/*/README.md`,
 and fails on a marker in any other Markdown file git tracks, whose block it
 would never check. A tracked file missing from the working tree holds no
-marker, so it skips that file with a note.
+marker, so it skips that file with a note. Line endings do not count, so a CRLF
+checkout checks the same as an LF one, and `--write` writes a README with the
+line ending most of its lines use.

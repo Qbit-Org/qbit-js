@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -30,8 +30,27 @@ function checkout(): string {
 }
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe' })
-const check = (root: string) =>
-  spawnSync(process.execPath, ['examples/scripts/readme-snippets.mjs', '--check'], { cwd: root, encoding: 'utf8' })
+const run = (root: string, mode: '--check' | '--write') =>
+  spawnSync(process.execPath, ['examples/scripts/readme-snippets.mjs', mode], { cwd: root, encoding: 'utf8' })
+const check = (root: string) => run(root, '--check')
+const read = (root: string, file: string) => readFileSync(join(root, file), 'utf8')
+
+const README = 'packages/api/README.md'
+const REGION = 'examples/src/api-quick-start.ts#quick-start'
+
+/** Give every file in `root` CRLF line endings, as a checkout with `core.autocrlf=true` does. */
+function convertToCrlf(root: string): void {
+  for (const file of git(root, 'ls-files', '-z').toString().split('\0').filter(Boolean)) {
+    writeFileSync(join(root, file), read(root, file).replace(/\r?\n/g, '\r\n'))
+  }
+}
+
+/** `markdown` with the first line of its first snippet block replaced by `stale()`. */
+const withStaleBlock = (markdown: string) => {
+  const stale = markdown.replace(/(<!-- snippet: [^\r\n]+\r?\n```ts\r?\n)[^\r\n]*/, '$1stale()')
+  expect(stale).not.toBe(markdown)
+  return stale
+}
 
 describe('readme-snippets.mjs', () => {
   afterEach(() => {
@@ -79,5 +98,55 @@ describe('readme-snippets.mjs', () => {
 
     expect(failed.status).toBe(1)
     expect(failed.stderr).toContain(`${other}:1: snippet markers are read only in the READMEs`)
+  })
+
+  it('checks a CRLF checkout, and a README whose lines end in a mix of CRLF and LF', () => {
+    const root = checkout()
+    convertToCrlf(root)
+
+    expect(check(root).status).toBe(0)
+
+    // An editor wrote the block, its marker and fences with LF endings into the CRLF README.
+    const lines = read(root, README).split(/(?<=\n)/)
+    const marker = lines.findIndex(line => line.startsWith('<!-- snippet: '))
+    const close = lines.findIndex((line, index) => index > marker + 1 && line.startsWith('```'))
+    for (let index = marker; index <= close; index += 1) lines[index] = lines[index]!.replace(/\r\n$/, '\n')
+    writeFileSync(join(root, README), lines.join(''))
+
+    expect(check(root).status).toBe(0)
+
+    // A block that differs from its region still fails, at the line that differs.
+    writeFileSync(join(root, README), withStaleBlock(lines.join('')))
+    const stale = check(root)
+
+    expect(stale.status).toBe(1)
+    expect(stale.stderr).toContain(`${README}:${marker + 3}: the block differs from ${REGION}`)
+  })
+
+  it('writes a README with the line ending most of its lines use, and never \\r\\r\\n', () => {
+    const root = checkout()
+    convertToCrlf(root)
+    const current = read(root, README)
+
+    // A CRLF checkout, with CRLF examples: the rewritten block ends in CRLF too.
+    writeFileSync(join(root, README), withStaleBlock(current))
+
+    expect(run(root, '--write').status).toBe(0)
+    expect(read(root, README)).toBe(current)
+
+    // An LF README with one line pasted with CRLF: what --write writes ends in LF.
+    const lf = current.replace(/\r\n/g, '\n')
+    writeFileSync(join(root, README), withStaleBlock(lf.replace('\n', '\r\n')))
+
+    expect(run(root, '--write').status).toBe(0)
+    expect(read(root, README)).toBe(lf)
+    expect(check(root).status).toBe(0)
+
+    // A README whose blocks match is left as it is, whatever its line endings.
+    const mixed = lf.replace('\n', '\r\n')
+    writeFileSync(join(root, README), mixed)
+
+    expect(run(root, '--write').status).toBe(0)
+    expect(read(root, README)).toBe(mixed)
   })
 })

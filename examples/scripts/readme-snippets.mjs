@@ -28,6 +28,10 @@
 // files needs git. A tracked file missing from the working tree, deleted but
 // not yet removed with `git rm`, holds no marker: it is skipped with a note.
 //
+// Line endings do not count, so a CRLF checkout, or a README whose lines end
+// in a mix of CRLF and LF, checks the same as an LF one. --write rewrites a
+// README whose blocks it changes with the line ending most of its lines use.
+//
 //   node examples/scripts/readme-snippets.mjs --check   exit 1 if a block is out of date
 //   node examples/scripts/readme-snippets.mjs --write   rewrite the blocks that are
 //
@@ -70,8 +74,11 @@ const drift = []
 const problems = []
 for (const readme of readmes) {
   const original = readFileSync(join(repoRoot, readme), 'utf8')
-  const eol = original.includes('\r\n') ? '\r\n' : '\n'
-  const lines = original.split(eol)
+  // The lines without their endings, and the ending most of them use.
+  const lines = original.split(/\r?\n/)
+  const crlf = original.split('\r\n').length - 1
+  const eol = crlf > lines.length - 1 - crlf ? '\r\n' : '\n'
+  let changed = false
   for (let index = 0; index < lines.length; index += 1) {
     const marker = MARKER.exec(lines[index])
     const where = `${readme}:${index + 1}`
@@ -111,12 +118,12 @@ for (const readme of readmes) {
           `  example: ${JSON.stringify(expected[first] ?? '(region ends)')}`
       )
       lines.splice(start, end - start, ...expected)
+      changed = true
     }
     index = start + expected.length
   }
-  const updated = lines.join(eol)
-  if (mode === '--write' && updated !== original) {
-    writeFileSync(join(repoRoot, readme), updated)
+  if (mode === '--write' && changed) {
+    writeFileSync(join(repoRoot, readme), lines.join(eol))
     console.log(`updated ${readme}`)
   }
 }
@@ -162,7 +169,7 @@ function readRegion(source, name) {
   const parts = []
   let part
   readFileSync(join(repoRoot, path), 'utf8')
-    .split('\n')
+    .split(/\r?\n/)
     .forEach((line, index) => {
       const region = REGION.exec(line)
       if (region === null) {
