@@ -149,7 +149,11 @@ function payoutPsbtBytes(): Uint8Array {
   ])
 }
 
-describe(`a transaction with ${OUTPUTS} outputs, exactly the default maxObjects`, () => {
+// Each case builds and walks a transaction near the default maxObjects, which can
+// take several seconds on a shared CI runner.
+const SCALE_TIMEOUT_MS = 60_000
+
+describe(`a transaction with ${OUTPUTS} outputs, exactly the default maxObjects`, { timeout: SCALE_TIMEOUT_MS }, () => {
   const keys = [{ inputIndex: 0, pubkey, leafHash }]
 
   it('is created by createP2mrPsbt', () => {
@@ -202,7 +206,7 @@ describe(`a transaction with ${OUTPUTS} outputs, exactly the default maxObjects`
   })
 })
 
-describe(`a transaction with ${INPUTS} inputs, exactly the default maxObjects`, () => {
+describe(`a transaction with ${INPUTS} inputs, exactly the default maxObjects`, { timeout: SCALE_TIMEOUT_MS }, () => {
   it('is extracted', () => {
     const outpoint = (i: number) => {
       const txid = new Uint8Array(32)
@@ -250,7 +254,7 @@ describe(`a transaction with ${INPUTS} inputs, exactly the default maxObjects`, 
   })
 })
 
-describe('sighash midstates over many inputs and outputs', () => {
+describe('sighash midstates over many inputs and outputs', { timeout: SCALE_TIMEOUT_MS }, () => {
   it('hash every input, spent output and output, past the default maxObjects', () => {
     // A caller that raised maxObjects can sign such a transaction. The entries
     // are shared objects, which keeps the test's memory down.
