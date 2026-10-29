@@ -29,14 +29,8 @@ package, `@qbit-oss/pqc`, published from
 
 ## Development
 
-Requires Node.js 22.13+ (22.x), 24.x, or 26 and later; CI runs Node.js 22. The
-range is the root `package.json` `engines.node` field, the intersection of what
-pnpm 11 (`>=22.13`) and vitest 5 (`^22.12.0 || ^24.0.0 || >=26.0.0`) support.
-Node.js 23 and 25 are not supported: `pnpm install` prints an "Unsupported
-engine" warning on them, and pnpm 11 itself fails to start on Node.js older than
-22.13. The pnpm version is pinned by `packageManager` in `package.json` (pnpm
-11), and Corepack runs that exact version. Node.js 25 and later no longer bundle
-Corepack, so on Node.js 26+ install it with `npm install -g corepack`.
+Prerequisites, setup, CI checks and the change process are in
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```sh
 corepack pnpm install

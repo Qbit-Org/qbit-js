@@ -15,7 +15,10 @@
     "clean": "pnpm -r --if-present clean",
     "pack:check": "node scripts/check-pack.mjs",
     "consumer:check": "node scripts/check-packed-consumer.mjs",
-    "smoke:consumer": "pnpm --filter @qbit-oss/protocol --filter @qbit-oss/api build && node scripts/run-consumer-smoke.mjs"
+    "smoke:consumer": "pnpm --filter @qbit-oss/protocol --filter @qbit-oss/api build && node scripts/run-consumer-smoke.mjs",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "verify": "pnpm format:check && pnpm build && pnpm test && pnpm typecheck && pnpm pack:check && pnpm consumer:check"
   },
   "keywords": [
     "qbit",
@@ -33,5 +36,8 @@
   "bugs": {
     "url": "https://github.com/Qbit-Org/qbit-js/issues"
   },
-  "homepage": "https://github.com/Qbit-Org/qbit-js#readme"
+  "homepage": "https://github.com/Qbit-Org/qbit-js#readme",
+  "devDependencies": {
+    "prettier": "3.9.10"
+  }
 }
