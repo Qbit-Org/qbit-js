@@ -38,6 +38,8 @@ dist-tag.
   explorer) such as `mempool.qbit.org/api/v1`. Both cover address balance, UTXOs
   and history, transaction lookup, fee estimates and broadcast.
 
+Runnable examples of both packages, tested in CI, are in [`examples/`](examples/README.md).
+
 Planned packages:
 
 - `@qbit-oss/wallet-core` or `@qbit-oss/keyring`: seed phrase, derivation, encrypted

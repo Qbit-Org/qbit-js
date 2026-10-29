@@ -1,0 +1,10 @@
+{
+  // Type-checks the tests (and the examples they import) under the same strict
+  // settings; examples/tsconfig.json excludes test/. Run by `pnpm typecheck:test`.
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".."
+  },
+  "include": ["**/*"],
+  "exclude": []
+}

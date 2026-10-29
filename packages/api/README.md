@@ -60,19 +60,23 @@ Caveats:
 
 ## Quick start
 
+<!-- snippet: examples/src/api-quick-start.ts#quick-start -->
 ```ts
 import { EsploraClient } from '@qbit-oss/api'
 
-const client = new EsploraClient({ baseUrl: 'https://esplora.example/regtest/api' })
-const address = 'qbrt1zzasx2u2z7v9kn4q8e66r57mfw08xvrvdcqfcq6xfte0eau9dgdgqz42zd5'
+async function main() {
+  const client = new EsploraClient({ baseUrl: 'https://esplora.example/regtest/api' }) // placeholder: your esplora endpoint
+  const address = 'qbrt1zzasx2u2z7v9kn4q8e66r57mfw08xvrvdcqfcq6xfte0eau9dgdgqz42zd5' // placeholder: the address to read
+  const balance = await client.getAddressBalance(address) // { address, confirmedSats, mempoolSats, totalSats }
+  const utxos = await client.getAddressUtxos(address)
+  const history = await client.getAddressHistory(address) // { confirmed, mempool }
+  const fees = await client.getFeeTiers() // [{ target, feeRate }] ascending
+  console.log({ balance, utxos, history, fees })
+  // Once you have a signed transaction (built with @qbit-oss/protocol):
+  // const txid = await client.broadcastTx(signedTxHex) // see "Errors you must handle"
+}
 
-const balance = await client.getAddressBalance(address) // { address, confirmedSats, mempoolSats, totalSats }
-const utxos = await client.getAddressUtxos(address)
-const history = await client.getAddressHistory(address) // { confirmed, mempool }
-const fees = await client.getFeeTiers() // [{ target, feeRate }] ascending
-
-// Once you have a signed transaction (built with @qbit-oss/protocol):
-// const txid = await client.broadcastTx(signedTxHex) // see "Errors you must handle"
+main().catch(error => console.error(error))
 ```
 
 For a mempool-qbit backend, such as `https://mempool.qbit.org/api/v1` or
@@ -81,6 +85,7 @@ the same options. There, `EsploraClient`'s history and fee-estimate calls
 answer `404` ([`MempoolQbitClient`](docs/endpoints.md#mempoolqbitclient)).
 Every method also takes a final `{ signal, deadlineMs }` argument
 ([Resilience](docs/resilience.md)).
+A whole payment, recovering from `unknown_outcome` as below, is in [examples/src/send-payment.ts](https://github.com/Qbit-Org/qbit-js/blob/main/examples/src/send-payment.ts).
 
 ## Common tasks
 

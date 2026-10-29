@@ -1,0 +1,23 @@
+{
+  "name": "@qbit-oss/examples",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runnable, tested examples for @qbit-oss/protocol and @qbit-oss/api",
+  "type": "module",
+  "scripts": {
+    "test": "node scripts/readme-snippets.mjs --check && vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit",
+    "typecheck:test": "tsc -p test"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@qbit-oss/api": "workspace:*",
+    "@qbit-oss/pqc": "0.1.0",
+    "@qbit-oss/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

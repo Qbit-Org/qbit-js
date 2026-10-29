@@ -1,0 +1,719 @@
+// Send a payment from a single-key P2MR address, end to end:
+//
+//   1. getAddressUtxos          find the outputs the wallet can spend, and pick
+//                               the largest, only as many as the payment needs
+//   2. createP2mrPsbt           build the unsigned transaction
+//   3. validateP2mrSigningPlans check the plans before any key is used
+//   4. signP2mrPsbt             sign every input, persisting each signature
+//   5. finalizeP2mrPsbt         assemble the witnesses
+//   6. extractP2mrTransaction   get the bytes to broadcast
+//   7. broadcastTx              submit them, and reconcile an unknown outcome
+//
+// It checks its parameters before any request and the backend's UTXO rows
+// before any key is used, and it never stores a transaction while an earlier
+// payment is still pending. `abandonPendingPayment` releases a pending
+// transaction that no node will take any more.
+//
+// `key` is the wallet's key from @qbit-oss/pqc's `deriveP2mrDescriptorKey`
+// (`{ pk32, sk64 }`). The broadcast rules are in packages/api/docs/broadcasting.md,
+// the signing rules in packages/protocol/docs/signing-and-finalization.md.
+
+import {
+  EsploraClient,
+  QbitApiError,
+  txidFromRawTx,
+  type EsploraUtxo,
+  type QbitApiErrorKind,
+  type RequestOptions,
+} from '@qbit-oss/api'
+import { init, type PqcDerivedKey } from '@qbit-oss/pqc'
+import {
+  addressToScriptPubKey,
+  buildControlBlock,
+  bytesToHex,
+  createP2mrPsbt,
+  extractP2mrTransaction,
+  finalizeP2mrPsbt,
+  hexToBytes,
+  p2mrAddressFromPubkey,
+  p2mrLeafHash,
+  P2MR_LEAF_VERSION_V1,
+  PSBT_GLOBAL_UNSIGNED_TX,
+  signP2mrPsbt,
+  singleKeyLeafScript,
+  validateP2mrSigningPlans,
+} from '@qbit-oss/protocol'
+
+import { WALLET_MAX_FEE_RATE } from './check-balance'
+
+/**
+ * What the wallet writes down while it pays. Each method must finish writing
+ * before it returns: signing is synchronous and cannot wait for a promise.
+ */
+export interface PaymentStore {
+  /**
+   * Count one more signature by `pubkey` before it is made, and throw to
+   * refuse: a bounded30 key must stop after 2^30 signatures, and
+   * @qbit-oss/pqc keeps no counter.
+   */
+  reserveSignature(pubkey: Uint8Array): void
+  /** One signature, as soon as it exists, so a crash or later failure cannot lose it. */
+  saveSignature(record: SignatureRecord): void
+  /**
+   * The signed transaction, before it is first sent. It stays pending until it
+   * confirms, or another transaction spending its inputs confirms; the wallet
+   * clears it then. Until then, after a crash or an unknown outcome, settle it
+   * with `reconcileBroadcast`; never pay again with other inputs. Only
+   * `abandonPendingPayment` releases one that no node will take.
+   *
+   * `sendPayment` checks `pendingTransaction()` again right before this call,
+   * with no await in between, which keeps two calls in one process from both
+   * paying. A store that several processes or devices share must also make
+   * this a compare-and-set that throws while another transaction is pending.
+   */
+  saveTransaction(txid: string, rawTxHex: string): void
+  /**
+   * The transaction is no longer pending: the node definitely did not accept
+   * it, or `abandonPendingPayment` releases it.
+   */
+  dropTransaction(txid: string): void
+  /** The transaction saved with `saveTransaction` that is still pending, if any. */
+  pendingTransaction(): { txid: string; rawTxHex: string } | undefined
+}
+
+/** One signature, with what it signs: transaction, input and leaf. */
+export interface SignatureRecord {
+  /** The transaction it signs. Witnesses do not change a txid, so it is known before signing. */
+  txid: string
+  inputIndex: number
+  /** The key that made it. */
+  pubkey: Uint8Array
+  /** The leaf it signs for, `p2mrLeafHash` of the key's single-key leaf script. */
+  leafHash: Uint8Array
+  /** The PSBT record that holds it: `key` is its type, pubkey and leaf hash, `value` the signature. */
+  key: Uint8Array
+  value: Uint8Array
+}
+
+export interface SendPaymentParams {
+  client: EsploraClient
+  key: PqcDerivedKey
+  /** Recipient's regtest P2MR address. */
+  to: string
+  /** At least the dust threshold, 2,855 sats. */
+  amountSats: bigint
+  /**
+   * sat/vB, at least qbit Core's minimum relay fee rate, 0.25, and at most
+   * `WALLET_MAX_FEE_RATE`; for example from `walletFeeTiers` in check-balance.ts.
+   */
+  feeRate: number
+  store: PaymentStore
+  /** One budget for the whole payment: scan, signing, broadcast and any reconciliation. At most 2,147,483,647 ms. */
+  deadlineMs: number
+  /** Cancels the payment. Once the transaction may have been sent, the outcome stays unknown. */
+  signal: AbortSignal
+  /** Wait between status checks after an unknown outcome (default 2 s), at most 2,147,483,647 ms. */
+  pollMs?: number
+}
+
+/**
+ * Why `sendPayment` refused to pay, before it stored or sent anything, or
+ * `reconcileBroadcast` refused its options, before any request:
+ *
+ * - `invalid_amount`: `amountSats` is not a bigint, or is below the dust threshold.
+ * - `invalid_fee_rate`: `feeRate` is not a number from qbit Core's minimum
+ *   relay fee rate, 0.25 sat/vB, to `WALLET_MAX_FEE_RATE`.
+ * - `invalid_options`: `deadlineMs` or `pollMs` is not a number above 0 and at
+ *   most 2,147,483,647, the longest delay a timer supports. `reconcileBroadcast`
+ *   applies the same rules to its `pollMs`, and to the time left before its
+ *   `end` unless `end` has passed; its transaction stays pending.
+ * - `invalid_utxos`: the backend's UTXO list is malformed or lists an outpoint twice.
+ * - `insufficient_funds`: the confirmed outputs worth more than the fee to
+ *   spend them cannot cover the amount and the fee.
+ * - `too_many_inputs`: they can, but only with more than 106 inputs, which
+ *   would make the transaction too large for qbit Core to relay.
+ * - `pending`: an earlier payment, `txid`, is still pending. Checked before
+ *   the UTXO scan, and again after signing, right before the transaction is
+ *   stored.
+ */
+export type SendPaymentErrorCode =
+  | 'invalid_amount'
+  | 'invalid_fee_rate'
+  | 'invalid_options'
+  | 'invalid_utxos'
+  | 'insufficient_funds'
+  | 'too_many_inputs'
+  | 'pending'
+
+export class SendPaymentError extends Error {
+  readonly code: SendPaymentErrorCode
+  /** With `pending`: the transaction that is still pending. */
+  readonly txid: string | undefined
+
+  constructor(code: SendPaymentErrorCode, message: string, txid?: string) {
+    super(message)
+    this.name = 'SendPaymentError'
+    this.code = code
+    this.txid = txid
+  }
+}
+
+// qbit has no witness discount, so a transaction's virtual size is its full
+// size in bytes. A single-key P2MR input takes at most 3,763 bytes with its
+// witness (qbit Core's P2MR_V1_SINGLE_KEY_SPEND_SIZE), a P2MR output 43, and
+// the version, witness marker and flag, input and output counts and locktime 12.
+const INPUT_BYTES = 3_763
+const OUTPUT_BYTES = 43
+const OVERHEAD_BYTES = 12
+
+/**
+ * The smallest P2MR output qbit Core relays, 2,855 sats. `GetDustThreshold`
+ * (src/policy/policy.cpp @ v1.0.0, 7ebcddb622d6e639041f005a189b048ec2a221fe)
+ * prices the output's own 43 bytes plus the 3,763-byte input that spends it at
+ * `DUST_RELAY_TX_FEE`, 750 sat/kvB by default (src/policy/policy.h), rounding
+ * up: 3,806 * 750 / 1,000 = 2,854.5. A transaction that pays a fee and has an
+ * output below it is not standard, so the node would not relay it.
+ */
+const DUST_THRESHOLD_SATS = (BigInt(OUTPUT_BYTES + INPUT_BYTES) * 750n + 999n) / 1_000n
+
+/**
+ * The lowest fee rate qbit Core relays, 0.25 sat/vB: `DEFAULT_MIN_RELAY_TX_FEE`,
+ * 250 sat/kvB (src/policy/policy.h @ v1.0.0,
+ * 7ebcddb622d6e639041f005a189b048ec2a221fe). Core asks that rate of a
+ * transaction's size, rounded up, and refuses less with "min relay fee not
+ * met". The fee here is rounded up over an upper bound of the size, so any
+ * rate from this one up pays enough. A node started with a higher
+ * `-minrelaytxfee`, or whose mempool is full, asks more.
+ */
+const MIN_RELAY_FEE_RATE = 250 / 1_000
+
+/**
+ * The most inputs a payment spends, 106. qbit Core relays no transaction
+ * heavier than `MAX_STANDARD_TX_WEIGHT`, 400,000 (src/policy/policy.h @ v1.0.0,
+ * 7ebcddb622d6e639041f005a189b048ec2a221fe), and with no witness discount a
+ * transaction's weight is its size. With two outputs, 106 inputs take at most
+ * 12 + 106 * 3,763 + 2 * 43 = 398,976 bytes, and 107 would take 402,739. Up to
+ * 252 inputs, the input count takes the one byte OVERHEAD_BYTES counts.
+ */
+const MAX_INPUTS = Math.floor((400_000 - OVERHEAD_BYTES - 2 * OUTPUT_BYTES) / INPUT_BYTES)
+
+/** The longest delay a timer supports, and the largest `deadlineMs` the client accepts. */
+const MAX_TIMER_MS = 2_147_483_647
+
+/**
+ * `broadcastTx` error kinds that prove the node did not accept the
+ * transaction: a rejection, or a request refused or stopped before it was
+ * sent. `unknown_outcome`, and any kind a newer version of @qbit-oss/api adds,
+ * may mean it did.
+ *
+ * This is a copy. packages/api/docs/broadcasting.md is the authority on what
+ * each kind means, and a wallet must keep this list in sync with it: check it
+ * again whenever it upgrades @qbit-oss/api.
+ */
+const NOT_ACCEPTED = new Set<QbitApiErrorKind>([
+  'http',
+  'rate_limit',
+  'payload_too_large',
+  'not_found',
+  'network',
+  'aborted',
+  'timeout',
+])
+
+/**
+ * Pay `amountSats` to `to` from `key`'s address, spending its largest
+ * confirmed outputs first, only as many as the amount and the fee need, and
+ * returning the change, and resolve once the node has the transaction. Change
+ * below the dust threshold goes to the fee instead.
+ *
+ * It rejects with a `SendPaymentError` (see `SendPaymentErrorCode`), or with
+ * a `QbitProtocolError` when `to` is not a regtest P2MR address, before any key
+ * is used. Only a payment that became pending while this one signed is found
+ * after signing, still before anything is stored or sent.
+ *
+ * If signing fails, it rejects with the `P2mrPsbtSigningError` and stores or
+ * sends no transaction. Starting over is safe, since nothing was sent. To
+ * finish the same transaction instead, call `signP2mrPsbt` with `error.psbt`
+ * and only the plans that are not in `error.signed`. There is one plan per
+ * input, `{ inputIndex, pubkey: key.pk32, leafHash }`, with the leaf hash the
+ * saved `SignatureRecord`s carry; a plan already signed is refused before any
+ * signer call. In phase `'sign'`, no signature was stored for `error.failed`,
+ * but a reservation its `sign` call made stays counted. In phase `'onSigned'`
+ * the store missed the signature for `error.failed`, so save it from
+ * `error.psbt` first. Then finalize, extract, store and broadcast as steps 5
+ * to 7 below do.
+ */
+export async function sendPayment(params: SendPaymentParams): Promise<{ txid: string; rawTxHex: string }> {
+  const { client, key, to, amountSats, feeRate, store, signal, pollMs = 2_000 } = params
+  const network = 'regtest'
+  checkParams(params)
+  const recipient = addressToScriptPubKey(to, network) // throws for an address that is not regtest P2MR
+  const end = Date.now() + params.deadlineMs
+
+  // A pending payment may be in the mempool already, where the UTXO scan no
+  // longer lists its inputs, so a call that retries it would spend other
+  // outputs and pay twice. Wait until it confirms or is dropped.
+  refuseWhilePending(store)
+
+  // 1. Find the outputs to spend while the WASM signer loads (init() loads it
+  // once; later calls share it). Every step gets what is left of the one deadline.
+  const from = p2mrAddressFromPubkey(key.pk32, network)
+  const scan = client.getAddressUtxos(from, { signal, deadlineMs: msLeft(end) })
+  const [pqc, rows] = await Promise.all([init(), scan])
+  const utxos = checkedUtxos(rows, message => new SendPaymentError('invalid_utxos', message)).filter(
+    utxo => utxo.status?.confirmed === true // this example spends confirmed outputs only
+  )
+
+  // Spend the largest outputs first, only as many as the payment needs.
+  // Change below the dust threshold would make the transaction nonstandard,
+  // so it goes to the fee instead of to an output.
+  const spent = selectInputs(utxos, amountSats, feeRate)
+  const totalSats = spent.reduce((sum, utxo) => sum + BigInt(utxo.value), 0n)
+  const changeSats = totalSats - amountSats - feeFor(spent.length, 2, feeRate)
+
+  // 2-3. Build the unsigned transaction, then check the signing plans before
+  // the user approves it and before any key is used.
+  const scriptPubKey = addressToScriptPubKey(from, network) // `from` = p2mrAddressFromPubkey(key.pk32, network)
+  const leafScript = singleKeyLeafScript(key.pk32) // the only leaf of a single-key address
+  const psbt = createP2mrPsbt({
+    inputs: spent.map(utxo => ({
+      prevout: { txid: hexToBytes(utxo.txid).reverse(), vout: utxo.vout }, // explorers show txids byte-reversed
+      witnessUtxo: { value: BigInt(utxo.value), scriptPubKey },
+      leafScript,
+      controlBlock: buildControlBlock(),
+    })),
+    outputs: [
+      { value: amountSats, scriptPubKey: recipient },
+      ...(changeSats >= DUST_THRESHOLD_SATS ? [{ value: changeSats, scriptPubKey }] : []), // change back to the sender
+    ],
+  })
+  const leafHash = p2mrLeafHash(P2MR_LEAF_VERSION_V1, leafScript)
+  const keys = spent.map((_, inputIndex) => ({ inputIndex, pubkey: key.pk32, leafHash }))
+  validateP2mrSigningPlans({ psbt, keys }) // the checks signP2mrPsbt runs before its first signer call
+  // The txid of the unsigned transaction, which signing does not change.
+  const txid = txidFromRawTx(bytesToHex(psbt.global.find(entry => entry.key[0] === PSBT_GLOBAL_UNSIGNED_TX)!.value))
+
+  // 4. Sign. Both callbacks must be synchronous.
+  const signed = signP2mrPsbt({
+    psbt,
+    keys,
+    // Returns the 3,680-byte SLH-DSA signature of the sighash it is handed.
+    // Each signature takes about 0.6 s, so check the deadline and the signal
+    // first, then record that the key is about to sign once more.
+    sign: sighash => {
+      msLeft(end)
+      signal.throwIfAborted()
+      store.reserveSignature(key.pk32)
+      return pqc.sign(key.sk64, sighash)
+    },
+    // Runs after each signature is stored in the PSBT and before the next
+    // `sign` call. A stateful signer persists the signature here, with the
+    // txid, input and leaf it signs, so a crash or a later failure never loses
+    // a signature it already made. sendPayment's doc says how to resume.
+    onSigned: ({ field, ...plan }) => store.saveSignature({ txid, ...plan, key: field.key, value: field.value }),
+  })
+
+  // 5-6. Assemble the witnesses and extract the transaction.
+  const rawTxHex = bytesToHex(extractP2mrTransaction(finalizeP2mrPsbt(signed.psbt)))
+
+  // 7. Store the transaction, then broadcast it.
+  // #region broadcast
+  // Signing blocked the thread, so a cancel issued meanwhile (a timer, a
+  // click) has not run yet. Let it run, and stop before anything is stored
+  // or sent if it did, or if the deadline passed.
+  await sleep(0, signal)
+  signal.throwIfAborted()
+  const deadlineMs = msLeft(end) // a deadline that has passed sends nothing
+  // Another call may have stored a payment while this one scanned and signed.
+  // Check again, with no await before the save, so that only one of them pays.
+  refuseWhilePending(store)
+  store.saveTransaction(txid, rawTxHex)
+  try {
+    await client.broadcastTx(rawTxHex, { txid, signal, deadlineMs })
+  } catch (error) {
+    // broadcastTx throws a TypeError only for an invalid argument, before it sends anything.
+    if (error instanceof TypeError || (QbitApiError.is(error) && NOT_ACCEPTED.has(error.kind))) {
+      store.dropTransaction(txid) // definitely not accepted: never send it later
+      throw error
+    }
+    // unknown_outcome, a kind this version does not know, or any other error,
+    // which may follow a send: the node may have the transaction. Find out
+    // before sending again, and never rebuild.
+    await reconcileBroadcast(client, rawTxHex, { end, signal, pollMs })
+  }
+  // #endregion broadcast
+  return { txid, rawTxHex }
+}
+
+/**
+ * Settle a broadcast whose outcome is unknown, such as `broadcastTx`'s
+ * `unknown_outcome`. The transaction may already be in the node's mempool, so
+ * this looks it up with `getTx`, and resolves once the indexer answers with
+ * the transaction, in its mempool or in a block. Any other reply, such as one
+ * whose `txid` is another transaction's, proves nothing. Nor does `not_found`,
+ * which only means this indexer does not know the transaction yet: the request
+ * may never have reached the node, or the indexer may lag its node. After
+ * three `not_found` replies in a row, it resubmits the **same** hex, which
+ * cannot pay twice, and resolves when the node accepts it. When less than two
+ * poll intervals are left, it makes one last round: it waits half of what is
+ * left, looks the transaction up, and unless that finds it, resubmits once and
+ * stops. So a short deadline still settles a transaction that never reached
+ * the node, without a burst of requests as the deadline nears. `broadcastTx` resolves an already-known
+ * reply too, since this passes the txid. Rebuilding the payment with other
+ * inputs instead could pay twice.
+ *
+ * `getTxStatus` cannot answer this: qbit-electrs replies `{ confirmed: false }`
+ * for a txid it has never seen, as it does for a transaction in its mempool.
+ *
+ * A rejected resubmission settles nothing: the first copy may have confirmed
+ * already, so the node sees its inputs as spent, or may still confirm. If
+ * `end` passes, `signal` aborts, or the last round's resubmission fails first,
+ * it rejects with an `unknown_outcome` error: keep the transaction pending and
+ * call this again later, for example after a restart. If no node will take it
+ * any more, see `abandonPendingPayment`.
+ *
+ * It checks `pollMs`, and the time left before `end`, as `sendPayment` checks
+ * `pollMs` and `deadlineMs`, and throws an `invalid_options` `SendPaymentError`
+ * before any request for a value a timer cannot wait. An `end` that has already
+ * passed is no mistake: it rejects with `unknown_outcome` without a request, as
+ * when `end` passes while it polls.
+ */
+export async function reconcileBroadcast(
+  client: EsploraClient,
+  rawTxHex: string,
+  options: { end: number; signal: AbortSignal; pollMs: number }
+): Promise<void> {
+  const { end, signal, pollMs } = options
+  checkDelay('pollMs', pollMs)
+  if (!(end <= Date.now())) checkDelay('the time left before end', end - Date.now())
+  const txid = txidFromRawTx(rawTxHex)
+  let absentReplies = 0
+  while (Date.now() < end && !signal.aborted) {
+    const lastPoll = end - Date.now() < 2 * pollMs // no time to poll again after this
+    await sleep(lastPoll ? (end - Date.now()) / 2 : pollMs, signal) // give the transaction time to propagate
+    let lookup: 'found' | 'absent' | 'unknown'
+    try {
+      await lookUpTx(client, txid, { signal, deadlineMs: msLeft(end) })
+      lookup = 'found' // in the mempool or in a block
+    } catch (error) {
+      // `not_found`: not known to this indexer yet. Any other failure, a reply
+      // that is not this transaction included, tells us nothing.
+      lookup = QbitApiError.is(error) && error.kind === 'not_found' ? 'absent' : 'unknown'
+    }
+    if (lookup === 'found') return
+    absentReplies = lookup === 'absent' ? absentReplies + 1 : 0
+    if (absentReplies < 3 && !lastPoll) continue
+    absentReplies = 0
+    try {
+      await client.broadcastTx(rawTxHex, { txid, signal, deadlineMs: msLeft(end) })
+      return
+    } catch {
+      // Whatever went wrong, a rejection included, keep looking.
+    }
+    if (lastPoll) break // resubmit once at the end, never again and again
+  }
+  throw new QbitApiError('unknown_outcome', `the outcome of transaction ${txid} is still unknown`, { txid })
+}
+
+/**
+ * Why `abandonPendingPayment` refused to release a pending transaction. It
+ * released nothing.
+ *
+ * - `invalid_options`: `deadlineMs` is not a number above 0 and at most 2,147,483,647.
+ * - `not_pending`: the store holds no pending transaction `txid`.
+ * - `known`: the indexer knows the transaction, in its mempool or in a block,
+ *   so it is not stuck: settle it with `reconcileBroadcast`.
+ * - `invalid_utxos`: the backend's UTXO list is malformed or lists an outpoint twice.
+ * - `inputs_spent`: an input is not among the address's unspent outputs. The
+ *   transaction, or another one that spends the same output, may be in a
+ *   block or in a mempool.
+ */
+export type AbandonPaymentErrorCode = 'invalid_options' | 'not_pending' | 'known' | 'invalid_utxos' | 'inputs_spent'
+
+export class AbandonPaymentError extends Error {
+  readonly code: AbandonPaymentErrorCode
+  /** The transaction it was asked to release. */
+  readonly txid: string
+
+  constructor(code: AbandonPaymentErrorCode, message: string, txid: string) {
+    super(message)
+    this.name = 'AbandonPaymentError'
+    this.code = code
+    this.txid = txid
+  }
+}
+
+/**
+ * Release a pending transaction that no node will take any more, so that the
+ * wallet can replace it. The example never calls it: call it on purpose, when
+ * for example the node accepted the transaction, later evicted it from its
+ * mempool, and now refuses every resubmission of the same hex because its
+ * mempool asks a higher fee than it pays ("mempool min fee not met"). Until
+ * then `sendPayment` refuses to pay with `pending`, and `reconcileBroadcast`
+ * never settles.
+ *
+ * It releases `txid` from `store` only when the indexer does not know it
+ * (`getTx` answers `not_found`) and every one of its inputs is still among
+ * `address`'s unspent outputs, which qbit-electrs lists without any output a
+ * transaction in its mempool spends. It resolves with those outputs, in the
+ * transaction's input order. Otherwise it rejects with an
+ * `AbandonPaymentError`, or with a `QbitApiError` when a lookup fails (`parse`
+ * when `getTx` answers with anything but the transaction), and releases nothing.
+ *
+ * Releasing it does not unsend it. The indexer can lag its node, and a node
+ * that still holds a copy can relay or mine it, so the abandoned transaction
+ * may yet confirm. The only safe follow-up is a replacement that spends the
+ * **same** inputs, the outputs this resolves with, at a higher fee rate (a fee
+ * bump): the two conflict, so at most one of them can confirm. Build it as
+ * `sendPayment` builds its transaction, from exactly these outputs, then store
+ * and broadcast it the same way. Never pay with a transaction built from
+ * different inputs, such as a new `sendPayment` call, which picks its own: if
+ * the abandoned transaction confirms as well, the recipient is paid twice.
+ */
+export async function abandonPendingPayment(params: {
+  client: EsploraClient
+  /** The address the payment spends from: `p2mrAddressFromPubkey(key.pk32, 'regtest')`. */
+  address: string
+  store: PaymentStore
+  /** The pending transaction to release, as `store.pendingTransaction()` names it. */
+  txid: string
+  /** One budget for both lookups, at most 2,147,483,647 ms. */
+  deadlineMs: number
+  signal: AbortSignal
+}): Promise<EsploraUtxo[]> {
+  const { client, address, store, txid, signal } = params
+  if (!isTimerDelay(params.deadlineMs)) {
+    throw new AbandonPaymentError(
+      'invalid_options',
+      `deadlineMs must be a number above 0 and at most ${MAX_TIMER_MS}, not ${String(params.deadlineMs)}`,
+      txid
+    )
+  }
+  const end = Date.now() + params.deadlineMs
+  const rawTxHex = pendingHex(store, txid)
+
+  // The indexer must not know the transaction. Any failure but not_found
+  // proves nothing, and neither does a reply that is not this transaction.
+  const known = await lookUpTx(client, txid, { signal, deadlineMs: msLeft(end) }).then(
+    () => true,
+    (error: unknown) => {
+      if (QbitApiError.is(error) && error.kind === 'not_found') return false
+      throw error
+    }
+  )
+  if (known) {
+    throw new AbandonPaymentError(
+      'known',
+      `the indexer knows transaction ${txid}: settle it with reconcileBroadcast`,
+      txid
+    )
+  }
+
+  // Every input must be unspent. The client has no outspend lookup, but this
+  // example spends only `address`'s outputs, and its UTXO list leaves out any
+  // output spent in a block or by a transaction in the indexer's mempool.
+  const rows = await client.getAddressUtxos(address, { signal, deadlineMs: msLeft(end) })
+  const unspent = new Map(
+    checkedUtxos(rows, message => new AbandonPaymentError('invalid_utxos', message, txid)).map(utxo => [
+      `${utxo.txid.toLowerCase()}:${utxo.vout}`,
+      utxo,
+    ])
+  )
+  const inputs = spentOutpoints(rawTxHex).map(outpoint => {
+    const utxo = unspent.get(outpoint)
+    if (utxo === undefined) {
+      throw new AbandonPaymentError(
+        'inputs_spent',
+        `input ${outpoint} of transaction ${txid} is not among ${address}'s unspent outputs`,
+        txid
+      )
+    }
+    return utxo
+  })
+
+  // Release only the transaction these lookups checked, with no await in between.
+  pendingHex(store, txid)
+  store.dropTransaction(txid)
+  return inputs
+}
+
+/** Throws a `SendPaymentError` for a parameter that could pay the wrong amount or fee, or never settle. */
+function checkParams({ amountSats, feeRate, deadlineMs, pollMs }: SendPaymentParams): void {
+  // A NaN or infinite fee rate would reach BigInt() as a bare RangeError, a
+  // rate below Core's minimum relay fee would make a transaction no node
+  // relays, and a rate above the wallet's ceiling, from a typo or a hostile
+  // fee source, would overpay.
+  if (!Number.isFinite(feeRate) || feeRate < MIN_RELAY_FEE_RATE || feeRate > WALLET_MAX_FEE_RATE) {
+    throw new SendPaymentError(
+      'invalid_fee_rate',
+      `feeRate must be at least ${MIN_RELAY_FEE_RATE}, qbit Core's minimum relay fee rate, and at most ${WALLET_MAX_FEE_RATE} sat/vB, not ${String(feeRate)}`
+    )
+  }
+  if (typeof amountSats !== 'bigint' || amountSats < DUST_THRESHOLD_SATS) {
+    throw new SendPaymentError(
+      'invalid_amount',
+      `amountSats must be a bigint of at least ${DUST_THRESHOLD_SATS}, the dust threshold, not ${String(amountSats)}`
+    )
+  }
+  checkDelay('deadlineMs', deadlineMs)
+  if (pollMs !== undefined) checkDelay('pollMs', pollMs)
+}
+
+/** Throws an `invalid_options` SendPaymentError naming option `name` unless `ms` is a delay a timer can wait. */
+function checkDelay(name: string, ms: number): void {
+  // A timer fires at once for a longer delay than MAX_TIMER_MS, and the
+  // client refuses such a deadline with an `http` error.
+  if (!isTimerDelay(ms)) {
+    throw new SendPaymentError(
+      'invalid_options',
+      `${name} must be a number above 0 and at most ${MAX_TIMER_MS}, not ${String(ms)}`
+    )
+  }
+}
+
+/** Whether `ms` is a delay a timer can wait, and the client accepts as `deadlineMs`. */
+function isTimerDelay(ms: number): boolean {
+  return Number.isFinite(ms) && ms > 0 && ms <= MAX_TIMER_MS
+}
+
+/** The fee for `inputs` inputs and `outputs` outputs at `feeRate`, rounded up. */
+function feeFor(inputs: number, outputs: number, feeRate: number): bigint {
+  return BigInt(Math.ceil((OVERHEAD_BYTES + inputs * INPUT_BYTES + outputs * OUTPUT_BYTES) * feeRate))
+}
+
+/**
+ * The outputs to spend: the largest first, until they cover `amountSats` and
+ * the fee without change. An output worth no more than the fee to spend it
+ * would only lower what the payment can send, so it is never spent, whatever
+ * order a wallet picks outputs in. Throws a
+ * `SendPaymentError` when they cannot cover the payment, or can only with more
+ * than `MAX_INPUTS` inputs.
+ */
+function selectInputs(utxos: EsploraUtxo[], amountSats: bigint, feeRate: number): EsploraUtxo[] {
+  const worthSpending = utxos.filter(utxo => utxo.value > INPUT_BYTES * feeRate).sort((a, b) => b.value - a.value)
+  const selected: EsploraUtxo[] = []
+  let totalSats = 0n
+  for (const utxo of worthSpending) {
+    selected.push(utxo)
+    totalSats += BigInt(utxo.value)
+    if (totalSats - amountSats >= feeFor(selected.length, 1, feeRate)) break
+  }
+  if (totalSats - amountSats < feeFor(selected.length, 1, feeRate)) {
+    throw new SendPaymentError('insufficient_funds', 'insufficient confirmed funds')
+  }
+  if (selected.length > MAX_INPUTS) {
+    throw new SendPaymentError(
+      'too_many_inputs',
+      `the payment needs ${selected.length} confirmed outputs, and a standard transaction spends at most ${MAX_INPUTS}: consolidate them first`
+    )
+  }
+  return selected
+}
+
+/** Throws a `SendPaymentError` while `store` holds a transaction that is still pending. */
+function refuseWhilePending(store: PaymentStore): void {
+  const pending = store.pendingTransaction()
+  if (pending !== undefined) {
+    throw new SendPaymentError('pending', `transaction ${pending.txid} is still pending`, pending.txid)
+  }
+}
+
+/** The hex `store` holds for its pending transaction `txid`; throws a `not_pending` AbandonPaymentError otherwise. */
+function pendingHex(store: PaymentStore, txid: string): string {
+  const pending = store.pendingTransaction()
+  if (pending === undefined || pending.txid !== txid || txidFromRawTx(pending.rawTxHex) !== txid) {
+    throw new AbandonPaymentError('not_pending', `transaction ${txid} is not pending`, txid)
+  }
+  return pending.rawTxHex
+}
+
+/**
+ * The outputs a transaction spends, as `txid:vout` with the txid as explorers
+ * show it. `txidFromRawTx` has already checked that the hex is one whole
+ * transaction: version, the witness marker and flag if present, the input
+ * count, then each input's outpoint, scriptSig and sequence.
+ */
+function spentOutpoints(rawTxHex: string): string[] {
+  const bytes = hexToBytes(rawTxHex)
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+  let at = 4
+  const compactSize = () => {
+    const first = bytes[at]!
+    const width = first < 0xfd ? 0 : first === 0xfd ? 2 : 4 // never 0xff: no count exceeds 0x02000000
+    const value = width === 0 ? first : width === 2 ? view.getUint16(at + 1, true) : view.getUint32(at + 1, true)
+    at += 1 + width
+    return value
+  }
+  if (bytes[at] === 0) at += 2
+  return Array.from({ length: compactSize() }, () => {
+    const outpoint = `${bytesToHex(bytes.slice(at, at + 32).reverse())}:${view.getUint32(at + 32, true)}`
+    at += 36
+    const scriptSigBytes = compactSize()
+    at += scriptSigBytes + 4
+    return outpoint
+  })
+}
+
+/**
+ * `rows` once every row has a 64-hex txid, a uint32 vout and a value that is
+ * a non-negative safe integer, and no outpoint repeats; otherwise throws what
+ * `refuse` returns. The client does not validate this endpoint's rows, JSON
+ * cannot carry amounts above 2^53 exactly, and an outpoint listed twice would
+ * count its value twice.
+ */
+function checkedUtxos(rows: unknown, refuse: (message: string) => Error): EsploraUtxo[] {
+  if (!Array.isArray(rows)) throw refuse('backend sent a UTXO list that is not an array')
+  const outpoints = new Set<string>()
+  rows.forEach((row: Partial<EsploraUtxo> | null, index) => {
+    const { txid, vout, value } = row ?? {}
+    const unusable = (field: string) => refuse(`backend sent an unusable ${field} in UTXO row ${index}`)
+    if (typeof txid !== 'string' || !/^[0-9a-f]{64}$/i.test(txid)) throw unusable('txid')
+    if (typeof vout !== 'number' || !Number.isInteger(vout) || vout < 0 || vout > 0xffff_ffff) throw unusable('vout')
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw unusable('value')
+    const outpoint = `${txid.toLowerCase()}:${vout}`
+    if (outpoints.has(outpoint)) throw refuse(`backend listed outpoint ${outpoint} twice`)
+    outpoints.add(outpoint)
+  })
+  return rows as EsploraUtxo[]
+}
+
+/**
+ * Look `txid` up with `getTx`, and resolve only when the reply is that
+ * transaction: an object whose `txid` is `txid`, compared case-insensitively.
+ * The client returns the reply as parsed, without checking which transaction
+ * it is, so a broken backend or proxy that answers any JSON would otherwise
+ * pass for an indexer that knows the transaction. Throws a `parse`
+ * QbitApiError for any other reply, as `getTxHex` does for another
+ * transaction's hex, and the client's error, such as `not_found`, when the
+ * lookup fails.
+ */
+async function lookUpTx(client: EsploraClient, txid: string, options: RequestOptions): Promise<void> {
+  const tx: unknown = await client.getTx(txid, options)
+  const replied = typeof tx === 'object' && tx !== null && 'txid' in tx ? tx.txid : undefined
+  if (typeof replied !== 'string' || replied.toLowerCase() !== txid.toLowerCase()) {
+    throw new QbitApiError('parse', `the reply to the lookup of transaction ${txid} is not that transaction`)
+  }
+}
+
+/**
+ * Milliseconds left before `end`, the payment's single deadline. Once it has
+ * passed, throws a `timeout` QbitApiError, as the client's own calls do.
+ */
+function msLeft(end: number): number {
+  const left = end - Date.now()
+  if (left <= 0) throw new QbitApiError('timeout', 'the payment deadline passed')
+  return left
+}
+
+/** Wait `ms`, or less if `signal` aborts. Cleans up its timer and listener either way. */
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    const done = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal.addEventListener('abort', done)
+  })
+}
