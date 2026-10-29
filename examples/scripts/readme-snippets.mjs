@@ -25,10 +25,13 @@
 // Only the READMEs are scanned: README.md, examples/README.md and
 // packages/*/README.md. A marker in any other Markdown file that git tracks
 // fails both modes too, since its block would never be checked; listing those
-// files needs git. Without git, or outside a git checkout, such as in a source
-// tarball, that scan alone is skipped with a note, and the READMEs are still
-// checked. A tracked file missing from the working tree, deleted but not yet
-// removed with `git rm`, holds no marker: it is skipped with a note.
+// files needs git, run at the repository root. Without git, or when the
+// repository root is not the top level of a git checkout (as
+// `git rev-parse --show-toplevel` names it), such as in a source tarball,
+// whether unpacked on its own or inside another checkout, that scan alone is
+// skipped with a note, and the READMEs are still checked. A tracked file
+// missing from the working tree, deleted but not yet removed with `git rm`,
+// holds no marker: it is skipped with a note.
 //
 // Line endings do not count, so a CRLF checkout, or a README whose lines end
 // in a mix of CRLF and LF, checks the same as an LF one. --write keeps every
@@ -40,7 +43,7 @@
 //
 // The examples' `test` script runs --check. The script has no dependencies.
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { dirname, join, normalize, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -170,18 +173,27 @@ console.log(`readme snippets: ${found.length} ${mode === '--check' ? 'checked' :
 
 /**
  * The Markdown files git tracks, NUL-separated, or none, after a note, when
- * git is missing or the repository root is not in a git checkout. Any other
- * failure of git throws.
+ * git is missing or the repository root is not the top level of a git
+ * checkout: outside any checkout, or inside another one, where `git ls-files`
+ * would list none of its files without saying why. Any other failure of git
+ * throws.
  */
 function trackedMarkdown() {
-  try {
-    return execFileSync('git', ['ls-files', '-z', '--', '*.md'], {
+  const git = args =>
+    execFileSync('git', args, {
       cwd: repoRoot,
       encoding: 'utf8',
       // Untranslated messages, so that "not a git repository" can be recognized.
       env: { ...process.env, LC_ALL: 'C' },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
+  const skip = reason => {
+    console.warn(`note: skipped the scan of other Markdown files for snippet markers: ${reason}`)
+    return ''
+  }
+  let topLevel
+  try {
+    topLevel = git(['rev-parse', '--show-toplevel']).replace(/\r?\n$/, '')
   } catch (error) {
     const reason =
       error.code === 'ENOENT'
@@ -190,9 +202,13 @@ function trackedMarkdown() {
           ? 'this is not a git checkout'
           : undefined
     if (reason === undefined) throw error
-    console.warn(`note: skipped the scan of other Markdown files for snippet markers: ${reason}`)
-    return ''
+    return skip(reason)
   }
+  // Both resolved, so that a symlink or another spelling of the same directory still matches.
+  if (realpathSync(topLevel) !== realpathSync(repoRoot)) {
+    return skip(`this is not the top level of a git checkout, but inside the one at ${topLevel}`)
+  }
+  return git(['ls-files', '-z', '--', '*.md'])
 }
 
 /** The lines of region `name` in `source`, each part dedented and parts joined by a blank line. */

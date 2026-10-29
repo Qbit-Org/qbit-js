@@ -13,6 +13,14 @@ const checkouts: string[] = []
 function checkout(): string {
   const root = mkdtempSync(join(tmpdir(), 'readme-snippets-'))
   checkouts.push(root)
+  copyTree(root)
+  git(root, 'init', '--quiet')
+  git(root, 'add', '--all')
+  return root
+}
+
+/** Copy the script, the READMEs it scans and the examples they copy into `root`. */
+function copyTree(root: string): void {
   const files = [
     'README.md',
     'examples/README.md',
@@ -24,9 +32,6 @@ function checkout(): string {
     mkdirSync(dirname(join(root, file)), { recursive: true })
     cpSync(join(repoRoot, file), join(root, file))
   }
-  git(root, 'init', '--quiet')
-  git(root, 'add', '--all')
-  return root
 }
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe' })
@@ -128,6 +133,32 @@ describe('readme-snippets.mjs', () => {
       expect(stale.status, reason).toBe(1)
       expect(stale.stderr, reason).toContain(`the block differs from ${REGION}`)
     }
+  })
+
+  it('skips the scan of other Markdown files, with a note, in a tree unpacked inside another git checkout', () => {
+    // A source tarball unpacked inside some other project's checkout, which
+    // tracks none of its files: `git ls-files` there succeeds, listing none.
+    const outer = checkout()
+    const unpacked = join(outer, 'vendor', 'qbit-js')
+    copyTree(unpacked)
+    // A marker in a Markdown file the scan would have read, had git tracked it.
+    const page = join(unpacked, 'packages/api/docs/guide.md')
+    mkdirSync(dirname(page), { recursive: true })
+    writeFileSync(page, '<!-- snippet: examples/src/api-quick-start.ts#quick-start -->\n')
+
+    const result = check(unpacked)
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).toContain(
+      'note: skipped the scan of other Markdown files for snippet markers: this is not the top level of a git checkout, but inside the one at '
+    )
+
+    // The READMEs are still checked: a block that differs from its region fails.
+    writeFileSync(join(unpacked, README), withStaleBlock(read(unpacked, README)))
+    const stale = check(unpacked)
+
+    expect(stale.status).toBe(1)
+    expect(stale.stderr).toContain(`the block differs from ${REGION}`)
   })
 
   it('checks a CRLF checkout, and a README whose lines end in a mix of CRLF and LF', () => {
