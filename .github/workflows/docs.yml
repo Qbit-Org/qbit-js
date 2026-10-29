@@ -9,11 +9,11 @@ on:
 # Each job grants only what it needs.
 permissions: {}
 
-# A newer push to a pull request cancels the run it supersedes. Every other run
-# gets a group of its own, so a run on main is never cancelled or queued here;
-# the deploy job's own group below keeps deployments from overlapping.
+# A newer push to a pull request cancels the run it supersedes. Runs for pushes
+# to the same branch are serialized and never cancelled: a newer push replaces
+# a run still waiting, so an older push's docs can never overwrite a newer one's.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -34,10 +34,11 @@ jobs:
         with:
           run_install: false
 
+      # No pnpm cache: this build's output is published to Pages, and the cache
+      # is written by other workflows (the rule publish.yml follows too).
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
-          cache: pnpm
 
       - name: Check pnpm matches packageManager
         run: |

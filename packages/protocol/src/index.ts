@@ -3940,7 +3940,8 @@ export function validateP2mrSigningPlans(
  * // psbt: from createP2mrPsbt or parsePsbt
  * // pubkey: the signing key's 32-byte public key
  * // pqcSign(sighash): your synchronous PQC signer, returning a 3680-byte signature
- * // recordKeyUse(ref): your keyring's synchronous record of a used key
+ * // reserveKeyUse(ref): your keyring's synchronous check-and-record of a key
+ * //   use; it throws if the key's state does not allow another signature
  * // saveSignature(ref, field): your synchronous store for a produced signature
  * const leafHash = p2mrLeafHash(P2MR_LEAF_VERSION_V1, singleKeyLeafScript(pubkey))
  * try {
@@ -3948,8 +3949,9 @@ export function validateP2mrSigningPlans(
  *     psbt,
  *     keys: [{ inputIndex: 0, pubkey, leafHash }],
  *     sign: (sighash, { inputIndex, pubkey, leafHash }) => {
- *       // Before signing: a plan that fails in phase 'sign' never reaches onSigned.
- *       recordKeyUse({ inputIndex, pubkey, leafHash })
+ *       // Before signing: a plan that fails in phase 'sign' never reaches onSigned,
+ *       // and a retry calls sign again, so refuse here when the key's state says so.
+ *       reserveKeyUse({ inputIndex, pubkey, leafHash })
  *       return pqcSign(sighash)
  *     },
  *     onSigned: ({ inputIndex, pubkey, leafHash, field }) => saveSignature({ inputIndex, pubkey, leafHash }, field),
@@ -4092,10 +4094,12 @@ function describeThrown(cause: unknown): string {
  * Finalize P2MR inputs: build the witness qbit Core's `FinalizePSBT` builds
  * (`src/psbt.cpp:697` and `src/script/sign.cpp:699-741` @ v1.0.0, `7ebcddb6`),
  * store it as the final scriptwitness (0x08), and drop the now-redundant
- * partial fields and an empty final scriptSig (0x07). A non-empty 0x07 throws
- * `INVALID_PSBT`: a P2MR spend's scriptSig must be empty. Already-finalized
- * inputs are left untouched once their final witness passes the limits
- * `extractP2mrTransaction` enforces.
+ * partial fields and an empty final scriptSig (0x07). On an input it
+ * finalizes, a non-empty 0x07 throws `INVALID_PSBT`: a P2MR spend's scriptSig
+ * must be empty. An input that already has a final scriptwitness is left
+ * untouched once that witness passes the limits `extractP2mrTransaction`
+ * enforces, and its 0x07 is not checked; `extractP2mrTransaction` writes an
+ * empty scriptSig for it either way.
  *
  * Leaves and signatures are read as `decodePsbt` reports them: one leaf per
  * (control block, script, leaf version) and one signature per (pubkey, leaf

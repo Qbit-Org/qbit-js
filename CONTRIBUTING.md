@@ -101,7 +101,9 @@ Prettier skips what `.gitignore` lists and what `.prettierignore` excludes:
 `src/index.ts`, into `api-docs/` (gitignored); `typedoc.json` configures it.
 `corepack pnpm docs:api:check` runs the same validation without writing
 anything: it reports undocumented exports, documented types that reference
-unexported ones, and `{@link}` tags that do not resolve.
+unexported ones, and `{@link}` tags that do not resolve. It then runs
+`scripts/check-doc-links.mjs`, which checks that every topic-page link in the
+doc comments names an existing page and heading.
 `.github/workflows/docs.yml` runs both on pull requests and publishes the
 reference to GitHub Pages on pushes to `main`.
 
