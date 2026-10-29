@@ -11,7 +11,9 @@ engine" warning on them, and pnpm 11 itself fails to start on Node.js older than
 11), and Corepack runs that exact version. Node.js 25 and later no longer bundle
 Corepack, so on Node.js 26+ install it with `npm install -g corepack`.
 
-CI reads its Node.js version from `.nvmrc`, so `nvm use` selects the same one.
+CI reads its Node.js major version from `.nvmrc` and runs the newest 22.x;
+`nvm use` selects the newest 22.x you have installed, which must still be
+22.13 or later.
 
 ## Setup
 
@@ -22,11 +24,13 @@ corepack pnpm verify
 
 `verify` runs CI's offline checks in CI's order and stops at the first failure:
 `format:check`, `build`, `test`, `typecheck`, `pack:check` and
-`consumer:check`. It leaves two checks to CI: `smoke:consumer`, which installs
-the packed packages with npm and resolves their dependencies from the
-registry, and `fixtures:check`, which clones qbit Core and also needs git and
-Python (see `scripts/check-core-fixtures.sh`). Both run locally too, given
-network access.
+`consumer:check`. CI also checks that pnpm matches `packageManager` and
+installs with `--frozen-lockfile --config.engine-strict=true`, which Corepack
+and a clean install cover locally. It runs two network checks that `verify`
+leaves out: `smoke:consumer`, which installs the packed packages with npm and
+resolves their dependencies from the registry, and `fixtures:check`, which
+clones qbit Core and also needs git and Python (see
+`scripts/check-core-fixtures.sh`). Both run locally too, given network access.
 
 ## CI checks
 
@@ -75,13 +79,6 @@ Prettier skips what `.gitignore` lists and what `.prettierignore` excludes:
 - every `*.md` file;
 - `pnpm-lock.yaml` and every `package.json`, whose formatting npm and pnpm own;
 - every `*.yml` and `*.yaml` file, including the workflows.
-
-The commit that first applied Prettier is listed in `.git-blame-ignore-revs`.
-GitHub's blame view skips it; to have `git blame` skip it too, run:
-
-```sh
-git config blame.ignoreRevsFile .git-blame-ignore-revs
-```
 
 ## Fixtures
 
