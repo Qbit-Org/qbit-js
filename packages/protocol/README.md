@@ -111,12 +111,15 @@ See [Signing and finalization](docs/signing-and-finalization.md).
   `onSigned` callback failed. `error.psbt` holds every signature made so far,
   `error.signed` lists them, and `error.failed` is the plan that failed. In
   phase `'sign'` the signer was invoked for `failed` but no signature was
-  stored, so `failed` is not in `signed`; a stateful signer must still treat
-  that key use as consumed and never sign again from the same one-time state.
-  In phase `'onSigned'` the signature for `failed` is stored and is the last
-  entry of `signed`; only the callback failed. Retry by calling `signP2mrPsbt`
-  with `error.psbt` and only the keys not listed in `error.signed`; a key whose
-  signature is already present is refused before any signer call.
+  stored, so `failed` is not in `signed` and `onSigned` never ran for it; a
+  stateful signer must still treat that key use as consumed, so it records
+  each key use inside `sign`, before signing, and never signs again from the
+  same one-time state. In phase `'onSigned'` the signature for `failed` is
+  stored and is the last entry of `signed`; only the callback failed. Retry by
+  calling `signP2mrPsbt` with `error.psbt` and only the keys not listed in
+  `error.signed`; a key whose signature is already present is refused before
+  any signer call, but a `'sign'`-phase `failed` is sent to the signer again
+  with the same digest.
   [Signing and finalization](docs/signing-and-finalization.md)
 
 ## Topic pages

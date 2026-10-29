@@ -1,0 +1,90 @@
+name: Docs
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+# Each job grants only what it needs.
+permissions: {}
+
+# A newer push to a pull request cancels the run it supersedes. Runs for pushes
+# to the same branch run one at a time, and a newer push replaces a run that is
+# still waiting, so a newer push deploys after an older one. Re-running an older
+# run by hand rebuilds and deploys that older commit's docs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Same pnpm and Node.js as ci.yml: pnpm from package.json `packageManager`,
+      # Node.js from .nvmrc.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          run_install: false
+
+      # No pnpm cache: this build's output is published to Pages, and the cache
+      # is written by other workflows (the rule publish.yml follows too).
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Check pnpm matches packageManager
+        run: |
+          expected="$(node -p "require('./package.json').packageManager.split('+')[0].slice('pnpm@'.length)")"
+          actual="$(pnpm --version)"
+          echo "packageManager pnpm $expected, running pnpm $actual"
+          test "$actual" = "$expected"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --config.engine-strict=true
+
+      # `pnpm docs:api:check` with a single TypeDoc pass: TypeDoc validates and
+      # builds, failing on any warning (typedoc.json), then the script checks
+      # the doc comments' docs/*.md links, which TypeDoc does not.
+      - name: Build and validate API docs
+        run: pnpm docs:api && node scripts/check-doc-links.mjs
+
+      # Uploaded here so the deploy job, which holds the Pages and OIDC
+      # permissions, runs no repository or dependency code.
+      - name: Upload Pages artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Qbit-Org/qbit-js'
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: api-docs
+
+  deploy:
+    needs: build
+    # Pushes to main of this repository only: never pull requests or forks.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'Qbit-Org/qbit-js'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # Let a running deployment finish before the next one starts.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

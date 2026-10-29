@@ -79,6 +79,15 @@ another copy (the other build, or another version) is judged by its public
 fields only: its `network` error is always `unknown_outcome`, and its response
 body never counts as a generic failure.
 
+The client cannot tell whether a custom `fetchFn` sent the POST before it
+threw, so it takes the error at its word. An `http`, `not_found`,
+`payload_too_large` or `rate_limit` error from a `fetchFn` proves that nothing
+was accepted only if the `fetchFn` threw it before anything was sent, and a
+retried `network` error, or a fallback to `/tx/push`, sends the transaction
+again. A `fetchFn` must therefore throw a `QbitApiError` only when nothing was
+sent; once the request may have been sent, it should return the reply, or
+throw the underlying error, and let the client classify the failure.
+
 ### Body verdicts
 
 The client reads an RPC error code from the reply's structure first (esplora's

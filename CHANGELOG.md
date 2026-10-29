@@ -39,6 +39,12 @@ breaking changes bump MINOR.
 
 ### @qbit-oss/api
 
+- The `unknown_outcome` error message ends "may have been accepted; resubmit
+  the same hex, and never rebuild the payment with different inputs" (or
+  "resubmit the same hex with its { txid }" when no txid is known) instead of
+  "may have been accepted, check its status before resubmitting": qbit-electrs
+  reports an unknown txid as unconfirmed, so a status check cannot settle the
+  outcome. The error's `kind` and fields are unchanged.
 - Requires `@noble/hashes` `~1.8.0` (was `^1.3.0`) and imports its `sha2`
   entry point instead of the deprecated `sha256` one, as `@qbit-oss/protocol`
   does, with the same effect on lockfiles and overrides. `@noble/hashes` 1.8.0

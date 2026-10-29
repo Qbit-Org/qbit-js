@@ -19,6 +19,8 @@
     "smoke:consumer": "pnpm --filter @qbit-oss/protocol --filter @qbit-oss/api build && node scripts/run-consumer-smoke.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "docs:api": "typedoc",
+    "docs:api:check": "typedoc --emit none && node scripts/check-doc-links.mjs",
     "verify": "pnpm format:check && pnpm build && pnpm test && pnpm typecheck && pnpm typecheck:test && pnpm pack:check && pnpm consumer:check"
   },
   "keywords": [
@@ -39,6 +41,7 @@
   },
   "homepage": "https://github.com/Qbit-Org/qbit-js#readme",
   "devDependencies": {
-    "prettier": "3.9.10"
+    "prettier": "3.9.10",
+    "typedoc": "0.28.20"
   }
 }

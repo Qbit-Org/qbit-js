@@ -1,11 +1,36 @@
 import { sha256 } from '@noble/hashes/sha2'
 
+/**
+ * Name of a network in {@link qbitNetworks}: qbit mainnet, Testnet4, signet or
+ * regtest.
+ *
+ * @remarks
+ * See [Features](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/features.md).
+ *
+ * @category Networks
+ */
 export type QbitNetworkName = 'mainnet' | 'testnet4' | 'signet' | 'regtest'
 
+/**
+ * Parameters of a qbit network: its address HRP, default ports and BIP32
+ * extended-key versions. {@link qbitNetworks} holds the four built-in sets.
+ *
+ * @remarks
+ * Functions that take a network accept a {@link QbitNetworkName} or a
+ * `QbitNetworkParams` object, except {@link parseQbitUri}, which takes a
+ * name; {@link getQbitNetwork} returns an object as given, without checking
+ * it. See [Features](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/features.md).
+ *
+ * @category Networks
+ */
 export interface QbitNetworkParams {
+  /** The network's name. */
   name: QbitNetworkName
+  /** Human-readable part of the network's bech32m addresses, such as `qb` on mainnet. */
   bech32Hrp: string
+  /** Default peer-to-peer port. */
   p2pPort: number
+  /** Default JSON-RPC port. */
   rpcPort: number
   /**
    * `true` when these SDK parameters match qbit Core v1.0.0 chainparams
@@ -16,97 +41,264 @@ export interface QbitNetworkParams {
    * identify mainnet, check `name === 'mainnet'` or `bech32Hrp === 'qb'`.
    */
   mainnetReady: boolean
+  /** BIP32 extended-key version bytes and the Base58 prefixes they produce. */
   bip32: {
+    /** Version bytes of extended public keys, as a big-endian uint32. */
     public: number
+    /** Version bytes of extended private keys, as a big-endian uint32. */
     private: number
+    /** Base58 prefix of extended public keys, such as `qpub` on mainnet. */
     publicPrefix: string
+    /** Base58 prefix of extended private keys, such as `qprv` on mainnet. */
     privatePrefix: string
   }
 }
 
+/**
+ * The parameters of qbit mainnet, Testnet4, signet and regtest, keyed by
+ * {@link QbitNetworkName}.
+ *
+ * @remarks
+ * Testnet4 and signet share the `tq` address HRP and the `tqpb`/`tqpv`
+ * extended-key versions, so neither an address nor an extended key tells them
+ * apart. See [Features](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/features.md).
+ *
+ * @category Networks
+ */
 export const qbitNetworks = {
+  /** qbit mainnet. */
   mainnet: {
+    /** The network's name. */
     name: 'mainnet',
+    /** Human-readable part of the network's bech32m addresses, which start with `qb1`. */
     bech32Hrp: 'qb',
+    /** Default peer-to-peer port. */
     p2pPort: 8355,
+    /** Default JSON-RPC port. */
     rpcPort: 8352,
     /** Not a mainnet flag: `true` on every network. See {@link QbitNetworkParams.mainnetReady}. */
     mainnetReady: true,
+    /** BIP32 extended-key version bytes and the Base58 prefixes they produce. */
     bip32: {
+      /** Version bytes of extended public keys (`qpub`), as a big-endian uint32. */
       public: 0x03f72815,
+      /** Version bytes of extended private keys (`qprv`), as a big-endian uint32. */
       private: 0x03f723db,
+      /** Base58 prefix of extended public keys. */
       publicPrefix: 'qpub',
+      /** Base58 prefix of extended private keys. */
       privatePrefix: 'qprv',
     },
   },
+  /** qbit Testnet4. */
   testnet4: {
+    /** The network's name. */
     name: 'testnet4',
+    /** Human-readable part of the network's bech32m addresses, which start with `tq1`, as signet's do. */
     bech32Hrp: 'tq',
+    /** Default peer-to-peer port. */
     p2pPort: 48355,
+    /** Default JSON-RPC port. */
     rpcPort: 48352,
     /** Not a mainnet flag: `true` on every network. See {@link QbitNetworkParams.mainnetReady}. */
     mainnetReady: true,
+    /** BIP32 extended-key version bytes and the Base58 prefixes they produce, shared by Testnet4 and signet. */
     bip32: {
+      /** Version bytes of extended public keys (`tqpb`), as a big-endian uint32. */
       public: 0x0435dbad,
+      /** Version bytes of extended private keys (`tqpv`), as a big-endian uint32. */
       private: 0x0435dc31,
+      /** Base58 prefix of extended public keys. */
       publicPrefix: 'tqpb',
+      /** Base58 prefix of extended private keys. */
       privatePrefix: 'tqpv',
     },
   },
+  /** qbit signet. */
   signet: {
+    /** The network's name. */
     name: 'signet',
+    /** Human-readable part of the network's bech32m addresses, which start with `tq1`, as Testnet4's do. */
     bech32Hrp: 'tq',
+    /** Default peer-to-peer port. */
     p2pPort: 38355,
+    /** Default JSON-RPC port. */
     rpcPort: 38352,
     /** Not a mainnet flag: `true` on every network. See {@link QbitNetworkParams.mainnetReady}. */
     mainnetReady: true,
+    /** BIP32 extended-key version bytes and the Base58 prefixes they produce, shared by Testnet4 and signet. */
     bip32: {
+      /** Version bytes of extended public keys (`tqpb`), as a big-endian uint32. */
       public: 0x0435dbad,
+      /** Version bytes of extended private keys (`tqpv`), as a big-endian uint32. */
       private: 0x0435dc31,
+      /** Base58 prefix of extended public keys. */
       publicPrefix: 'tqpb',
+      /** Base58 prefix of extended private keys. */
       privatePrefix: 'tqpv',
     },
   },
+  /** qbit regtest. */
   regtest: {
+    /** The network's name. */
     name: 'regtest',
+    /** Human-readable part of the network's bech32m addresses, which start with `qbrt1`. */
     bech32Hrp: 'qbrt',
+    /** Default peer-to-peer port. */
     p2pPort: 18460,
+    /** Default JSON-RPC port. */
     rpcPort: 18452,
     /** Not a mainnet flag: `true` on every network. See {@link QbitNetworkParams.mainnetReady}. */
     mainnetReady: true,
+    /** BIP32 extended-key version bytes and the Base58 prefixes they produce. */
     bip32: {
+      /** Version bytes of extended public keys (`qrpb`), as a big-endian uint32. */
       public: 0x03f7d7b5,
+      /** Version bytes of extended private keys (`qrpv`), as a big-endian uint32. */
       private: 0x03f7d83a,
+      /** Base58 prefix of extended public keys. */
       publicPrefix: 'qrpb',
+      /** Base58 prefix of extended private keys. */
       privatePrefix: 'qrpv',
     },
   },
 } as const satisfies Record<QbitNetworkName, QbitNetworkParams>
 
+/**
+ * Witness version of P2MR outputs. Their scriptPubKey starts with `OP_2`, and
+ * the data part of their address with `z` (`qb1z…` on mainnet).
+ *
+ * @category Constants
+ */
 export const P2MR_WITNESS_VERSION = 2
+/**
+ * Byte length of a P2MR witness program, which is the Merkle root of the
+ * output's script tree. P2MR public keys and leaf hashes are 32 bytes too.
+ *
+ * @category Constants
+ */
 export const P2MR_PROGRAM_BYTES = 32
+/**
+ * Mask that takes the leaf version from a control block's first byte. That
+ * byte's low bit must be set (see {@link verifyControlBlock}).
+ *
+ * @category Constants
+ */
 export const P2MR_LEAF_VERSION_MASK = 0xfe
+/**
+ * The P2MR v1 leaf version. It is the only leaf version this package signs,
+ * finalizes and builds message proofs for, and its control blocks start with
+ * `0xc1`.
+ *
+ * @category Constants
+ */
 export const P2MR_LEAF_VERSION_V1 = 0xc0
+/**
+ * Byte length of a control block's first byte, which holds the leaf version
+ * and a set low bit.
+ *
+ * @category Constants
+ */
 export const P2MR_CONTROL_BASE_BYTES = 1
+/**
+ * Byte length of each sibling hash in a control block's Merkle path.
+ *
+ * @category Constants
+ */
 export const P2MR_CONTROL_NODE_BYTES = 32
+/**
+ * Most sibling hashes a control block may hold, so a control block is at most
+ * 4,097 bytes. This package rejects longer control blocks and Merkle paths,
+ * and descriptor trees more than 128 branches deep, as qbit Core's `mr()`
+ * parser does.
+ *
+ * @category Constants
+ */
 export const P2MR_CONTROL_MAX_NODE_COUNT = 128
-// Coinbase outputs are spendable only after this many confirmations on every
-// qbit network (qbit Core src/consensus/consensus.h COINBASE_MATURITY).
+/**
+ * Coinbase outputs are spendable only after this many confirmations on every
+ * qbit network (qbit Core `src/consensus/consensus.h` `COINBASE_MATURITY`).
+ *
+ * @remarks
+ * No helper in this package applies it, so wallet coin selection must. See
+ * [Features](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/features.md).
+ *
+ * @category Consensus limits
+ */
 export const QBIT_COINBASE_MATURITY = 1000
-// No amount larger than this (in satoshis) is valid on any qbit network
-// (qbit Core src/consensus/amount.h: MAX_MONEY = 210000000 * COIN, COIN = 1e8).
-// It is a consensus-critical sanity bound, not the total money supply.
+/**
+ * No amount larger than this (in satoshis) is valid on any qbit network
+ * (qbit Core `src/consensus/amount.h`: `MAX_MONEY = 210000000 * COIN`,
+ * `COIN = 1e8`). It is a consensus-critical sanity bound, not the total money
+ * supply.
+ *
+ * @remarks
+ * A `bigint`: 21,000,000,000,000,000 satoshis, which is 210,000,000 QBT. Every
+ * amount this package serializes, hashes or signs must be in
+ * `[0, QBIT_MAX_MONEY]`, qbit Core's `MoneyRange` (see {@link assertMoneyRange}
+ * and [Consensus checks](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/consensus-checks.md)).
+ *
+ * @category Consensus limits
+ */
 export const QBIT_MAX_MONEY = 21_000_000_000_000_000n
+/**
+ * Opcode `0x00`, which pushes an empty item: the script number 0.
+ *
+ * @category Constants
+ */
 export const OP_0 = 0x00
+/**
+ * Opcode `0x51`, which pushes the number 1. `OP_1` to `OP_16` push 1 to 16.
+ *
+ * @category Constants
+ */
 export const OP_1 = 0x51
+/**
+ * Opcode `0x52`, which pushes the number 2. A P2MR scriptPubKey starts with it,
+ * as its witness version.
+ *
+ * @category Constants
+ */
 export const OP_2 = 0x52
+/**
+ * Opcode `0x60`, which pushes the number 16.
+ *
+ * @category Constants
+ */
 export const OP_16 = 0x60
+/**
+ * Opcode `0xb3`, qbit's PQC signature check. It follows the key of a `pk` leaf
+ * script and the first key of a `multi_a` leaf script.
+ *
+ * @category Constants
+ */
 export const OP_CHECKSIGPQC = 0xb3
+/**
+ * Opcode `0xba`. It follows every key of a `multi_a` leaf script after the
+ * first.
+ *
+ * @category Constants
+ */
 export const OP_CHECKSIGADD = 0xba
+/**
+ * Opcode `0x9c`. It ends a `multi_a` leaf script, after the threshold.
+ *
+ * @category Constants
+ */
 export const OP_NUMEQUAL = 0x9c
 const OP_RETURN = 0x6a
 // qbit Core CScript::IsPayToAnchor (src/script/script.cpp:213-220): OP_1 PUSH2 0x4e73.
 const PAY_TO_ANCHOR_SCRIPT = Uint8Array.of(OP_1, 0x02, 0x4e, 0x73)
+/**
+ * Byte length of a P2MR PQC signature (SLH-DSA-SHA2-128s-bounded30). A witness
+ * signature item is this long, or one byte longer when it carries an explicit
+ * sighash type.
+ *
+ * @remarks
+ * See [P2MR Signature Hash](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-sighash.md).
+ *
+ * @category Constants
+ */
 export const PQC_SIGNATURE_BYTES = 3680
 // qbit Core MAX_P2MR_V1_STACK_ITEM_SIZE and MAX_P2MR_V1_TOTAL_INITIAL_STACK_BYTES
 // (src/script/script.h:46, :49): consensus caps on each item and on the whole
@@ -123,6 +315,13 @@ const P2MR_V1_MAX_SIGNATURE_ITEM_BYTES = PQC_SIGNATURE_BYTES + 1
  * signature item (PQC_SIGNATURE_BYTES + 1 sighash byte = 3681), i.e. 35. Each
  * signature item is at least PQC_SIGNATURE_BYTES, so 36 of them (132480 bytes)
  * always exceed the consensus initial-stack limit.
+ *
+ * @remarks
+ * {@link multiALeafScript} refuses higher thresholds; descriptors with them
+ * still parse. See
+ * [P2MR Descriptors](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptors.md).
+ *
+ * @category Consensus limits
  */
 export const P2MR_V1_MAX_MULTI_A_THRESHOLD =
   // Core static_asserts that a signature item fits one stack item
@@ -132,30 +331,184 @@ export const P2MR_V1_MAX_MULTI_A_THRESHOLD =
     : 0
 // qbit Core MAX_PUBKEYS_PER_MULTI_A (src/script/script.h:37).
 const P2MR_MAX_MULTI_A_PUBKEYS = 999
+/**
+ * Tag of the tagged SHA-256 that {@link qbitWalletMessageHash} applies to a
+ * wallet message's UTF-8 bytes.
+ *
+ * @category Message proofs
+ */
 export const QBIT_WALLET_MESSAGE_DOMAIN = 'QbitWalletSignedMessage'
+/**
+ * Tag of the tagged SHA-256 that {@link qbitDataSigPqcHash} applies to a
+ * wallet message hash. Its result is the digest a message proof's PQC
+ * signature signs.
+ *
+ * @category Message proofs
+ */
 export const QBIT_DATA_SIG_PQC_DOMAIN = 'QbitDataSigPQC'
+/**
+ * The `type` of every {@link P2mrMessageProof}.
+ *
+ * @category Message proofs
+ */
 export const P2MR_MESSAGE_PROOF_TYPE = 'p2mr-message'
+/**
+ * The `version` of every {@link P2mrMessageProof}. No other version verifies.
+ *
+ * @category Message proofs
+ */
 export const P2MR_MESSAGE_PROOF_VERSION = 1
+/**
+ * The `proof_mode` of every {@link P2mrMessageProof}: a signature by the key
+ * of a single-key P2MR leaf.
+ *
+ * @category Message proofs
+ */
 export const P2MR_MESSAGE_PROOF_MODE = 'p2mr-pubkey'
+/**
+ * The `algorithm` of every {@link P2mrMessageProof}: the PQC signature scheme.
+ *
+ * @category Message proofs
+ */
 export const P2MR_MESSAGE_ALGORITHM = 'SLH-DSA-SHA2-128s-bounded30'
+/**
+ * Sighash type `0x00`: commits to every input and output, as `SIGHASH_ALL`
+ * does, and is written as a 3680-byte signature with no type byte. The signing
+ * helpers use no other type unless `allowNonDefaultSighash: true` is passed.
+ *
+ * @remarks
+ * See [P2MR Signature Hash](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-sighash.md).
+ *
+ * @category Constants
+ */
 export const SIGHASH_DEFAULT = 0x00
+/**
+ * Sighash type `0x01`: commits to every input and output, like
+ * `SIGHASH_DEFAULT`, but with an explicit type byte.
+ *
+ * @category Constants
+ */
 export const SIGHASH_ALL = 0x01
+/**
+ * Sighash type `0x02`: commits to no output.
+ *
+ * @category Constants
+ */
 export const SIGHASH_NONE = 0x02
+/**
+ * Sighash type `0x03`: commits only to the output at the signed input's index,
+ * which must exist.
+ *
+ * @category Constants
+ */
 export const SIGHASH_SINGLE = 0x03
+/**
+ * Flag `0x80`, combined with `SIGHASH_ALL`, `SIGHASH_NONE` or `SIGHASH_SINGLE`:
+ * commits to the signed input's outpoint, spent output and sequence instead of
+ * every input's.
+ *
+ * @category Constants
+ */
 export const SIGHASH_ANYONECANPAY = 0x80
+/**
+ * Mask that takes the output type (`SIGHASH_ALL`, `SIGHASH_NONE` or
+ * `SIGHASH_SINGLE`) from a sighash type. It does not handle
+ * `SIGHASH_DEFAULT`: `0x00 & SIGHASH_OUTPUT_MASK` is `0`, not `SIGHASH_ALL`,
+ * so treat `SIGHASH_DEFAULT` as `SIGHASH_ALL` before masking, as
+ * {@link p2mrSighash} does.
+ *
+ * @category Constants
+ */
 export const SIGHASH_OUTPUT_MASK = 0x03
+/**
+ * Mask that takes the input type (`SIGHASH_ANYONECANPAY` or `0`) from a
+ * sighash type.
+ *
+ * @category Constants
+ */
 export const SIGHASH_INPUT_MASK = 0x80
+/**
+ * The BIP174 magic `psbt` (`70 73 62 74`) as a big-endian uint32. A serialized
+ * PSBT starts with these four bytes and then `0xff`.
+ *
+ * @category Constants
+ */
 export const PSBT_MAGIC_BYTES = 0x70736274 // "psbt"
+/**
+ * Global key type `0x00`: the unsigned transaction, which every PSBT must
+ * carry.
+ *
+ * @category Constants
+ */
 export const PSBT_GLOBAL_UNSIGNED_TX = 0x00
+/**
+ * Input key type `0x01`: the output the input spends, its amount and
+ * scriptPubKey. Signing needs one on every input.
+ *
+ * @category Constants
+ */
 export const PSBT_IN_WITNESS_UTXO = 0x01
+/**
+ * Input key type `0x03`: the sighash type every signature on the input must
+ * use, as a 4-byte little-endian uint32.
+ *
+ * @category Constants
+ */
 export const PSBT_IN_SIGHASH_TYPE = 0x03
+/**
+ * Input key type `0x08`: the input's final script witness, which
+ * {@link finalizeP2mrPsbt} writes and {@link extractP2mrTransaction} reads.
+ *
+ * @category Constants
+ */
 export const PSBT_IN_FINAL_SCRIPTWITNESS = 0x08
+/**
+ * qbit input key type `0x19`: a P2MR script signature, keyed by public key and
+ * leaf hash. See {@link encodeP2mrPsbtScriptSigField}.
+ *
+ * @category Constants
+ */
 export const PSBT_IN_P2MR_SCRIPT_SIG = 0x19
+/**
+ * qbit input key type `0x1d`: a P2MR leaf script, keyed by its control block.
+ * See {@link encodeP2mrPsbtLeafScriptField}.
+ *
+ * @category Constants
+ */
 export const PSBT_IN_P2MR_LEAF_SCRIPT = 0x1d
+/**
+ * Key type `0xfc` of a proprietary record, in any PSBT map. The key goes on
+ * with a length-prefixed identifier, a compact-size subtype and key data.
+ *
+ * @category Constants
+ */
 export const PSBT_IN_PROPRIETARY = 0xfc
+/**
+ * Identifier of qbit's proprietary P2MR input records.
+ *
+ * @category Constants
+ */
 export const PSBT_QBIT_IDENTIFIER = 'qbit'
+/**
+ * `qbit` proprietary input subtype `0x01`: the P2MR Merkle root of the spent
+ * output, with empty key data and a 32-byte value.
+ *
+ * @category Constants
+ */
 export const PSBT_QBIT_IN_P2MR_MERKLE_ROOT = 0x01
+/**
+ * `qbit` proprietary input subtype `0x02`: a P2MR leaf script, laid out as a
+ * `0x1d` record is.
+ *
+ * @category Constants
+ */
 export const PSBT_QBIT_IN_P2MR_LEAF_SCRIPT = 0x02
+/**
+ * `qbit` proprietary input subtype `0x03`: a P2MR script signature, laid out
+ * as a `0x19` record is.
+ *
+ * @category Constants
+ */
 export const PSBT_QBIT_IN_P2MR_SCRIPT_SIG = 0x03
 /**
  * Default `maxBytes` (see `PsbtLimitOptions`): 16 MiB. qbit has no witness
@@ -166,6 +519,11 @@ export const PSBT_QBIT_IN_P2MR_SCRIPT_SIG = 0x03
  * src/script/p2mr_sizing.h:31-41). A PSBT adds a witness UTXO and leaf script
  * per input, so 16 MiB is 8x a block-sized transaction, leaving room for extra
  * signatures, unknown fields and non-witness UTXOs.
+ *
+ * @remarks
+ * See [Untrusted PSBT input](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/untrusted-psbt.md).
+ *
+ * @category PSBT
  */
 export const PSBT_DEFAULT_MAX_BYTES = 16 * 1024 * 1024
 /**
@@ -178,6 +536,11 @@ export const PSBT_DEFAULT_MAX_BYTES = 16 * 1024 * 1024
  * 144 MB in `parsePsbt` plus `decodePsbt`, and 36 MB in
  * `extractP2mrTransaction` (the smallest passing `--max-old-space-size`). That
  * heap grows with this limit, not with `maxBytes`; see `PsbtLimitOptions`.
+ *
+ * @remarks
+ * See [Untrusted PSBT input](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/untrusted-psbt.md).
+ *
+ * @category PSBT
  */
 export const PSBT_DEFAULT_MAX_OBJECTS = 131_072
 
@@ -213,6 +576,60 @@ const textEncoder = new TextEncoder()
 const bech32CharValues = new Map<string, number>(Array.from(BECH32_CHARSET, (char, index) => [char, index]))
 const base58CharValues = new Map<string, number>(Array.from(BASE58_CHARSET, (char, index) => [char, index]))
 
+/**
+ * The `code` of a {@link QbitProtocolError}:
+ *
+ * - `UNKNOWN_NETWORK`: a network name that is not in {@link qbitNetworks}. A
+ *   name `Object.prototype` defines, such as `'toString'`, does not throw it;
+ *   see {@link getQbitNetwork}.
+ * - `INVALID_BECH32`: a malformed bech32 string: longer than 90 characters,
+ *   not printable ASCII, mixed case, or a bad separator, character, checksum
+ *   or padding.
+ * - `WRONG_HRP`: an address HRP that no qbit network uses or that is not the
+ *   expected network's, or network parameters whose HRP is not printable
+ *   lowercase ASCII.
+ * - `WRONG_ENCODING`: a bech32 address where P2MR needs bech32m.
+ * - `WRONG_WITNESS_VERSION`: an address whose witness version is not 2.
+ * - `WRONG_PROGRAM_LENGTH`: an address whose witness program is not 32 bytes.
+ * - `INVALID_BYTES`: a byte input that is not a `Uint8Array` or has the wrong
+ *   length, malformed hex, or a wallet message with a lone UTF-16 surrogate.
+ * - `INVALID_SCRIPT`: a malformed script, leaf version, witness signature item
+ *   or sighash type in one, or control block outside a PSBT record (in one,
+ *   it is `INVALID_PSBT`), an output qbit's restricted-output mode rejects, or
+ *   a message proof whose leaf does not match its key or address.
+ * - `INVALID_URI`: a `qbit:` URI with no address, a `#` fragment, a malformed
+ *   percent-escape, an invalid amount, a payment field name that is not
+ *   lowercase ASCII, a repeated payment field or an unsupported `req-`
+ *   parameter, or a `formatQbitUri` label or message with a lone UTF-16
+ *   surrogate.
+ * - `WRONG_URI_SCHEME`: a URI whose scheme is not `qbit:` (in any case), or
+ *   that starts with `qbit://`.
+ * - `INVALID_DESCRIPTOR`: a malformed or unsupported descriptor, checksum or
+ *   import request.
+ * - `INVALID_PSBT`: a malformed PSBT, one over its decoding limits, or one
+ *   that cannot be signed or finalized as asked.
+ * - `INVALID_SIGHASH`: an invalid sighash type given to a sighash function or
+ *   signing plan, a type the signing and finalization rules refuse, or a
+ *   sighash request with a bad input index, `spentOutputs` count or leaf hash,
+ *   or `SIGHASH_SINGLE` without a matching output. An invalid
+ *   `PSBT_IN_SIGHASH_TYPE` record is `INVALID_PSBT`.
+ * - `INVALID_AMOUNT`: an amount or total outside `MoneyRange`, or outputs that
+ *   exceed the inputs.
+ * - `INVALID_INTEGER`: a transaction integer field outside its uint32 or uint8
+ *   range.
+ * - `SIGNING_FAILED`: a {@link P2mrPsbtSigningError}.
+ * - `INVALID_SIGNER`: a `sign` that is not a function, or an `onSigned` that
+ *   is neither a function nor `undefined`. A callback that returns a promise,
+ *   or a `sign` result that is neither a `Uint8Array` nor `undefined`, throws
+ *   `SIGNING_FAILED` with an `INVALID_SIGNER` error as its `cause`.
+ *
+ * @remarks
+ * An error from another version of this package can carry a code this list
+ * does not include, so keep a default branch when switching on it. See
+ * [Error classification](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/error-classification.md).
+ *
+ * @category Errors
+ */
 export type QbitProtocolErrorCode =
   | 'UNKNOWN_NETWORK'
   | 'INVALID_BECH32'
@@ -240,7 +657,23 @@ function hasBrand(value: unknown, brand: symbol): boolean {
   return typeof value === 'object' && value !== null && (value as Record<symbol, unknown>)[brand] === true
 }
 
+/**
+ * The error this package throws for invalid input, with a
+ * {@link QbitProtocolErrorCode} in `code`.
+ *
+ * @remarks
+ * Some programming errors throw a plain `TypeError` or `RangeError` instead.
+ * A function's `@throws` does not list every one: an argument of the wrong
+ * type, such as a hex string where a `Uint8Array` belongs, can also throw a
+ * `TypeError` from inside the function. Recognize this error with
+ * {@link QbitProtocolError.is} rather than `instanceof` where an app can load
+ * more than one copy of this package. See
+ * [Error classification](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/error-classification.md).
+ *
+ * @category Errors
+ */
 export class QbitProtocolError extends Error {
+  /** What was wrong; see {@link QbitProtocolErrorCode}. */
   readonly code: QbitProtocolErrorCode
 
   /**
@@ -272,6 +705,17 @@ Object.defineProperty(QbitProtocolError.prototype, QBIT_PROTOCOL_ERROR_BRAND, { 
  * `[0, QBIT_MAX_MONEY]`. Throws `INVALID_AMOUNT` for anything else (including
  * non-bigint values), so an out-of-range amount is never serialized, hashed or
  * signed in int64-wrapped form.
+ *
+ * @param value - The amount in satoshis.
+ * @param name - What to call the amount in the error message. Default
+ * `'amount'`.
+ * @throws {QbitProtocolError} `INVALID_AMOUNT` if `value` is not a `bigint` in
+ * `[0, QBIT_MAX_MONEY]`.
+ *
+ * @remarks
+ * See [Consensus checks](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/consensus-checks.md).
+ *
+ * @category Consensus limits
  */
 export function assertMoneyRange(value: bigint, name = 'amount'): void {
   if (typeof value !== 'bigint') {
@@ -289,6 +733,16 @@ export function assertMoneyRange(value: bigint, name = 'amount'): void {
  * silent modulo-2^32 wrap of `>>> 0`. `version` is included because qbit Core
  * stores `CTransaction::version` as `uint32_t` (Bitcoin Core 28.0+); the legacy
  * int32 spelling `-1` is `0xffffffff` here, not a second accepted encoding.
+ *
+ * @param value - The field's value.
+ * @param name - What to call the field in the error message.
+ * @throws {QbitProtocolError} `INVALID_INTEGER` if `value` is not a number
+ * that is an integer in `[0, 0xffffffff]`.
+ *
+ * @remarks
+ * See [Consensus checks](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/consensus-checks.md).
+ *
+ * @category Consensus limits
  */
 export function assertUint32(value: number, name: string): void {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 0xffffffff) {
@@ -296,40 +750,114 @@ export function assertUint32(value: number, name: string): void {
   }
 }
 
+/**
+ * A decoded P2MR address, as {@link decodeP2mrAddress} returns it.
+ *
+ * @category Addresses
+ */
 export interface DecodedP2mrAddress {
+  /**
+   * The address's network. Testnet4 and signet share the `tq` HRP, so without
+   * an expected network a `tq` address decodes as `'testnet4'`; with one, this
+   * is the expected network's name.
+   */
   network: QbitNetworkName
+  /** The address's human-readable part, in lowercase. */
   hrp: string
+  /** The 32-byte witness program: the Merkle root of the output's script tree. */
   program: Uint8Array
 }
 
+/**
+ * A structured P2MR wallet message proof: a PQC signature over a message by the
+ * key of a single-key P2MR leaf, with the leaf and control block that tie the
+ * key to an address. Byte fields are lowercase hex. Create one with
+ * {@link createP2mrMessageProof} and check one with
+ * {@link verifyP2mrMessageProof}.
+ *
+ * @remarks
+ * See [Message proofs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/message-proofs.md).
+ *
+ * @category Message proofs
+ */
 export interface P2mrMessageProof {
+  /** Always {@link P2MR_MESSAGE_PROOF_TYPE}. */
   type: typeof P2MR_MESSAGE_PROOF_TYPE
+  /** Always {@link P2MR_MESSAGE_PROOF_VERSION}. */
   version: typeof P2MR_MESSAGE_PROOF_VERSION
+  /**
+   * The P2MR address the proof claims, in its canonical lowercase spelling.
+   * Attacker-controlled until verified against an expected address or network.
+   */
   address: string
+  /** {@link qbitWalletMessageHash} of the message (32 bytes). */
   message_hash: string
+  /** {@link qbitDataSigPqcHash} of the message hash (32 bytes): the digest that was signed. */
   datasig_hash: string
+  /** Always {@link QBIT_DATA_SIG_PQC_DOMAIN}. */
   domain: typeof QBIT_DATA_SIG_PQC_DOMAIN
+  /** Always {@link QBIT_WALLET_MESSAGE_DOMAIN}. */
   message_domain: typeof QBIT_WALLET_MESSAGE_DOMAIN
+  /** Always {@link P2MR_MESSAGE_ALGORITHM}. */
   algorithm: typeof P2MR_MESSAGE_ALGORITHM
+  /** Always {@link P2MR_MESSAGE_PROOF_MODE}. */
   proof_mode: typeof P2MR_MESSAGE_PROOF_MODE
+  /** The signing key's 32-byte public key. */
   pubkey: string
+  /** The 3680-byte PQC signature over `datasig_hash`. */
   signature: string
+  /** The leaf version, {@link P2MR_LEAF_VERSION_V1} (`0xc0`). */
   leaf_version: number
+  /** `pubkey`'s 34-byte single-key leaf script ({@link singleKeyLeafScript}). */
   leaf_script: string
+  /** A control block that commits the leaf to `p2mr_merkle_root`. */
   control_block: string
+  /** The 32-byte Merkle root the control block commits to, which is `address`'s witness program. */
   p2mr_merkle_root: string
 }
 
+/**
+ * Input to {@link createP2mrMessageProof}.
+ *
+ * @category Message proofs
+ */
 export interface CreateP2mrMessageProofParams {
+  /** The message. It must be well-formed UTF-16, with no lone surrogate. */
   message: string
+  /** The P2MR address the proof is for, on any qbit network, in either case. */
   address: string
+  /** The signing key's 32-byte public key. */
   pubkey: Uint8Array
+  /**
+   * The 3680-byte PQC signature by `pubkey` over
+   * `qbitDataSigPqcHash(qbitWalletMessageHash(message))`. It is not verified
+   * here.
+   */
   signature: Uint8Array
+  /** The leaf version. Default {@link P2MR_LEAF_VERSION_V1}, the only one accepted. */
   leafVersion?: number
+  /** The leaf script. Default `singleKeyLeafScript(pubkey)`, the only one accepted. */
   leafScript?: Uint8Array
+  /**
+   * A control block that commits the leaf to `address`'s witness program.
+   * Default `buildControlBlock(leafVersion)`, which commits only when the leaf
+   * is the tree's single leaf, as for {@link p2mrAddressFromPubkey}.
+   */
   controlBlock?: Uint8Array
 }
 
+/**
+ * PQC signature verifier for {@link verifyP2mrMessageProof}. It is called with
+ * the proof's 32-byte public key, the 32-byte digest `datasig_hash` and the
+ * 3680-byte signature, and must return `true`, synchronously, only for a valid
+ * signature.
+ *
+ * @remarks
+ * Only `true` counts: any other return value, including a promise or another
+ * truthy value, and a thrown error make the proof fail verification.
+ *
+ * @category Message proofs
+ */
 export type P2mrPqcVerifyFn = (pubkey: Uint8Array, digest: Uint8Array, signature: Uint8Array) => boolean
 
 /**
@@ -344,137 +872,373 @@ export type P2mrPqcVerifyFn = (pubkey: Uint8Array, digest: Uint8Array, signature
  *   given) must belong to, checked by HRP. Signet and Testnet4 share the `tq`
  *   HRP, so `expectedNetwork` cannot tell them apart: a `tq` proof verifies
  *   under either name.
+ *
+ * @remarks
+ * See [Message proofs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/message-proofs.md).
+ *
+ * @category Message proofs
  */
 export type VerifyP2mrMessageProofOptions =
   | {
+      /** The address the proof must be for. */
       expectedAddress: string
+      /** The network the proof's address must belong to. */
       expectedNetwork?: QbitNetworkName | QbitNetworkParams
     }
   | {
+      /** The address the proof must be for. */
       expectedAddress?: string
+      /** The network the proof's address must belong to. */
       expectedNetwork: QbitNetworkName | QbitNetworkParams
     }
 
+/**
+ * A parsed `qbit:` payment URI, as {@link parseQbitUri} returns it.
+ *
+ * @remarks
+ * See [qbit Payment URIs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/qbit-uri.md).
+ *
+ * @category URIs
+ */
 export interface ParsedQbitUri {
+  /**
+   * The address as written, minus one trailing `/`. It can be uppercase, as
+   * Core's GUI writes it, so lowercase it before comparing it with stored
+   * addresses.
+   */
   address: string
+  /**
+   * The address's network, from its HRP: a `tq` address reads as `'testnet4'`
+   * unless `'signet'` is the expected network.
+   */
   network: QbitNetworkName
+  /**
+   * The amount from `amount` or `req-amount`, in QBT (not satoshis), as
+   * decoded: `0` or digits without a leading zero, optionally followed by `.`
+   * and 1 to 8 digits, and at most 210,000,000.
+   */
   amount?: string
+  /**
+   * The decoded `label` or `req-label`. Untrusted text that can hold control
+   * characters, so escape it before showing or logging it.
+   */
   label?: string
+  /** The decoded `message` or `req-message`, with the same caveat as `label`. */
   message?: string
+  /**
+   * Every decoded key/value pair in URI order, keys as written, including
+   * unknown keys such as `pj`. Read the payment fields from `amount`, `label`
+   * and `message`, and do not reuse `params.toString()` as a URI query: it
+   * writes a space as `+`.
+   */
   params: URLSearchParams
 }
 
+/**
+ * Fields for {@link formatQbitUri}.
+ *
+ * @remarks
+ * See [qbit Payment URIs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/qbit-uri.md).
+ *
+ * @category URIs
+ */
 export interface QbitUriFields {
+  /** A P2MR address on any qbit network. It is validated and written as given. */
   address: string
+  /**
+   * The amount in QBT (not satoshis), written as given: `0` or digits without
+   * a leading zero, optionally followed by `.` and 1 to 8 digits, and at most
+   * 210,000,000.
+   */
   amount?: string
+  /** The label, percent-encoded. `undefined` omits it; `''` writes `label=`. */
   label?: string
+  /** The message, percent-encoded. `undefined` omits it; `''` writes `message=`. */
   message?: string
 }
 
+/**
+ * A descriptor split at its last `#`, as {@link splitDescriptorChecksum}
+ * returns it.
+ *
+ * @category Descriptors
+ */
 export interface DescriptorChecksumParts {
+  /** The text before the last `#`, or the whole input when it has no `#`. */
   descriptor: string
+  /** The 8-character checksum after the `#`, when there is one. */
   checksum?: string
 }
 
+/**
+ * The key expression inside `pk(pqc(...))`: an optional `[fingerprint/path]`
+ * origin, a BIP32 extended key and a derivation path that may end in `*`.
+ *
+ * @remarks
+ * It is parsed only: deriving its PQC key needs private BIP32/PQC derivation,
+ * which this package does not do. See
+ * [P2MR descriptor support](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptor-support.md).
+ *
+ * @category Descriptors
+ */
 export interface P2mrPqcKeyExpression {
+  /** The expression as written inside `pqc(...)`. */
   expression: string
+  /** The key origin, when the expression starts with `[...]`. */
   origin?: {
+    /** The master key fingerprint, as 8 lowercase hex digits. */
     fingerprint: string
+    /** The origin's path segments as written, such as `87h` or `0'`. */
     path: string[]
   }
+  /**
+   * The Base58Check extended key as written: a qbit `qpub`/`qprv`,
+   * `tqpb`/`tqpv` or `qrpb`/`qrpv` key, or a Bitcoin `xpub`/`xprv` or
+   * `tpub`/`tprv` key.
+   */
   key: string
+  /** The path segments after the key, as written; a final `*` is the wildcard. */
   path: string[]
+  /** Whether the path ends in the unhardened wildcard `*`, which makes the descriptor ranged. */
   wildcard: boolean
 }
 
+/**
+ * A leaf of an `mr(...)` script tree:
+ *
+ * - `pk`: `pk(<key hex>)`, a single-key leaf ({@link singleKeyLeafScript});
+ * - `pqc`: `pk(pqc(<key expression>))`, whose key is not derived, so it has no
+ *   leaf script or hash here;
+ * - `multi_a` / `sortedmulti_a`: `multi_a(<k>,<key hex>,...)`, a k-of-n leaf
+ *   built like {@link multiALeafScript}; `sortedmulti_a` sorts its keys
+ *   bytewise first.
+ *
+ * @category Descriptors
+ */
 export type P2mrDescriptorLeaf =
   | {
+      /** A single-key leaf. */
       type: 'pk'
+      /** The 32-byte public key. */
       pubkey: Uint8Array
     }
   | {
+      /** A single-key leaf whose key is a key expression. */
       type: 'pqc'
+      /** The parsed key expression. */
       key: P2mrPqcKeyExpression
     }
   | {
+      /** A k-of-n leaf; `sortedmulti_a` sorts its keys. */
       type: 'multi_a' | 'sortedmulti_a'
+      /** Signatures required, from 1 to `pubkeys.length`. A leaf above 35 can never be spent. */
       threshold: number
+      /** The 32-byte public keys in descriptor order, 1 to 999 of them. */
       pubkeys: Uint8Array[]
     }
 
+/**
+ * An `mr(...)` script tree: a leaf, or a `{left,right}` branch. No leaf is
+ * more than 128 branches deep.
+ *
+ * @category Descriptors
+ */
 export type P2mrDescriptorTree =
   | P2mrDescriptorLeaf
   | {
+      /** A `{left,right}` branch. */
       type: 'branch'
+      /** The left subtree. */
       left: P2mrDescriptorTree
+      /** The right subtree. */
       right: P2mrDescriptorTree
     }
 
+/**
+ * A parsed P2MR descriptor: `rawmr(<root hex>)` or `mr(<tree>)`.
+ *
+ * @remarks
+ * Functions that take a descriptor object check its node types, byte
+ * lengths, `multi_a` bounds and tree depth, and for a `pqc` key that the
+ * expression formatted from `origin`, `key` and `path` parses as
+ * {@link parseP2mrDescriptor} parses a string. They do not compare the key's
+ * `expression`, `wildcard` or `fingerprint` case with those fields. See
+ * [P2MR Descriptors](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptors.md) and
+ * [P2MR descriptor support](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptor-support.md).
+ *
+ * @category Descriptors
+ */
 export type ParsedP2mrDescriptor =
   | {
+      /** A bare Merkle root, which commits to no known leaves. */
       type: 'rawmr'
+      /** The checksum the parsed string carried, if any. {@link serializeP2mrDescriptor} recomputes it. */
       checksum?: string
+      /** The 32-byte Merkle root. */
       root: Uint8Array
     }
   | {
+      /** A script tree. */
       type: 'mr'
+      /** The checksum the parsed string carried, if any. {@link serializeP2mrDescriptor} recomputes it. */
       checksum?: string
+      /** The script tree. */
       tree: P2mrDescriptorTree
     }
 
+/**
+ * Options for {@link parseP2mrDescriptor}.
+ *
+ * @category Descriptors
+ */
 export interface ParseP2mrDescriptorOptions {
+  /** Throw `INVALID_DESCRIPTOR` for a descriptor without a `#checksum`. Default `false`. */
   requireChecksum?: boolean
+  /**
+   * Check a present checksum against the descriptor. Default `true`; `false`
+   * keeps an unchecked checksum, which must still be 8 checksum characters.
+   */
   verifyChecksum?: boolean
 }
 
+/**
+ * The receive and change descriptors for {@link formatP2mrImportDescriptors}.
+ *
+ * @category Descriptors
+ */
 export interface P2mrImportDescriptorPair {
+  /** The receive descriptor: a ranged `mr(...)` descriptor, with or without a checksum. */
   external: string
+  /** The change descriptor, under the same rules as `external`. */
   internal: string
 }
 
+/**
+ * One request object for qbit Core's `importdescriptors` RPC, as
+ * {@link formatP2mrImportDescriptors} returns it.
+ *
+ * @category Descriptors
+ */
 export interface P2mrImportDescriptorEntry {
+  /** The descriptor, with its checksum. */
   desc: string
+  /** `'now'` or a non-negative number of seconds since the Unix epoch. */
   timestamp: 'now' | number
+  /** Always `true`. */
   active: boolean
+  /** `false` for the receive descriptor, `true` for the change descriptor. */
   internal: boolean
+  /** The `[start, end]` range of derivation indexes. */
   range: [number, number]
 }
 
+/**
+ * A decoded P2MR witness signature item.
+ *
+ * @remarks
+ * See [P2MR Signature Hash](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-sighash.md).
+ *
+ * @category Encoding
+ */
 export interface P2mrWitnessSignature {
+  /** The 3680-byte PQC signature. */
   signature: Uint8Array
+  /** The sighash type: the explicit type byte, or `SIGHASH_DEFAULT` when there is none. */
   hashType: number
+  /** Whether the item has an explicit type byte, which makes it 3681 bytes. */
   explicitHashType: boolean
 }
 
+/**
+ * A decoded P2MR script-signature record: PSBT input key type `0x19`, or
+ * `qbit` proprietary subtype `0x03`.
+ *
+ * @category Encoding
+ */
 export interface P2mrPsbtScriptSigField {
+  /** Record kind. */
   type: 'p2mrScriptSig'
+  /** The signing key's 32-byte public key. */
   pubkey: Uint8Array
+  /** The 32-byte hash of the leaf the signature is for. */
   leafHash: Uint8Array
+  /** The decoded witness signature item. */
   signature: P2mrWitnessSignature
 }
 
+/**
+ * A decoded P2MR leaf-script record: PSBT input key type `0x1d`, or `qbit`
+ * proprietary subtype `0x02`.
+ *
+ * @category Encoding
+ */
 export interface P2mrPsbtLeafScriptField {
+  /** Record kind. */
   type: 'p2mrLeafScript'
+  /** The control block from the record's key. Its shape is checked, not what it commits to. */
   controlBlock: Uint8Array
+  /** The leaf script. */
   script: Uint8Array
+  /** The leaf version, the value's last byte. */
   leafVersion: number
 }
 
+/**
+ * A decoded `qbit` proprietary P2MR Merkle-root record (subtype `0x01`).
+ *
+ * @category Encoding
+ */
 export interface QbitProprietaryP2mrMerkleRootField {
+  /** Record kind. */
   type: 'qbitP2mrMerkleRoot'
+  /** The 32-byte Merkle root of the spent output's script tree. */
   merkleRoot: Uint8Array
 }
 
+/**
+ * A decoded `qbit` proprietary P2MR input record, as
+ * {@link decodeQbitProprietaryP2mrInputField} returns it.
+ *
+ * @category Encoding
+ */
 export type QbitProprietaryP2mrField =
   QbitProprietaryP2mrMerkleRootField | P2mrPsbtLeafScriptField | P2mrPsbtScriptSigField
 
+/**
+ * A `qbit` proprietary P2MR input record to write into a PSBT input map. Its
+ * key is `0xfc`, the identifier's length `0x04`, the identifier `qbit`, the
+ * subtype as a compact size (one byte for subtypes 1 to 3), then `keyData`.
+ *
+ * @category Encoding
+ */
 export interface EncodedQbitProprietaryP2mrField {
+  /** Always {@link PSBT_QBIT_IDENTIFIER}. */
   identifier: typeof PSBT_QBIT_IDENTIFIER
+  /** `PSBT_QBIT_IN_P2MR_MERKLE_ROOT`, `PSBT_QBIT_IN_P2MR_LEAF_SCRIPT` or `PSBT_QBIT_IN_P2MR_SCRIPT_SIG`. */
   subtype: number
+  /** The key data after the subtype. */
   keyData: Uint8Array
+  /** The record's value. */
   value: Uint8Array
 }
 
+/**
+ * Resolve a network name to its parameters.
+ *
+ * @param network - A {@link QbitNetworkName}, or a {@link QbitNetworkParams}
+ * object, which is returned as given without being checked.
+ * @returns The network's entry in {@link qbitNetworks}, or `network` itself
+ * when it is an object.
+ * @throws {QbitProtocolError} `UNKNOWN_NETWORK` if `network` is a string that
+ * is not one of the four network names, except a name `Object.prototype`
+ * defines, such as `'toString'`, `'constructor'` or `'__proto__'`: the lookup
+ * returns that prototype member instead of throwing.
+ *
+ * @remarks
+ * See [Features](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/features.md).
+ *
+ * @category Networks
+ */
 export function getQbitNetwork(network: QbitNetworkName | QbitNetworkParams): QbitNetworkParams {
   if (typeof network !== 'string') return network
   const params = qbitNetworks[network]
@@ -504,6 +1268,11 @@ const HEX_FALLBACK_CHUNK_BYTES = 8192
  * Repeated `+=` concatenation built a rope costing about 30 to 57 bytes of
  * heap per byte, which could exhaust the heap on a 10 MiB key or on many
  * distinct 128-byte PSBT keys.
+ *
+ * @param bytes - The bytes to encode.
+ * @returns Two lowercase hex digits per byte, in order.
+ *
+ * @category Encoding
  */
 export function bytesToHex(bytes: Uint8Array): string {
   if (bytes.length <= HEX_CONCAT_MAX_BYTES) {
@@ -534,6 +1303,20 @@ export function bytesToHex(bytes: Uint8Array): string {
   return chunks.join('')
 }
 
+/**
+ * Decode hex into bytes. Upper- and lowercase digits are both accepted.
+ *
+ * @param hex - An even number of hex digits; `''` gives empty bytes.
+ * @returns A new `Uint8Array`.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `hex` has an odd length or a
+ * character that is not a hex digit.
+ *
+ * @remarks
+ * Explorers and RPC show txids in reverse byte order, so reverse the result
+ * to get the order a {@link P2mrOutpoint} `txid` uses.
+ *
+ * @category Encoding
+ */
 export function hexToBytes(hex: string): Uint8Array {
   if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
     throw new QbitProtocolError('INVALID_BYTES', 'expected even-length hex')
@@ -553,6 +1336,18 @@ export function hexToBytes(hex: string): Uint8Array {
  * two distinct strings never share a hash. Core only signs the resulting
  * 32-byte hash; this text-to-hash step is the SDK's own domain
  * (qbit Core v1.0.0 doc/design/p2mr-datapqchash.md:25-28).
+ *
+ * @param message - The message text.
+ * @returns The 32-byte tagged SHA-256, tag {@link QBIT_WALLET_MESSAGE_DOMAIN},
+ * of the message's UTF-8 bytes.
+ * @throws {TypeError} if `message` is not a string.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `message` has a lone
+ * surrogate.
+ *
+ * @remarks
+ * See [Message proofs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/message-proofs.md).
+ *
+ * @category Message proofs
  */
 export function qbitWalletMessageHash(message: string): Uint8Array {
   if (typeof message !== 'string') {
@@ -579,12 +1374,45 @@ function isWellFormedUtf16(value: string): boolean {
   return true
 }
 
-/** Wrap a 32-byte wallet message hash in qbit's PQC data-signature domain. */
+/**
+ * Wrap a 32-byte wallet message hash in qbit's PQC data-signature domain.
+ *
+ * @param messageHash - A 32-byte hash, normally from
+ * {@link qbitWalletMessageHash}.
+ * @returns The 32-byte tagged SHA-256, tag {@link QBIT_DATA_SIG_PQC_DOMAIN}, of
+ * `messageHash`: the digest a message proof's PQC signature signs.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `messageHash` is not a 32-byte
+ * `Uint8Array`.
+ *
+ * @remarks
+ * See [Message proofs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/message-proofs.md).
+ *
+ * @category Message proofs
+ */
 export function qbitDataSigPqcHash(messageHash: Uint8Array): Uint8Array {
   assertByteLength(messageHash, 32, 'Qbit wallet message hash')
   return taggedHash(QBIT_DATA_SIG_PQC_DOMAIN, messageHash)
 }
 
+/**
+ * Encode a 32-byte P2MR witness program, a Merkle root, as a bech32m address.
+ * The same as {@link p2mrAddressFromRoot}.
+ *
+ * @param program - The 32-byte witness program.
+ * @param network - The network whose HRP the address uses.
+ * @returns The lowercase address, such as `qb1z…` on mainnet.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `program` is not a 32-byte
+ * `Uint8Array`.
+ * @throws {QbitProtocolError} `UNKNOWN_NETWORK` for an unknown network name,
+ * or `WRONG_HRP` for network parameters whose HRP is not printable lowercase
+ * ASCII. A name `Object.prototype` defines, such as `'toString'`, throws a
+ * `TypeError` instead; see {@link getQbitNetwork}.
+ *
+ * @remarks
+ * See [Features](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/features.md).
+ *
+ * @category Addresses
+ */
 export function encodeP2mrAddress(program: Uint8Array, network: QbitNetworkName | QbitNetworkParams): string {
   assertByteLength(program, P2MR_PROGRAM_BYTES, 'P2MR program')
   const params = getQbitNetwork(network)
@@ -592,6 +1420,53 @@ export function encodeP2mrAddress(program: Uint8Array, network: QbitNetworkName 
   return bech32Encode('bech32m', params.bech32Hrp, data)
 }
 
+/**
+ * Decode and validate a P2MR address.
+ *
+ * Decoding is as strict as qbit Core's `bech32::Decode`: at most 90
+ * characters, printable ASCII only, and not mixed case. The address must then
+ * be bech32m, use the HRP of a qbit network, and carry witness version 2 with
+ * a 32-byte program.
+ *
+ * @param address - The address, all lowercase or all uppercase.
+ * @param expectedNetwork - If given, the address must use this network's HRP,
+ * and the result names this network.
+ * @returns The address's network, lowercase HRP and witness program.
+ * @throws {QbitProtocolError} `INVALID_BECH32` for a malformed bech32 string,
+ * or `WRONG_ENCODING` for bech32 rather than bech32m.
+ * @throws {QbitProtocolError} `WRONG_HRP` for an HRP that no qbit network uses
+ * or that is not `expectedNetwork`'s, or `UNKNOWN_NETWORK` for an unknown
+ * `expectedNetwork` name. A name `Object.prototype` defines, such as
+ * `'toString'`, gives `WRONG_HRP` instead; see {@link getQbitNetwork}.
+ * @throws {QbitProtocolError} `WRONG_WITNESS_VERSION` unless the witness
+ * version is 2, or `WRONG_PROGRAM_LENGTH` unless the program is 32 bytes. A
+ * program whose 5-bit groups do not convert cleanly to bytes (5 or more bits
+ * left over, or non-zero padding bits) throws `INVALID_BECH32` instead.
+ *
+ * @remarks
+ * Testnet4 and signet share the `tq` HRP, so a `tq` address decodes as
+ * `'testnet4'` unless `expectedNetwork` says otherwise. See
+ * [Features](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/features.md).
+ *
+ * @example
+ * ```ts
+ * import { bytesToHex, decodeP2mrAddress, QbitProtocolError } from '@qbit-oss/protocol'
+ *
+ * const address = 'qbrt1zzasx2u2z7v9kn4q8e66r57mfw08xvrvdcqfcq6xfte0eau9dgdgqz42zd5'
+ * const { network, program } = decodeP2mrAddress(address, 'regtest')
+ * // network: 'regtest'
+ * // bytesToHex(program): '1760657142f30b69d407ceb43a7b6973ce660d8dc0138068c95e5f9ef0ad4350'
+ *
+ * try {
+ *   decodeP2mrAddress(address, 'mainnet')
+ * } catch (error) {
+ *   if (!QbitProtocolError.is(error) || error.code !== 'WRONG_HRP') throw error
+ *   // a regtest address where a mainnet one was expected
+ * }
+ * ```
+ *
+ * @category Addresses
+ */
 export function decodeP2mrAddress(
   address: string,
   expectedNetwork?: QbitNetworkName | QbitNetworkParams
@@ -632,11 +1507,38 @@ export function decodeP2mrAddress(
   }
 }
 
+/**
+ * Build the P2MR scriptPubKey for a Merkle root: `OP_2 PUSH32 <root>`.
+ *
+ * @param root - The 32-byte Merkle root, which is the witness program.
+ * @returns The 34-byte scriptPubKey.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `root` is not a 32-byte
+ * `Uint8Array`.
+ *
+ * @remarks
+ * See [Features](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/features.md).
+ *
+ * @category Addresses
+ */
 export function p2mrScriptPubKey(root: Uint8Array): Uint8Array {
   assertByteLength(root, P2MR_PROGRAM_BYTES, 'P2MR merkle root')
   return concatBytes(Uint8Array.of(OP_2, P2MR_PROGRAM_BYTES), root)
 }
 
+/**
+ * Decode a P2MR address into its scriptPubKey, `OP_2 PUSH32 <program>`.
+ *
+ * @param address - The address, decoded as {@link decodeP2mrAddress} decodes
+ * it.
+ * @param expectedNetwork - If given, the network the address must belong to.
+ * @returns The 34-byte scriptPubKey.
+ * @throws {QbitProtocolError} Any code {@link decodeP2mrAddress} throws.
+ *
+ * @remarks
+ * See [Features](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/features.md).
+ *
+ * @category Addresses
+ */
 export function addressToScriptPubKey(
   address: string,
   expectedNetwork?: QbitNetworkName | QbitNetworkParams
@@ -648,6 +1550,20 @@ export function addressToScriptPubKey(
  * Encode a P2MR `scriptPubKey` as an address. The script must be a
  * `Uint8Array` (a Node `Buffer` or one from another realm passes); anything
  * else throws `INVALID_BYTES`.
+ *
+ * @param scriptPubKey - A 34-byte `OP_2 PUSH32 <program>` script.
+ * @param network - The network whose HRP the address uses.
+ * @returns The lowercase address.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `scriptPubKey` is not a
+ * `Uint8Array`, or `INVALID_SCRIPT` if it is not a P2MR scriptPubKey.
+ * @throws {QbitProtocolError} `UNKNOWN_NETWORK` or `WRONG_HRP`, as
+ * {@link encodeP2mrAddress} throws them (it throws a `TypeError` instead for a
+ * name `Object.prototype` defines).
+ *
+ * @remarks
+ * See [Byte inputs and outputs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/byte-inputs.md).
+ *
+ * @category Addresses
  */
 export function outputScriptToAddress(scriptPubKey: Uint8Array, network: QbitNetworkName | QbitNetworkParams): string {
   assertBytes(scriptPubKey, 'scriptPubKey')
@@ -657,6 +1573,11 @@ export function outputScriptToAddress(scriptPubKey: Uint8Array, network: QbitNet
   return encodeP2mrAddress(copyBytes(scriptPubKey, 2), network)
 }
 
+/**
+ * Options for {@link isRestrictedOutputModeOutput}.
+ *
+ * @category Consensus limits
+ */
 export interface RestrictedOutputModeOptions {
   /**
    * Also allow qbit Core's reserved future witness outputs (witness v3..v16
@@ -701,7 +1622,19 @@ export interface RestrictedOutputModeOptions {
  * allowed here but non-standard (src/script/solver.cpp:164,
  * src/policy/policy.cpp:161-167).
  *
+ * @param scriptPubKey - The output script.
+ * @param options - `reservedWitnessActive` also allows reserved witness
+ * outputs. Default `{}`.
+ * @returns Whether consensus allows the output in restricted-output mode.
  * @throws {QbitProtocolError} `INVALID_BYTES` if `scriptPubKey` is not a `Uint8Array`.
+ *
+ * @remarks
+ * {@link createP2mrPsbt}, {@link validateP2mrSigningPlans} and
+ * {@link signP2mrPsbt} apply this check, with reserved witness outputs
+ * refused, unless `restrictedOutputMode: false` is passed. See
+ * [Consensus checks](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/consensus-checks.md).
+ *
+ * @category Consensus limits
  */
 export function isRestrictedOutputModeOutput(
   scriptPubKey: Uint8Array,
@@ -744,10 +1677,41 @@ function assertRestrictedOutputModeOutputs(
   })
 }
 
+/**
+ * Encode a P2MR Merkle root as an address; the same as
+ * {@link encodeP2mrAddress}.
+ *
+ * @param root - The 32-byte Merkle root of the output's script tree.
+ * @param network - The network whose HRP the address uses.
+ * @returns The lowercase address.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `root` is not a 32-byte
+ * `Uint8Array`, or `UNKNOWN_NETWORK` or `WRONG_HRP` for the network, as
+ * {@link encodeP2mrAddress} throws them (it throws a `TypeError` instead for a
+ * name `Object.prototype` defines).
+ *
+ * @remarks
+ * It cannot tell whether any leaf under `root` can be spent. See
+ * [P2MR Descriptors](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptors.md).
+ *
+ * @category Addresses
+ */
 export function p2mrAddressFromRoot(root: Uint8Array, network: QbitNetworkName | QbitNetworkParams): string {
   return encodeP2mrAddress(root, network)
 }
 
+/**
+ * Build a P2MR single-key (`pk`) leaf script: `PUSH32 <pk32> OP_CHECKSIGPQC`.
+ *
+ * @param pk32 - The 32-byte PQC public key.
+ * @returns The 34-byte leaf script.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `pk32` is not a 32-byte
+ * `Uint8Array`.
+ *
+ * @remarks
+ * See [Features](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/features.md).
+ *
+ * @category Scripts and Merkle
+ */
 export function singleKeyLeafScript(pk32: Uint8Array): Uint8Array {
   assertByteLength(pk32, P2MR_PROGRAM_BYTES, 'P2MR pubkey')
   return concatBytes(Uint8Array.of(P2MR_PROGRAM_BYTES), pk32, Uint8Array.of(OP_CHECKSIGPQC))
@@ -763,6 +1727,19 @@ export function singleKeyLeafScript(pk32: Uint8Array): Uint8Array {
  * signatures can never be spent: its initial witness stack always exceeds
  * qbit Core's 128 KiB consensus limit, so coins sent to it are lost.
  * Thresholds up to 999 were previously accepted.
+ *
+ * @param threshold - Signatures required, from 1 to 35.
+ * @param pubkeys - The 32-byte public keys, 1 to 999 of them, in script order.
+ * @returns The leaf script.
+ * @throws {RangeError} if `threshold` is not an integer from 1 to
+ * `min(pubkeys.length, 35)`, or `pubkeys` does not hold 1 to 999 keys.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if a key is not a 32-byte
+ * `Uint8Array`.
+ *
+ * @remarks
+ * See [P2MR Descriptors](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptors.md).
+ *
+ * @category Scripts and Merkle
  */
 export function multiALeafScript(threshold: number, pubkeys: readonly Uint8Array[]): Uint8Array {
   return buildMultiALeafScript(threshold, pubkeys, true)
@@ -799,12 +1776,43 @@ function buildMultiALeafScript(threshold: number, pubkeys: readonly Uint8Array[]
   return concatByteList(chunks)
 }
 
+/**
+ * Hash a P2MR leaf: the tagged SHA-256, tag `P2MRLeaf`, of the leaf version
+ * byte, the script's compact-size length and the script.
+ *
+ * @param leafVersion - The leaf version, an even uint8; normally
+ * {@link P2MR_LEAF_VERSION_V1}.
+ * @param script - The leaf script. Default empty.
+ * @returns The 32-byte leaf hash.
+ * @throws {RangeError} if `leafVersion` is not an integer from 0 to 255.
+ * @throws {QbitProtocolError} `INVALID_SCRIPT` if `leafVersion` is odd, or
+ * `INVALID_BYTES` if `script` is not a `Uint8Array`.
+ *
+ * @remarks
+ * It hashes any script, including a `multi_a` leaf that can never be spent.
+ * See [P2MR Descriptors](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptors.md).
+ *
+ * @category Scripts and Merkle
+ */
 export function p2mrLeafHash(leafVersion: number, script: Uint8Array = new Uint8Array()): Uint8Array {
   assertLeafVersion(leafVersion)
   assertBytes(script, 'P2MR leaf script')
   return taggedHash('P2MRLeaf', Uint8Array.of(leafVersion), compactSize(script.length), script)
 }
 
+/**
+ * Hash two sibling nodes into their parent: the tagged SHA-256, tag
+ * `P2MRBranch`, of the two hashes in bytewise order, so the argument order
+ * does not matter.
+ *
+ * @param a - One child's 32-byte hash.
+ * @param b - The other child's 32-byte hash.
+ * @returns The 32-byte branch hash.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if either hash is not a 32-byte
+ * `Uint8Array`.
+ *
+ * @category Scripts and Merkle
+ */
 export function p2mrBranchHash(a: Uint8Array, b: Uint8Array): Uint8Array {
   assertByteLength(a, P2MR_PROGRAM_BYTES, 'left P2MR branch')
   assertByteLength(b, P2MR_PROGRAM_BYTES, 'right P2MR branch')
@@ -812,6 +1820,20 @@ export function p2mrBranchHash(a: Uint8Array, b: Uint8Array): Uint8Array {
   return taggedHash('P2MRBranch', first, second)
 }
 
+/**
+ * Compute the Merkle root a leaf hash reaches through its path of sibling
+ * hashes, combining them with {@link p2mrBranchHash}.
+ *
+ * @param leafHash - The 32-byte leaf hash.
+ * @param siblings - The 32-byte sibling hashes, nearest the leaf first, at
+ * most 128.
+ * @returns The 32-byte root: a copy of `leafHash` when `siblings` is empty.
+ * @throws {RangeError} if there are more than 128 siblings.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `leafHash` or a sibling is
+ * not a 32-byte `Uint8Array`.
+ *
+ * @category Scripts and Merkle
+ */
 export function merkleRootFromPath(leafHash: Uint8Array, siblings: readonly Uint8Array[]): Uint8Array {
   assertByteLength(leafHash, P2MR_PROGRAM_BYTES, 'P2MR leaf hash')
   if (siblings.length > P2MR_CONTROL_MAX_NODE_COUNT) {
@@ -825,6 +1847,25 @@ export function merkleRootFromPath(leafHash: Uint8Array, siblings: readonly Uint
   return root
 }
 
+/**
+ * Build a P2MR control block: the byte `leafVersion | 1`, then the sibling
+ * hashes of the leaf's Merkle path.
+ *
+ * @param leafVersion - The leaf version, an even uint8. Default
+ * {@link P2MR_LEAF_VERSION_V1}, which gives a first byte of `0xc1`.
+ * @param siblings - The 32-byte sibling hashes, nearest the leaf first, at
+ * most 128. Default none, for a tree whose only leaf is this one.
+ * @returns The control block, `1 + 32 * siblings.length` bytes.
+ * @throws {RangeError} if `leafVersion` is not an integer from 0 to 255, or
+ * there are more than 128 siblings.
+ * @throws {QbitProtocolError} `INVALID_SCRIPT` if `leafVersion` is odd, or
+ * `INVALID_BYTES` if a sibling is not a 32-byte `Uint8Array`.
+ *
+ * @remarks
+ * See [Features](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/features.md).
+ *
+ * @category Scripts and Merkle
+ */
 export function buildControlBlock(
   leafVersion: number = P2MR_LEAF_VERSION_V1,
   siblings: readonly Uint8Array[] = []
@@ -841,6 +1882,27 @@ export function buildControlBlock(
   return concatByteList(chunks)
 }
 
+/**
+ * Check a control block's shape and compute the Merkle root it places a leaf
+ * under.
+ *
+ * It does not compare that root with anything: the leaf is in an output's tree
+ * only if the result equals the output's witness program.
+ *
+ * @param controlBlock - One byte with the leaf version and a set low bit, then
+ * 0 to 128 sibling hashes of 32 bytes.
+ * @param leafHash - The 32-byte hash of the leaf.
+ * @param expectedLeafVersion - If given, the leaf version in the control block
+ * (its first byte `& 0xfe`) must equal it.
+ * @returns The 32-byte Merkle root.
+ * @throws {QbitProtocolError} `INVALID_SCRIPT` if the control block has the
+ * wrong length, a clear low bit, or a leaf version other than
+ * `expectedLeafVersion`.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `controlBlock` is not a
+ * `Uint8Array` or `leafHash` is not a 32-byte one.
+ *
+ * @category Scripts and Merkle
+ */
 export function verifyControlBlock(
   controlBlock: Uint8Array,
   leafHash: Uint8Array,
@@ -879,6 +1941,27 @@ export function verifyControlBlock(
  * `pubkey`, `signature`, `leafScript` and `controlBlock` must each be a
  * `Uint8Array` (a Node `Buffer` or one from another realm passes). A string,
  * array or other view throws `INVALID_BYTES`, whatever its length.
+ *
+ * @param params - The message, address, key, signature and, for a key that is
+ * not the address's only leaf, the control block.
+ * @returns The proof, with the address in its canonical lowercase spelling.
+ * The signature is not verified.
+ * @throws {TypeError} if `message` is not a string.
+ * @throws {QbitProtocolError} `INVALID_BYTES` for a byte field that is not a
+ * `Uint8Array`, a `pubkey` that is not 32 bytes or a `signature` that is not
+ * 3680 bytes, or a `message` with a lone surrogate.
+ * @throws {QbitProtocolError} `INVALID_SCRIPT` for a `leafVersion` other than
+ * `0xc0`, a `leafScript` other than `pubkey`'s single-key script, or a control
+ * block that is malformed or does not commit the leaf to `address`.
+ * @throws {RangeError} if `leafVersion` is not an integer from 0 to 255 and
+ * `controlBlock` is omitted.
+ * @throws {QbitProtocolError} Any code {@link decodeP2mrAddress} throws for
+ * `address`.
+ *
+ * @remarks
+ * See [Message proofs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/message-proofs.md).
+ *
+ * @category Message proofs
  */
 export function createP2mrMessageProof(params: CreateP2mrMessageProofParams): P2mrMessageProof {
   const {
@@ -949,9 +2032,36 @@ export function createP2mrMessageProof(params: CreateP2mrMessageProofParams): P2
  *
  * A proof that fails verification returns `false`.
  *
+ * @param message - The message the proof should sign.
+ * @param proof - The untrusted proof, such as parsed JSON. Any value is
+ * accepted; one that is not a well-formed {@link P2mrMessageProof} returns
+ * `false`.
+ * @param verifyPqc - The PQC signature verifier; see {@link P2mrPqcVerifyFn}.
+ * @param options - The address and/or network the proof must be bound to.
+ * @returns `true` only if the proof is well formed, commits to `message`,
+ * binds `pubkey` to `proof.address`, matches `options`, and `verifyPqc`
+ * returns `true`.
  * @throws {TypeError} if `options` is missing, `null` or not an object, or sets
  * neither `expectedAddress` nor `expectedNetwork`. This is a programming error,
  * not an invalid proof, so it is never reported as `false`.
+ *
+ * @remarks
+ * See [Message proofs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/message-proofs.md).
+ *
+ * @example
+ * ```ts
+ * import { verifyP2mrMessageProof } from '@qbit-oss/protocol'
+ *
+ * // proofJson: the proof as the user submitted it
+ * // verifyPqc: (pubkey, digest, signature) => boolean, from your PQC library
+ * // storedAddress: the address this user registered
+ * const ok = verifyP2mrMessageProof('Sign in to example.com', JSON.parse(proofJson), verifyPqc, {
+ *   expectedAddress: storedAddress,
+ * })
+ * if (!ok) throw new Error('message proof rejected')
+ * ```
+ *
+ * @category Message proofs
  */
 export function verifyP2mrMessageProof(
   message: string,
@@ -1051,6 +2161,21 @@ function canonicalP2mrAddress(decoded: DecodedP2mrAddress): string {
   return bech32Encode('bech32m', decoded.hrp, [P2MR_WITNESS_VERSION, ...convertBits([...decoded.program], 8, 5, true)])
 }
 
+/**
+ * Whether `hashType` is a sighash type P2MR accepts: `0x00` to `0x03`, or
+ * `0x81` to `0x83`.
+ *
+ * @param hashType - The value to check.
+ * @returns `true` for an accepted type, `false` for anything else, including a
+ * non-integer.
+ *
+ * @remarks
+ * `SIGHASH_DEFAULT` (`0x00`) is accepted here but is never written as an
+ * explicit type byte. See
+ * [P2MR Signature Hash](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-sighash.md).
+ *
+ * @category Sighash
+ */
 export function isValidP2mrSighashType(hashType: number): boolean {
   return (
     Number.isInteger(hashType) &&
@@ -1066,6 +2191,19 @@ export function isValidP2mrSighashType(hashType: number): boolean {
  * `hashType` unless it is `SIGHASH_DEFAULT`. `signature` must be a `Uint8Array`
  * (a Node `Buffer` or one from another realm passes); a string, array or other
  * view throws `INVALID_BYTES`, whatever its length.
+ *
+ * @param signature - The 3680-byte PQC signature.
+ * @param hashType - The sighash type. Default `SIGHASH_DEFAULT`.
+ * @returns A new array: the 3680-byte signature for `SIGHASH_DEFAULT`, or 3681
+ * bytes with the type byte appended.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `signature` is not a 3680-byte
+ * `Uint8Array`, or `INVALID_SCRIPT` if `hashType` is not a valid P2MR sighash
+ * type.
+ *
+ * @remarks
+ * See [P2MR Signature Hash](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-sighash.md).
+ *
+ * @category Encoding
  */
 export function encodeP2mrWitnessSignature(signature: Uint8Array, hashType: number = SIGHASH_DEFAULT): Uint8Array {
   assertByteLength(signature, PQC_SIGNATURE_BYTES, 'PQC signature')
@@ -1081,6 +2219,18 @@ export function encodeP2mrWitnessSignature(signature: Uint8Array, hashType: numb
 /**
  * Split a P2MR witness signature into the PQC signature and its sighash type.
  * `value` must be a `Uint8Array`; anything else throws `INVALID_BYTES`.
+ *
+ * @param value - The witness signature item: 3680 bytes, or 3681 with a type
+ * byte.
+ * @returns The signature (a copy) and its sighash type.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `value` is not a `Uint8Array`.
+ * @throws {QbitProtocolError} `INVALID_SCRIPT` if `value` is not 3680 or 3681
+ * bytes, or its type byte is `0x00` or not a valid P2MR sighash type.
+ *
+ * @remarks
+ * See [P2MR Signature Hash](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-sighash.md).
+ *
+ * @category Encoding
  */
 export function decodeP2mrWitnessSignature(value: Uint8Array): P2mrWitnessSignature {
   assertBytes(value, 'P2MR witness signature')
@@ -1116,6 +2266,12 @@ export function decodeP2mrWitnessSignature(value: Uint8Array): P2mrWitnessSignat
 // docs/p2mr-sighash.md.
 // ---------------------------------------------------------------------------
 
+/**
+ * The output a transaction input spends: its funding transaction's id and
+ * output index.
+ *
+ * @category PSBT
+ */
 export interface P2mrOutpoint {
   /**
    * Transaction id in serialization (internal) byte order — the reverse of the
@@ -1126,31 +2282,56 @@ export interface P2mrOutpoint {
   vout: number
 }
 
+/**
+ * An input of an unsigned transaction.
+ *
+ * @category PSBT
+ */
 export interface P2mrTransactionInput {
+  /** The output this input spends. */
   prevout: P2mrOutpoint
   /** nSequence (uint32). */
   sequence: number
 }
 
+/**
+ * A transaction output.
+ *
+ * @category PSBT
+ */
 export interface P2mrTransactionOutput {
   /** Amount in satoshis; must satisfy `MoneyRange` (0 ≤ value ≤ `QBIT_MAX_MONEY`). */
   value: bigint
+  /** The output script, such as a P2MR scriptPubKey from {@link addressToScriptPubKey}. */
   scriptPubKey: Uint8Array
 }
 
+/**
+ * An unsigned transaction: inputs without scriptSigs or witnesses, as a PSBT
+ * carries it.
+ *
+ * @category PSBT
+ */
 export interface P2mrTransaction {
   /** nVersion (uint32, as qbit Core's `CTransaction::version`; a legacy int32 `-1` is `0xffffffff`). */
   version: number
   /** nLockTime (uint32). */
   locktime: number
+  /** The inputs, in order. */
   inputs: readonly P2mrTransactionInput[]
+  /** The outputs, in order. */
   outputs: readonly P2mrTransactionOutput[]
 }
 
-/** A previous output being spent (amount + scriptPubKey), one per input in input order. */
+/**
+ * A previous output being spent (amount + scriptPubKey), one per input in input order.
+ *
+ * @category Sighash
+ */
 export interface P2mrSpentOutput {
   /** Amount in satoshis; must satisfy `MoneyRange` (0 ≤ value ≤ `QBIT_MAX_MONEY`). */
   value: bigint
+  /** The spent output's script. */
   scriptPubKey: Uint8Array
 }
 
@@ -1158,24 +2339,55 @@ export interface P2mrSpentOutput {
  * Precomputed transaction midstates — the qbit Core `PrecomputedTransactionData`
  * equivalent. Each is a single SHA-256 commitment, computed once per transaction
  * and reused across inputs.
+ *
+ * @remarks
+ * See [P2MR Signature Hash](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-sighash.md).
+ *
+ * @category Sighash
  */
 export interface SighashMidstates {
+  /** SHA-256 of every input's outpoint: 32-byte txid, then uint32 LE index. */
   prevouts: Uint8Array
+  /** SHA-256 of every spent output's amount, as int64 LE. */
   amounts: Uint8Array
+  /** SHA-256 of every spent output's scriptPubKey, each with its compact-size length. */
   scriptPubKeys: Uint8Array
+  /** SHA-256 of every input's nSequence, as uint32 LE. */
   sequences: Uint8Array
+  /** SHA-256 of every serialized output: int64 LE amount, then length-prefixed scriptPubKey. */
   outputs: Uint8Array
 }
 
+/**
+ * Which signature hash {@link schnorrSignatureHash} computes:
+ *
+ * - `'p2mr'`: qbit P2MR, tag `P2MRSighash`, committing to a P2MR leaf hash;
+ * - `'tapscript'`: BIP341 script path, tag `TapSighash`, committing to a leaf
+ *   hash;
+ * - `'taproot'`: BIP341 key path, tag `TapSighash`, with no leaf hash.
+ *
+ * @remarks
+ * See [P2MR Signature Hash](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-sighash.md).
+ *
+ * @category Sighash
+ */
 export type SchnorrSigVersion = 'taproot' | 'tapscript' | 'p2mr'
 
+/**
+ * Input to {@link schnorrSignatureHash}.
+ *
+ * @category Sighash
+ */
 export interface SchnorrSighashParams {
+  /** The transaction being signed. */
   tx: P2mrTransaction
+  /** Index of the input being signed. */
   inputIndex: number
   /** Previous outputs spent by each input, in input order. */
   spentOutputs: readonly P2mrSpentOutput[]
   /** Sighash type; defaults to SIGHASH_DEFAULT (0x00, ≡ ALL). */
   hashType?: number
+  /** Which signature hash to compute. */
   sigVersion: SchnorrSigVersion
   /** Committed leaf hash (32 bytes). Required for 'tapscript' and 'p2mr'. */
   leafHash?: Uint8Array
@@ -1232,6 +2444,22 @@ function assertSighashMidstates(midstates: SighashMidstates): void {
  * result as `midstates` to `p2mrSighash`/`schnorrSignatureHash` to avoid
  * recomputing them when signing multiple inputs. Every txid and
  * `scriptPubKey` must be a `Uint8Array`; anything else throws `INVALID_BYTES`.
+ *
+ * @param tx - The transaction being signed.
+ * @param spentOutputs - The outputs its inputs spend, one per input, in input
+ * order.
+ * @returns The five 32-byte midstates.
+ * @throws {QbitProtocolError} `INVALID_SIGHASH` if `spentOutputs` and
+ * `tx.inputs` differ in length.
+ * @throws {QbitProtocolError} `INVALID_BYTES` for a txid that is not a 32-byte
+ * `Uint8Array` or a script that is not a `Uint8Array`, `INVALID_AMOUNT` for an
+ * amount outside `MoneyRange`, or `INVALID_INTEGER` for a `vout` or `sequence`
+ * that is not a uint32.
+ *
+ * @remarks
+ * See [P2MR Signature Hash](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-sighash.md).
+ *
+ * @category Sighash
  */
 export function precomputeSighashMidstates(
   tx: P2mrTransaction,
@@ -1259,6 +2487,24 @@ export function precomputeSighashMidstates(
  * BIP341-style Schnorr signature hash, parameterized by signature version.
  * `p2mr` is the qbit P2MR variant; `taproot`/`tapscript` follow BIP341 and are
  * used to validate this implementation against Core's committed BIP341 vectors.
+ *
+ * @param params - The transaction, input, spent outputs, sighash type and
+ * variant, and for `'tapscript'` and `'p2mr'` the leaf hash.
+ * @returns The 32-byte signature hash.
+ * @throws {QbitProtocolError} `INVALID_SIGHASH` for an `inputIndex` that is not
+ * an index of `tx.inputs`, a `spentOutputs` of another length, an invalid
+ * `hashType`, a missing or non-32-byte `leafHash` for `'tapscript'` or
+ * `'p2mr'`, or `SIGHASH_SINGLE` without an output at `inputIndex`.
+ * @throws {QbitProtocolError} `INVALID_INTEGER` for a uint32 field or
+ * `keyVersion` out of range, or `INVALID_AMOUNT` for an amount outside
+ * `MoneyRange`, even when `midstates` is given.
+ * @throws {QbitProtocolError} `INVALID_BYTES` for a txid, script, `annex` or
+ * `midstates` field that is not a `Uint8Array` of the right length.
+ *
+ * @remarks
+ * See [P2MR Signature Hash](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-sighash.md).
+ *
+ * @category Sighash
  */
 export function schnorrSignatureHash(params: SchnorrSighashParams): Uint8Array {
   const {
@@ -1333,8 +2579,15 @@ export function schnorrSignatureHash(params: SchnorrSighashParams): Uint8Array {
   return taggedHash(tag, concatByteList(parts))
 }
 
+/**
+ * Input to {@link p2mrSighash}.
+ *
+ * @category Sighash
+ */
 export interface P2mrSighashParams {
+  /** The transaction being signed. */
   tx: P2mrTransaction
+  /** Index of the input being signed. */
   inputIndex: number
   /** Previous outputs spent by each input, in input order. */
   spentOutputs: readonly P2mrSpentOutput[]
@@ -1360,6 +2613,19 @@ export interface P2mrSighashParams {
  * when `midstates` is given, and each `midstates` field a 32-byte one;
  * anything else throws `INVALID_BYTES` instead of returning a digest over
  * different bytes.
+ *
+ * @param params - The transaction, input index, spent outputs and leaf hash,
+ * and optionally the sighash type, code-separator position, annex and cached
+ * midstates.
+ * @returns The 32-byte digest the input's PQC signature signs.
+ * @throws {QbitProtocolError} `INVALID_SIGHASH`, `INVALID_INTEGER`,
+ * `INVALID_AMOUNT` or `INVALID_BYTES`, as {@link schnorrSignatureHash} throws
+ * them.
+ *
+ * @remarks
+ * See [P2MR Signature Hash](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-sighash.md).
+ *
+ * @category Sighash
  */
 export function p2mrSighash(params: P2mrSighashParams): Uint8Array {
   return schnorrSignatureHash({ ...params, sigVersion: 'p2mr' })
@@ -1370,13 +2636,29 @@ export function p2mrSighash(params: P2mrSighashParams): Uint8Array {
  * Every byte argument must be a `Uint8Array` of the right length (a Node
  * `Buffer` or one from another realm passes); anything else throws
  * `INVALID_BYTES`.
+ *
+ * @param pubkey - The signing key's 32-byte public key.
+ * @param leafHash - The 32-byte hash of the leaf the signature is for.
+ * @param signature - The 3680-byte PQC signature.
+ * @param hashType - The sighash type. Default `SIGHASH_DEFAULT`.
+ * @returns The record's key and value.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `pubkey` or `leafHash` is not
+ * a 32-byte `Uint8Array` or `signature` is not a 3680-byte one, or
+ * `INVALID_SCRIPT` if `hashType` is not a valid P2MR sighash type.
+ *
+ * @category Encoding
  */
 export function encodeP2mrPsbtScriptSigField(
   pubkey: Uint8Array,
   leafHash: Uint8Array,
   signature: Uint8Array,
   hashType: number = SIGHASH_DEFAULT
-): { key: Uint8Array; value: Uint8Array } {
+): {
+  /** `0x19`, the public key and the leaf hash: 65 bytes. */
+  key: Uint8Array
+  /** The witness signature item, as {@link encodeP2mrWitnessSignature} encodes it. */
+  value: Uint8Array
+} {
   assertByteLength(pubkey, P2MR_PROGRAM_BYTES, 'P2MR pubkey')
   assertByteLength(leafHash, P2MR_PROGRAM_BYTES, 'P2MR leaf hash')
   return {
@@ -1388,6 +2670,17 @@ export function encodeP2mrPsbtScriptSigField(
 /**
  * Decode a PSBT_IN_P2MR_SCRIPT_SIG (0x19) record. `key` and `value` must be
  * `Uint8Array`s; anything else throws `INVALID_BYTES`.
+ *
+ * @param key - The record's key: `0x19`, a 32-byte public key and a 32-byte
+ * leaf hash.
+ * @param value - The record's value, a witness signature item.
+ * @returns The decoded record; its byte fields are copies.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `key` or `value` is not a
+ * `Uint8Array`, or `INVALID_PSBT` if `key` does not have that shape.
+ * @throws {QbitProtocolError} `INVALID_SCRIPT` if `value` is not a valid
+ * witness signature item (see {@link decodeP2mrWitnessSignature}).
+ *
+ * @category Encoding
  */
 export function decodeP2mrPsbtScriptSigField(key: Uint8Array, value: Uint8Array): P2mrPsbtScriptSigField {
   assertBytes(key, 'P2MR script signature key')
@@ -1402,11 +2695,34 @@ export function decodeP2mrPsbtScriptSigField(key: Uint8Array, value: Uint8Array)
   }
 }
 
+/**
+ * Encode a PSBT_IN_P2MR_LEAF_SCRIPT (0x1d) record, keyed by the leaf's
+ * control block.
+ *
+ * @param controlBlock - The leaf's control block. Its shape is checked; its
+ * leaf version is not compared with `leafVersion`.
+ * @param script - The leaf script.
+ * @param leafVersion - The leaf version. Default {@link P2MR_LEAF_VERSION_V1}.
+ * @returns The record's key and value.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `controlBlock` or `script` is
+ * not a `Uint8Array`.
+ * @throws {QbitProtocolError} `INVALID_PSBT` if the control block has the
+ * wrong length or a clear low bit in its first byte.
+ * @throws {RangeError} if `leafVersion` is not an integer from 0 to 255.
+ * @throws {QbitProtocolError} `INVALID_SCRIPT` if `leafVersion` is odd.
+ *
+ * @category Encoding
+ */
 export function encodeP2mrPsbtLeafScriptField(
   controlBlock: Uint8Array,
   script: Uint8Array,
   leafVersion: number = P2MR_LEAF_VERSION_V1
-): { key: Uint8Array; value: Uint8Array } {
+): {
+  /** `0x1d`, then the control block. */
+  key: Uint8Array
+  /** The leaf script, then the leaf version byte. */
+  value: Uint8Array
+} {
   assertP2mrControlBlockShape(controlBlock)
   assertBytes(script, 'P2MR leaf script')
   assertLeafVersion(leafVersion)
@@ -1416,6 +2732,24 @@ export function encodeP2mrPsbtLeafScriptField(
   }
 }
 
+/**
+ * Decode a PSBT_IN_P2MR_LEAF_SCRIPT (0x1d) record.
+ *
+ * @param key - The record's key: `0x1d`, then the control block.
+ * @param value - The record's value: the leaf script, then its leaf version
+ * byte.
+ * @returns The decoded record; its byte fields are copies.
+ * @throws {QbitProtocolError} `INVALID_PSBT` if `key` does not start with
+ * `0x1d`, the control block has the wrong length or a clear low bit in its
+ * first byte, or `value` is empty.
+ * @throws {QbitProtocolError} `INVALID_SCRIPT` if the leaf version is odd.
+ *
+ * @remarks
+ * Unlike the other record decoders, it does not check that `key` and `value`
+ * are `Uint8Array`s, so pass only `Uint8Array`s.
+ *
+ * @category Encoding
+ */
 export function decodeP2mrPsbtLeafScriptField(key: Uint8Array, value: Uint8Array): P2mrPsbtLeafScriptField {
   if (key.length < 1 || key[0] !== PSBT_IN_P2MR_LEAF_SCRIPT) {
     throw new QbitProtocolError('INVALID_PSBT', 'input P2MR leaf script key has wrong type')
@@ -1438,6 +2772,24 @@ export function decodeP2mrPsbtLeafScriptField(key: Uint8Array, value: Uint8Array
 /**
  * Decode a `qbit` proprietary P2MR input record. `keyData` must be a
  * `Uint8Array`, for every subtype; anything else throws `INVALID_BYTES`.
+ *
+ * @param subtype - The record's subtype: `0x01` Merkle root, `0x02` leaf
+ * script or `0x03` script signature.
+ * @param keyData - The key data after the subtype: empty for `0x01`, the
+ * control block for `0x02`, the public key and leaf hash for `0x03`.
+ * @param value - The record's value: the 32-byte root for `0x01`, otherwise
+ * laid out as the `0x1d` or `0x19` record's value.
+ * @returns The decoded record. Subtypes `0x02` and `0x03` decode to the same
+ * shapes as `0x1d` and `0x19` records.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `keyData` is not a
+ * `Uint8Array`, or a subtype `0x01` value is not a 32-byte one.
+ * @throws {QbitProtocolError} `INVALID_PSBT` for another subtype, or for
+ * subtype `0x01` with non-empty key data.
+ * @throws {QbitProtocolError} For subtypes `0x02` and `0x03`, what
+ * {@link decodeP2mrPsbtLeafScriptField} or {@link decodeP2mrPsbtScriptSigField}
+ * throws for the equivalent `0x1d` or `0x19` record.
+ *
+ * @category Encoding
  */
 export function decodeQbitProprietaryP2mrInputField(
   subtype: number,
@@ -1474,6 +2826,18 @@ export function decodeQbitProprietaryP2mrInputField(
   throw new QbitProtocolError('INVALID_PSBT', 'unsupported qbit proprietary P2MR subtype')
 }
 
+/**
+ * Encode a `qbit` proprietary P2MR Merkle-root record (subtype `0x01`).
+ *
+ * @param merkleRoot - The 32-byte Merkle root of the spent output's script
+ * tree.
+ * @returns The record, with empty key data and a copy of `merkleRoot` as its
+ * value.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `merkleRoot` is not a 32-byte
+ * `Uint8Array`.
+ *
+ * @category Encoding
+ */
 export function encodeQbitProprietaryP2mrMerkleRootField(merkleRoot: Uint8Array): EncodedQbitProprietaryP2mrField {
   assertByteLength(merkleRoot, P2MR_PROGRAM_BYTES, 'qbit P2MR merkle root')
   return {
@@ -1484,6 +2848,20 @@ export function encodeQbitProprietaryP2mrMerkleRootField(merkleRoot: Uint8Array)
   }
 }
 
+/**
+ * Encode a `qbit` proprietary P2MR leaf-script record (subtype `0x02`), the
+ * proprietary form of {@link encodeP2mrPsbtLeafScriptField}'s `0x1d` record.
+ *
+ * @param controlBlock - The leaf's control block, which becomes the key data.
+ * @param script - The leaf script.
+ * @param leafVersion - The leaf version. Default {@link P2MR_LEAF_VERSION_V1}.
+ * @returns The record; its value is the script, then the leaf version byte.
+ * @throws {QbitProtocolError} As {@link encodeP2mrPsbtLeafScriptField} throws:
+ * `INVALID_BYTES`, `INVALID_PSBT` or `INVALID_SCRIPT`.
+ * @throws {RangeError} if `leafVersion` is not an integer from 0 to 255.
+ *
+ * @category Encoding
+ */
 export function encodeQbitProprietaryP2mrLeafScriptField(
   controlBlock: Uint8Array,
   script: Uint8Array,
@@ -1498,6 +2876,22 @@ export function encodeQbitProprietaryP2mrLeafScriptField(
   }
 }
 
+/**
+ * Encode a `qbit` proprietary P2MR script-signature record (subtype `0x03`),
+ * the proprietary form of {@link encodeP2mrPsbtScriptSigField}'s `0x19`
+ * record.
+ *
+ * @param pubkey - The signing key's 32-byte public key.
+ * @param leafHash - The 32-byte hash of the leaf the signature is for.
+ * @param signature - The 3680-byte PQC signature.
+ * @param hashType - The sighash type. Default `SIGHASH_DEFAULT`.
+ * @returns The record; its key data is `pubkey` then `leafHash`, and its value
+ * the witness signature item.
+ * @throws {QbitProtocolError} As {@link encodeP2mrPsbtScriptSigField} throws:
+ * `INVALID_BYTES` or `INVALID_SCRIPT`.
+ *
+ * @category Encoding
+ */
 export function encodeQbitProprietaryP2mrScriptSigField(
   pubkey: Uint8Array,
   leafHash: Uint8Array,
@@ -1521,20 +2915,47 @@ export function encodeQbitProprietaryP2mrScriptSigField(
 // preserves every field, including unknown ones, byte-for-byte.
 // ---------------------------------------------------------------------------
 
-/** One key/value record in a PSBT map. `key` includes the leading key type byte. */
+/**
+ * One key/value record in a PSBT map. `key` includes the leading key type byte.
+ *
+ * @category PSBT
+ */
 export interface PsbtKeyValue {
+  /** The whole key, starting with its key type. An empty key is invalid. */
   key: Uint8Array
+  /** The value. */
   value: Uint8Array
 }
 
-/** A parsed PSBT, with each map preserved as an ordered key/value list. */
+/**
+ * A parsed PSBT, with each map preserved as an ordered key/value list.
+ *
+ * @remarks
+ * A `Psbt` is a plain object that can be built or edited without
+ * {@link parsePsbt}; {@link decodePsbt}, the signing helpers and
+ * {@link finalizeP2mrPsbt} check that its maps have the shape `parsePsbt`
+ * guarantees. See
+ * [Byte inputs and outputs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/byte-inputs.md).
+ *
+ * @category PSBT
+ */
 export interface Psbt {
+  /** The global map, which holds the unsigned transaction (`0x00`). */
   global: PsbtKeyValue[]
+  /** One map per unsigned-transaction input, in input order. */
   inputs: PsbtKeyValue[][]
+  /** One map per unsigned-transaction output, in output order. */
   outputs: PsbtKeyValue[][]
 }
 
-/** Resource limits for decoding untrusted PSBT bytes. */
+/**
+ * Resource limits for decoding untrusted PSBT bytes.
+ *
+ * @remarks
+ * See [Untrusted PSBT input](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/untrusted-psbt.md).
+ *
+ * @category PSBT
+ */
 export interface PsbtLimitOptions {
   /**
    * Largest PSBT `parsePsbt` accepts, and largest transaction
@@ -1563,9 +2984,17 @@ export interface PsbtLimitOptions {
   maxObjects?: number
 }
 
+/**
+ * One input of a {@link PsbtSummary}.
+ *
+ * @category PSBT
+ */
 export interface PsbtInputSummary {
+  /** The output the input spends, from the unsigned transaction. */
   prevout: P2mrOutpoint
+  /** The input's nSequence, from the unsigned transaction. */
   sequence: number
+  /** The decoded witness UTXO (`0x01`): the spent output's amount and script, when present. */
   witnessUtxo?: P2mrTransactionOutput
   /**
    * `PSBT_IN_SIGHASH_TYPE` (0x03) when present: the sighash type the PSBT
@@ -1573,6 +3002,7 @@ export interface PsbtInputSummary {
    * `SIGHASH_DEFAULT` must be surfaced by an approval UI before signing.
    */
   sighashType?: number
+  /** The `qbit` proprietary P2MR Merkle root (subtype `0x01`), when present. */
   merkleRoot?: Uint8Array
   /**
    * The input's P2MR leaf records, `0x1d` and `qbit` subtype `0x02`, in map
@@ -1585,13 +3015,24 @@ export interface PsbtInputSummary {
    * per (pubkey, leaf hash) in map order.
    */
   scriptSigs: P2mrPsbtScriptSigField[]
+  /** Whether the input has a final script witness (`0x08`). */
   finalized: boolean
 }
 
+/**
+ * A summary of a PSBT for approval and inspection UIs, as {@link decodePsbt}
+ * returns it.
+ *
+ * @category PSBT
+ */
 export interface PsbtSummary {
+  /** The unsigned transaction's nVersion. */
   version: number
+  /** The unsigned transaction's nLockTime. */
   locktime: number
+  /** One summary per input, in input order. */
   inputs: PsbtInputSummary[]
+  /** The unsigned transaction's outputs. */
   outputs: readonly P2mrTransactionOutput[]
   /**
    * Sum of spent amounts minus output amounts; undefined unless every input has
@@ -1613,6 +3054,21 @@ export interface PsbtSummary {
  * `options.maxObjects` objects are decoded (see `PsbtLimitOptions`). Unlike qbit
  * Core, final scriptwitness (`0x08`) values are not decoded here yet;
  * `finalizeP2mrPsbt` and `extractP2mrTransaction` decode and bound them.
+ *
+ * @param bytes - The binary PSBT (not base64).
+ * @param options - Decoding limits; see {@link PsbtLimitOptions}.
+ * @returns The PSBT's maps. Every key and value is a fresh copy of the input.
+ * @throws {RangeError} if `maxBytes` or `maxObjects` is not a positive safe
+ * integer.
+ * @throws {QbitProtocolError} `INVALID_PSBT` for input that is malformed or
+ * over the limits, or `INVALID_AMOUNT` for an unsigned-transaction output
+ * outside `MoneyRange`.
+ *
+ * @remarks
+ * Witness UTXOs and P2MR fields are decoded and checked by {@link decodePsbt}.
+ * See [Untrusted PSBT input](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/untrusted-psbt.md).
+ *
+ * @category PSBT
  */
 export function parsePsbt(bytes: Uint8Array, options: PsbtLimitOptions = {}): Psbt {
   const maxBytes = resolvePsbtLimit(options.maxBytes, PSBT_DEFAULT_MAX_BYTES, 'maxBytes')
@@ -1643,6 +3099,16 @@ export function parsePsbt(bytes: Uint8Array, options: PsbtLimitOptions = {}): Ps
  * Serialize a PSBT back to bytes. Round-trips `parsePsbt` byte-for-byte. Every
  * map key and value must be a `Uint8Array` (a Node `Buffer` passes); anything
  * else, such as a `number[]` in a hand-built `Psbt`, throws `INVALID_BYTES`.
+ *
+ * @param psbt - The PSBT. Its maps are written in order, as given.
+ * @returns The binary PSBT.
+ * @throws {QbitProtocolError} `INVALID_BYTES` for a key or value that is not a
+ * `Uint8Array`, or `INVALID_PSBT` for an empty key.
+ *
+ * @remarks
+ * See [Byte inputs and outputs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/byte-inputs.md).
+ *
+ * @category PSBT
  */
 export function serializePsbt(psbt: Psbt): Uint8Array {
   const parts: Uint8Array[] = [Uint8Array.of(0x70, 0x73, 0x62, 0x74, 0xff), serializePsbtMap(psbt.global)]
@@ -1670,7 +3136,21 @@ function concatByteList(chunks: readonly Uint8Array[]): Uint8Array {
   return out
 }
 
-/** The unsigned transaction carried by a PSBT's global map. */
+/**
+ * The unsigned transaction carried by a PSBT's global map.
+ *
+ * @param psbt - The PSBT.
+ * @returns The decoded transaction.
+ * @throws {QbitProtocolError} `INVALID_PSBT` if the global map has no
+ * unsigned transaction (`0x00`) or it is malformed, or `INVALID_AMOUNT` for an
+ * output outside `MoneyRange`.
+ *
+ * @remarks
+ * It applies no `maxObjects` limit, so decode untrusted bytes with
+ * {@link parsePsbt} first.
+ *
+ * @category PSBT
+ */
 export function psbtUnsignedTransaction(psbt: Psbt): P2mrTransaction {
   const txEntry = psbt.global.find(entry => entry.key.length === 1 && entry.key[0] === PSBT_GLOBAL_UNSIGNED_TX)
   if (txEntry === undefined) {
@@ -1694,6 +3174,15 @@ export function psbtUnsignedTransaction(psbt: Psbt): P2mrTransaction {
  * `qbit` P2MR input fields it decodes; qbit-js keeps them.
  *
  * Combining takes time linear in the total number of map entries.
+ *
+ * @param psbts - The PSBTs to combine, at least one.
+ * @returns A new PSBT; the inputs are not modified.
+ * @throws {QbitProtocolError} `INVALID_PSBT` for an empty list, a PSBT without
+ * an unsigned transaction, unsigned transactions that differ, different
+ * numbers of input or output maps, a key with conflicting values, or a
+ * malformed proprietary key.
+ *
+ * @category PSBT
  */
 export function combinePsbts(psbts: readonly Psbt[]): Psbt {
   if (psbts.length === 0) {
@@ -1756,6 +3245,23 @@ export function combinePsbts(psbts: readonly Psbt[]): Psbt {
  * one entry of `scriptSigs`; if the two values differ, `decodePsbt` throws
  * `INVALID_PSBT`, as Core's `AddP2MRScriptSig` rejects the PSBT
  * (psbt.h:318-328).
+ *
+ * @param psbt - The PSBT, from {@link parsePsbt} or built by hand.
+ * @returns The transaction's fields, each input's decoded fields, and the fee
+ * when every input has a witness UTXO.
+ * @throws {QbitProtocolError} `INVALID_PSBT` for a malformed PSBT or record,
+ * a map shape `parsePsbt` would not produce, or conflicting P2MR signatures.
+ * @throws {QbitProtocolError} `INVALID_AMOUNT` for an amount or total outside
+ * `MoneyRange`, or outputs that exceed the inputs.
+ * @throws {QbitProtocolError} `INVALID_SCRIPT` for a malformed P2MR signature
+ * item or an odd leaf version, or `INVALID_BYTES` for a `qbit` Merkle root
+ * that is not 32 bytes.
+ *
+ * @remarks
+ * See
+ * [Signing and finalization](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/signing-and-finalization.md).
+ *
+ * @category PSBT
  */
 export function decodePsbt(psbt: Psbt): PsbtSummary {
   const tx = psbtUnsignedTransaction(psbt)
@@ -1927,14 +3433,27 @@ function dedupeP2mrLeafScripts(leaves: readonly P2mrPsbtLeafScriptField[]): P2mr
   return leaves.filter((_, index) => repeated[index] === 0)
 }
 
-/** One input spec for `createP2mrPsbt`. */
+/**
+ * One input spec for `createP2mrPsbt`.
+ *
+ * @category PSBT
+ */
 export interface P2mrPsbtInput {
+  /** The output being spent. */
   prevout: P2mrOutpoint
+  /** nSequence (uint32). Default `0xfffffffd`. */
   sequence?: number
   /** The output being spent: amount + P2MR scriptPubKey. */
   witnessUtxo: P2mrTransactionOutput
+  /** The script of the leaf the input will be spent through, written as a `0x1d` record. */
   leafScript: Uint8Array
+  /**
+   * The leaf's control block, the `0x1d` record's key. Only its shape is
+   * checked here; signing refuses a leaf whose control block does not commit
+   * to the witness UTXO's program.
+   */
   controlBlock: Uint8Array
+  /** The leaf version. Default {@link P2MR_LEAF_VERSION_V1}. */
   leafVersion?: number
   /** Optional merkle root, emitted as the qbit proprietary field. */
   merkleRoot?: Uint8Array
@@ -1952,13 +3471,70 @@ export interface P2mrPsbtInput {
  * started with `-p2mronly=0`. Every txid, script and control block, including
  * the witness UTXO `scriptPubKey`, must be a `Uint8Array` in either mode;
  * anything else throws `INVALID_BYTES`.
+ *
+ * @param params - The transaction's inputs, outputs, version and locktime.
+ * Amounts are satoshis, as `bigint`s; the fee is the inputs' total minus the
+ * outputs'.
+ * @returns A new PSBT: the unsigned transaction, and per input the witness
+ * UTXO, the `0x1d` leaf-script record and, when given, the `qbit` Merkle-root
+ * record. Output maps are empty.
+ * @throws {QbitProtocolError} `INVALID_SCRIPT` for an output restricted-output
+ * mode rejects, or an odd leaf version.
+ * @throws {QbitProtocolError} `INVALID_BYTES` for a byte field that is not a
+ * `Uint8Array` or a txid or Merkle root that is not 32 bytes.
+ * @throws {QbitProtocolError} `INVALID_AMOUNT` for an amount outside
+ * `MoneyRange`, or `INVALID_INTEGER` for a version, locktime, vout or sequence
+ * that is not a uint32.
+ * @throws {QbitProtocolError} `INVALID_PSBT` for a control block with the
+ * wrong length or a clear low bit in its first byte.
+ * @throws {RangeError} if a leaf version is not an integer from 0 to 255.
+ *
+ * @remarks
+ * It does not check that the inputs cover the outputs ({@link decodePsbt}
+ * does) or that each leaf is in its witness UTXO's tree (the signing helpers
+ * do). See
+ * [Consensus checks](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/consensus-checks.md).
+ *
+ * @example
+ * ```ts
+ * import {
+ *   addressToScriptPubKey,
+ *   buildControlBlock,
+ *   createP2mrPsbt,
+ *   hexToBytes,
+ *   p2mrAddressFromPubkey,
+ *   serializePsbt,
+ *   singleKeyLeafScript,
+ * } from '@qbit-oss/protocol'
+ *
+ * const pubkey = hexToBytes('02'.repeat(32)) // the 32-byte public key from your PQC signer
+ * const scriptPubKey = addressToScriptPubKey(p2mrAddressFromPubkey(pubkey, 'regtest'), 'regtest')
+ * // fundingTxid: the funding transaction's id as an explorer shows it
+ * const txid = hexToBytes(fundingTxid).reverse()
+ * const psbt = createP2mrPsbt({
+ *   inputs: [
+ *     {
+ *       prevout: { txid, vout: 0 },
+ *       witnessUtxo: { value: 100_000n, scriptPubKey },
+ *       leafScript: singleKeyLeafScript(pubkey),
+ *       controlBlock: buildControlBlock(), // the key is the address's only leaf
+ *     },
+ *   ],
+ *   outputs: [{ value: 99_000n, scriptPubKey }], // a 1,000-satoshi fee
+ * })
+ * const bytes = serializePsbt(psbt)
+ * ```
+ *
+ * @category PSBT
  */
 export function createP2mrPsbt(params: {
   /** nVersion (uint32, as qbit Core's `CTransaction::version`). Default 2. */
   version?: number
   /** nLockTime (uint32). Default 0. */
   locktime?: number
+  /** What each input spends and the leaf it will be signed through. */
   inputs: readonly P2mrPsbtInput[]
+  /** The outputs, with amounts in satoshis. */
   outputs: readonly P2mrTransactionOutput[]
   /**
    * `false` skips the restricted-output check, matching qbit Core's regtest
@@ -2008,10 +3584,19 @@ export function createP2mrPsbt(params: {
  * `SIGHASH_DEFAULT`: `NONE`, `SINGLE` and the `ANYONECANPAY` variants leave
  * outputs and/or other inputs uncommitted, so the same digest (and therefore
  * the same signature) is valid in transactions the user never saw.
+ *
+ * @remarks
+ * See
+ * [Signing and finalization](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/signing-and-finalization.md).
+ *
+ * @category Signing
  */
 export interface P2mrPsbtSignContext {
+  /** Index of the input being signed. */
   inputIndex: number
+  /** The plan's 32-byte public key (a copy). */
   pubkey: Uint8Array
+  /** The 32-byte hash of the leaf being signed (a copy). */
   leafHash: Uint8Array
   /** Sighash type the digest was computed with (and the type byte appended to the witness signature when not `SIGHASH_DEFAULT`). */
   hashType: number
@@ -2025,6 +3610,11 @@ export interface P2mrPsbtSignContext {
  * Signer callback: returns a 3680-byte SLH-DSA signature, or `undefined` (not
  * `null`) to skip the plan.
  *
+ * A stateful signer records each key use here, when it is called and before
+ * it signs, not in `onSigned`: a plan that fails in phase `'sign'` never
+ * reaches `onSigned`, and a retry calls the signer again for it with the same
+ * digest.
+ *
  * Must be synchronous: `signP2mrPsbt` stores each signature before the next
  * plan is attempted, so it cannot wait for a promise. A returned promise or
  * other thenable fails that plan with a `P2mrPsbtSigningError` in phase
@@ -2032,10 +3622,23 @@ export interface P2mrPsbtSignContext {
  * as consumed). Any `Uint8Array`, including one created in another realm
  * (vm context, iframe, worker) or a Node `Buffer`, is accepted and copied; other
  * views such as `DataView` or `Int8Array` are rejected.
+ *
+ * @remarks
+ * `sighash` is the 32-byte {@link p2mrSighash} digest to sign. See
+ * [Signing and finalization](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/signing-and-finalization.md).
+ *
+ * @category Signing
  */
 export type P2mrPsbtSignFn = (sighash: Uint8Array, context: P2mrPsbtSignContext) => Uint8Array | undefined
 
+/**
+ * One signing plan for {@link signP2mrPsbt} or
+ * {@link validateP2mrSigningPlans}: sign an input with a key, through one leaf.
+ *
+ * @category Signing
+ */
 export interface P2mrSigningKey {
+  /** Index of the input to sign; an index outside the transaction throws `INVALID_PSBT`. */
   inputIndex: number
   /** 32-byte `Uint8Array`; any other value throws `INVALID_BYTES` before any signer call. */
   pubkey: Uint8Array
@@ -2051,10 +3654,17 @@ export interface P2mrSigningKey {
   hashType?: number
 }
 
-/** Identifies one signing plan: the (input, pubkey, leaf hash) triple a signature is keyed by. */
+/**
+ * Identifies one signing plan: the (input, pubkey, leaf hash) triple a signature is keyed by.
+ *
+ * @category Signing
+ */
 export interface P2mrSigningPlanRef {
+  /** Index of the signed input. */
   inputIndex: number
+  /** The 32-byte public key (a copy). */
   pubkey: Uint8Array
+  /** The 32-byte leaf hash (a copy). */
   leafHash: Uint8Array
 }
 
@@ -2062,9 +3672,12 @@ export interface P2mrSigningPlanRef {
  * Called by `signP2mrPsbt` right after each signature has been validated and
  * stored, before the next plan's `sign` call. `field` is the stored 0x19
  * script-sig record (`key` = type||pubkey||leafHash, `value` = signature with
- * any explicit sighash type appended). Stateful keyrings persist and advance
- * counters here, so a later failure can never lose the record of a signature
- * that was already produced. For a non-default sighash type the input's
+ * any explicit sighash type appended). Persist the signature here, so a later
+ * failure can never lose the record of a signature that was already produced.
+ * This runs only for a stored signature, so a stateful signer records key use
+ * in `sign` instead (see {@link P2mrPsbtSignFn}): a plan that fails in phase
+ * `'sign'` counts as a key use but never reaches `onSigned`. For a non-default
+ * sighash type the input's
  * `PSBT_IN_SIGHASH_TYPE` (0x03) record is stored in the same step; it is not
  * part of `field`.
  *
@@ -2074,9 +3687,20 @@ export interface P2mrSigningPlanRef {
  * `P2mrPsbtSigningError` in phase `'onSigned'` before the next plan's `sign`
  * call. Its eventual settlement is ignored, so the signature is stored but
  * whether the persistence it started completed is unknown to the caller.
+ *
+ * @remarks
+ * See
+ * [Signing and finalization](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/signing-and-finalization.md).
+ *
+ * @category Signing
  */
 export type P2mrPsbtOnSignedFn = (event: P2mrSigningPlanRef & { field: { key: Uint8Array; value: Uint8Array } }) => void
 
+/**
+ * Options shared by {@link signP2mrPsbt} and {@link validateP2mrSigningPlans}.
+ *
+ * @category Signing
+ */
 export interface P2mrSigningOptions {
   /**
    * Permit sighash types other than `SIGHASH_DEFAULT`. Off by default because
@@ -2096,13 +3720,23 @@ export interface P2mrSigningOptions {
   restrictedOutputMode?: boolean
 }
 
+/**
+ * What {@link signP2mrPsbt} returns.
+ *
+ * @category Signing
+ */
 export interface SignP2mrPsbtResult {
+  /** A new PSBT with the signatures added; the input PSBT is not modified. */
   psbt: Psbt
-  /** Plans that produced a signature, so the caller's key management can advance its counters. */
+  /** Plans whose signatures were stored, in signing order. */
   signed: P2mrSigningPlanRef[]
 }
 
-/** Which step of a signing plan raised a `P2mrPsbtSigningError`. */
+/**
+ * Which step of a signing plan raised a `P2mrPsbtSigningError`.
+ *
+ * @category Errors
+ */
 export type P2mrPsbtSigningPhase = 'sign' | 'onSigned'
 
 /**
@@ -2121,14 +3755,36 @@ export type P2mrPsbtSigningPhase = 'sign' | 'onSigned'
  *   the callback failed.
  *
  * Retry contract: call `signP2mrPsbt` again with `psbt` and only the keys that
- * are not listed in `signed`. A key whose signature is already present is
- * refused before any signer call, so a plan is never signed twice.
+ * are not listed in `signed`. A key whose signature is already present makes
+ * the call throw `INVALID_PSBT` before any signer call, so a plan whose
+ * signature is stored is never sent to the signer again. A plan that failed in
+ * phase `'sign'` has no stored signature, so the retry sends it to the signer
+ * again with the same digest: a stateful signer must already have recorded
+ * that key use when `sign` was called (see {@link P2mrPsbtSignFn}), and decide
+ * from that record whether it may sign again.
+ *
+ * @remarks
+ * Its `code` is always `SIGNING_FAILED`. Recognize it with
+ * {@link P2mrPsbtSigningError.is}. See
+ * [Signing and finalization](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/signing-and-finalization.md) and
+ * [Error classification](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/error-classification.md).
+ *
+ * @category Errors
  */
 export class P2mrPsbtSigningError extends QbitProtocolError {
+  /** The PSBT with every signature stored before the failure. */
   readonly psbt: Psbt
+  /** The plans whose signatures are in `psbt`, in signing order. */
   readonly signed: P2mrSigningPlanRef[]
+  /** The plan being processed when the failure happened. */
   readonly failed: P2mrSigningPlanRef
+  /** How far `failed` got: see {@link P2mrPsbtSigningPhase}. */
   readonly phase: P2mrPsbtSigningPhase
+  /**
+   * What `sign` or `onSigned` threw, or the `INVALID_SIGNER` or
+   * `INVALID_BYTES` `QbitProtocolError` for a promise or invalid signature it
+   * returned.
+   */
   readonly cause: unknown
 
   /**
@@ -2206,6 +3862,24 @@ interface PreparedP2mrSigningPlan {
  * transaction that does not verify. A failure throws `INVALID_PSBT`,
  * `INVALID_SCRIPT` for an output restricted-output mode rejects, or
  * `INVALID_SIGHASH` for a sighash rule.
+ *
+ * @param params - The PSBT, the signing plans (`keys`) and the
+ * {@link P2mrSigningOptions}.
+ * @throws {QbitProtocolError} `INVALID_PSBT` for a plan the rules above refuse,
+ * an `inputIndex` out of range, a duplicate plan, an input without a witness
+ * UTXO (every input needs one, since the sighash commits to all spent
+ * outputs), or a PSBT {@link decodePsbt} rejects.
+ * @throws {QbitProtocolError} `INVALID_SCRIPT` for an output restricted-output
+ * mode rejects, or `INVALID_SIGHASH` for a sighash rule.
+ * @throws {QbitProtocolError} `INVALID_BYTES` for a plan's `pubkey` or
+ * `leafHash` that is not a 32-byte `Uint8Array`, or any other code
+ * {@link decodePsbt} throws, such as `INVALID_AMOUNT`.
+ *
+ * @remarks
+ * See
+ * [Signing and finalization](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/signing-and-finalization.md).
+ *
+ * @category Signing
  */
 export function validateP2mrSigningPlans(
   params: {
@@ -2235,6 +3909,64 @@ export function validateP2mrSigningPlans(
  * is attempted. If any plan fails, the `P2mrPsbtSigningError` carries the
  * partially signed PSBT and the plans signed so far; see that class for the
  * retry contract.
+ *
+ * @param params - The PSBT, the signing plans (`keys`), the synchronous `sign`
+ * and optional `onSigned` callbacks, and the {@link P2mrSigningOptions}.
+ * @returns A new PSBT with the signatures (`0x19` records, plus
+ * `PSBT_IN_SIGHASH_TYPE` for a non-default type) and the plans signed. A plan
+ * whose `sign` returned `undefined` is skipped and not listed.
+ * @throws {QbitProtocolError} `INVALID_SIGNER` if `sign` is not a function or
+ * `onSigned` is neither a function nor `undefined`.
+ * @throws {QbitProtocolError} Any code {@link validateP2mrSigningPlans} throws,
+ * before the first signer call.
+ * @throws {P2mrPsbtSigningError} `SIGNING_FAILED` if a `sign` or `onSigned`
+ * call throws or returns a promise, or `sign` returns something other than a
+ * 3680-byte `Uint8Array` or `undefined`.
+ *
+ * @remarks
+ * See
+ * [Signing and finalization](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/signing-and-finalization.md).
+ *
+ * @example
+ * ```ts
+ * import {
+ *   P2MR_LEAF_VERSION_V1,
+ *   P2mrPsbtSigningError,
+ *   p2mrLeafHash,
+ *   signP2mrPsbt,
+ *   singleKeyLeafScript,
+ * } from '@qbit-oss/protocol'
+ *
+ * // psbt: from createP2mrPsbt or parsePsbt
+ * // pubkey: the signing key's 32-byte public key
+ * // pqcSign(sighash): your synchronous PQC signer, returning a 3680-byte signature
+ * // reserveKeyUse(ref): your keyring's synchronous check-and-record of a key
+ * //   use; it throws if the key's state does not allow another signature
+ * // saveSignature(ref, field): your synchronous store for a produced signature
+ * const leafHash = p2mrLeafHash(P2MR_LEAF_VERSION_V1, singleKeyLeafScript(pubkey))
+ * try {
+ *   const { psbt: signed } = signP2mrPsbt({
+ *     psbt,
+ *     keys: [{ inputIndex: 0, pubkey, leafHash }],
+ *     sign: (sighash, { inputIndex, pubkey, leafHash }) => {
+ *       // Before signing: a plan that fails in phase 'sign' never reaches onSigned,
+ *       // and a retry calls sign again, so refuse here when the key's state says so.
+ *       reserveKeyUse({ inputIndex, pubkey, leafHash })
+ *       return pqcSign(sighash)
+ *     },
+ *     onSigned: ({ inputIndex, pubkey, leafHash, field }) => saveSignature({ inputIndex, pubkey, leafHash }, field),
+ *   })
+ *   // pass `signed` to finalizeP2mrPsbt
+ * } catch (error) {
+ *   if (P2mrPsbtSigningError.is(error)) {
+ *     // error.psbt holds the signatures of error.signed; retry with the other keys.
+ *     // In phase 'sign', the retry sends error.failed to the signer again.
+ *   }
+ *   throw error
+ * }
+ * ```
+ *
+ * @category Signing
  */
 export function signP2mrPsbt(
   params: {
@@ -2362,10 +4094,12 @@ function describeThrown(cause: unknown): string {
  * Finalize P2MR inputs: build the witness qbit Core's `FinalizePSBT` builds
  * (`src/psbt.cpp:697` and `src/script/sign.cpp:699-741` @ v1.0.0, `7ebcddb6`),
  * store it as the final scriptwitness (0x08), and drop the now-redundant
- * partial fields and an empty final scriptSig (0x07). A non-empty 0x07 throws
- * `INVALID_PSBT`: a P2MR spend's scriptSig must be empty. Already-finalized
- * inputs are left untouched once their final witness passes the limits
- * `extractP2mrTransaction` enforces.
+ * partial fields and an empty final scriptSig (0x07). On an input it
+ * finalizes, a non-empty 0x07 throws `INVALID_PSBT`: a P2MR spend's scriptSig
+ * must be empty. An input that already has a final scriptwitness is left
+ * untouched once that witness passes the limits `extractP2mrTransaction`
+ * enforces, and its 0x07 is not checked; `extractP2mrTransaction` writes an
+ * empty scriptSig for it either way.
  *
  * Leaves and signatures are read as `decodePsbt` reports them: one leaf per
  * (control block, script, leaf version) and one signature per (pubkey, leaf
@@ -2392,6 +4126,34 @@ function describeThrown(cause: unknown): string {
  * that omitted the field needs a matching `PSBT_IN_SIGHASH_TYPE` record (which
  * Core's own signer always writes, `:542-545`) before Core or this function
  * will finalize it.
+ *
+ * @param psbt - The signed PSBT.
+ * @returns A new PSBT in which every input has a final scriptwitness; the
+ * input PSBT is not modified.
+ * @throws {QbitProtocolError} `INVALID_PSBT` if any input cannot be finalized,
+ * including an input with no P2MR signature or witness UTXO, a non-P2MR
+ * witness UTXO, a `qbit` Merkle root that differs from its program, or an
+ * existing final scriptwitness over the limits. Every input is finalized or
+ * none is.
+ * @throws {QbitProtocolError} `INVALID_SIGHASH` for a signature whose type
+ * breaks the rules above.
+ * @throws {QbitProtocolError} Any other code {@link decodePsbt} throws, such
+ * as `INVALID_AMOUNT`.
+ *
+ * @remarks
+ * See
+ * [Signing and finalization](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/signing-and-finalization.md).
+ *
+ * @example
+ * ```ts
+ * import { bytesToHex, extractP2mrTransaction, finalizeP2mrPsbt } from '@qbit-oss/protocol'
+ *
+ * // signed: the PSBT signP2mrPsbt returned, or combinePsbts of co-signers' PSBTs
+ * const finalized = finalizeP2mrPsbt(signed)
+ * const rawTx = bytesToHex(extractP2mrTransaction(finalized)) // for sendrawtransaction
+ * ```
+ *
+ * @category Signing
  */
 export function finalizeP2mrPsbt(psbt: Psbt): Psbt {
   const summary = decodePsbt(psbt)
@@ -2422,6 +4184,39 @@ export function finalizeP2mrPsbt(psbt: Psbt): Psbt {
  * transaction must fit `options.maxBytes`, which is checked before any witness
  * is decoded, and at most `options.maxObjects` transaction inputs, outputs and
  * witness items are decoded (see `PsbtLimitOptions`).
+ *
+ * @param psbt - A PSBT from {@link finalizeP2mrPsbt} or {@link parsePsbt}
+ * in which every input has a final scriptwitness (`0x08`).
+ * @param options - Decoding limits; see {@link PsbtLimitOptions}.
+ * @returns The witness-serialized transaction, ready to broadcast.
+ * @throws {RangeError} if `maxBytes` or `maxObjects` is not a positive safe
+ * integer.
+ * @throws {QbitProtocolError} `INVALID_PSBT` if the PSBT has no unsigned
+ * transaction or one that does not parse, an input map has no final
+ * scriptwitness, a final scriptwitness is malformed or over qbit Core's P2MR
+ * limits, or the transaction is over the limits.
+ * @throws {QbitProtocolError} `INVALID_AMOUNT` for an output outside
+ * `MoneyRange`.
+ *
+ * @remarks
+ * It checks only what is listed above, not {@link decodePsbt}'s rules. It
+ * takes one witness from each map in `psbt.inputs` without checking that
+ * there is one map per transaction input, so a hand-built `Psbt` with too few
+ * or too many input maps gives a malformed transaction instead of an error.
+ * {@link finalizeP2mrPsbt} and {@link parsePsbt} both return one input map per
+ * input, so pass a PSBT from one of them. See
+ * [Untrusted PSBT input](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/untrusted-psbt.md).
+ *
+ * @example
+ * ```ts
+ * import { bytesToHex, extractP2mrTransaction, parsePsbt } from '@qbit-oss/protocol'
+ *
+ * // finalizedBytes: a finalized PSBT received from another wallet
+ * const psbt = parsePsbt(finalizedBytes, { maxBytes: 1_000_000 })
+ * const rawTx = bytesToHex(extractP2mrTransaction(psbt, { maxBytes: 400_000 }))
+ * ```
+ *
+ * @category PSBT
  */
 export function extractP2mrTransaction(psbt: Psbt, options: PsbtLimitOptions = {}): Uint8Array {
   const maxBytes = resolvePsbtLimit(options.maxBytes, PSBT_DEFAULT_MAX_BYTES, 'maxBytes')
@@ -2444,6 +4239,33 @@ export function extractP2mrTransaction(psbt: Psbt, options: PsbtLimitOptions = {
   return serializeWitnessTransaction(tx, witnesses)
 }
 
+/**
+ * Derive the address of a single-key P2MR output: a tree whose only leaf is
+ * `pk32`'s v1 single-key leaf script, so the Merkle root is that leaf's hash.
+ *
+ * @param pk32 - The 32-byte PQC public key.
+ * @param network - The network whose HRP the address uses.
+ * @returns The lowercase address.
+ * @throws {QbitProtocolError} `INVALID_BYTES` if `pk32` is not a 32-byte
+ * `Uint8Array`, or `UNKNOWN_NETWORK` or `WRONG_HRP` for the network, as
+ * {@link encodeP2mrAddress} throws them (it throws a `TypeError` instead for a
+ * name `Object.prototype` defines).
+ *
+ * @remarks
+ * Spend it with `singleKeyLeafScript(pk32)` and `buildControlBlock()`. See
+ * [Features](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/features.md).
+ *
+ * @example
+ * ```ts
+ * import { hexToBytes, p2mrAddressFromPubkey } from '@qbit-oss/protocol'
+ *
+ * const pubkey = hexToBytes('02'.repeat(32)) // the 32-byte public key from your PQC signer
+ * p2mrAddressFromPubkey(pubkey, 'regtest')
+ * // 'qbrt1zzasx2u2z7v9kn4q8e66r57mfw08xvrvdcqfcq6xfte0eau9dgdgqz42zd5'
+ * ```
+ *
+ * @category Addresses
+ */
 export function p2mrAddressFromPubkey(pk32: Uint8Array, network: QbitNetworkName | QbitNetworkParams): string {
   const script = singleKeyLeafScript(pk32)
   const root = p2mrLeafHash(P2MR_LEAF_VERSION_V1, script)
@@ -2473,9 +4295,11 @@ export function p2mrAddressFromPubkey(pk32: Uint8Array, network: QbitNetworkName
  * - `amount`, `label` or `message` given more than once, counting its `req-` form,
  *   throws `INVALID_URI`. Core keeps the last value and `URLSearchParams.get` the
  *   first; rejecting means qbit-js never has to pick one of two amounts.
- * - `amount` must be a QBT decimal with at most 8 fractional digits and at most
- *   `QBIT_MAX_MONEY` (210,000,000 QBT), the cap Core's amount field enforces
- *   (`bitcoinamountfield.cpp:171`), so `210000000.00000001` throws `INVALID_URI`.
+ * - `amount` must be a QBT amount written as `0` or digits without a leading
+ *   zero, optionally followed by `.` and 1 to 8 digits, so `.5`, `1.` and `01`
+ *   throw `INVALID_URI`. It must be at most `QBIT_MAX_MONEY` (210,000,000 QBT),
+ *   the cap Core's amount field enforces (`bitcoinamountfield.cpp:171`), so
+ *   `210000000.00000001` throws `INVALID_URI`.
  *   An empty `amount=` throws `INVALID_URI`, although Core reads it as no amount.
  * - Parameter names are case-sensitive, as in Core and BIP21. BIP321 makes them
  *   case-insensitive, so a name that case-folds to `amount`, `label`, `message` or
@@ -2492,6 +4316,33 @@ export function p2mrAddressFromPubkey(pk32: Uint8Array, network: QbitNetworkName
  * first value, text after `#` was read as part of the last parameter, a case
  * variant such as `AMOUNT` or `REQ-expires` was ignored, an amount above
  * `QBIT_MAX_MONEY` was accepted, and `QBIT:` or a trailing `/` was rejected.
+ *
+ * @param uri - The URI.
+ * @param expectedNetwork - If given, the address must belong to this network.
+ * @returns The address, its network, the payment fields and every parameter.
+ * @throws {QbitProtocolError} `WRONG_URI_SCHEME` unless the URI starts with
+ * `qbit:` (in any case) and not `qbit://`.
+ * @throws {QbitProtocolError} `INVALID_URI` for an empty address or any of the
+ * cases above.
+ * @throws {QbitProtocolError} Any code {@link decodeP2mrAddress} throws for
+ * the address.
+ *
+ * @remarks
+ * `amount` is a QBT decimal string, not satoshis. See
+ * [qbit Payment URIs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/qbit-uri.md).
+ *
+ * @example
+ * ```ts
+ * import { parseQbitUri } from '@qbit-oss/protocol'
+ *
+ * const uri = parseQbitUri(
+ *   'qbit:qbrt1zzasx2u2z7v9kn4q8e66r57mfw08xvrvdcqfcq6xfte0eau9dgdgqz42zd5?amount=0.5&label=Coffee%20shop',
+ *   'regtest'
+ * )
+ * // uri.amount: '0.5' (QBT), uri.label: 'Coffee shop', uri.network: 'regtest'
+ * ```
+ *
+ * @category URIs
  */
 export function parseQbitUri(uri: string, expectedNetwork?: QbitNetworkName): ParsedQbitUri {
   // Schemes compare case-insensitively (guiutil.cpp:160,216).
@@ -2553,12 +4404,41 @@ export function parseQbitUri(uri: string, expectedNetwork?: QbitNetworkName): Pa
  * `A-Z a-z 0-9 - . _ ~` is escaped, so a space becomes `%20`. Text that is not
  * well-formed Unicode (a lone surrogate) throws `INVALID_URI`. Unlike Core, the
  * address is emitted as given, and an empty label or message is still emitted.
- * `amount` must be a QBT decimal with at most 8 fractional digits and at most
+ * `amount` must be a QBT amount written as `0` or digits without a leading
+ * zero, optionally followed by `.` and 1 to 8 digits, and at most
  * `QBIT_MAX_MONEY` (210,000,000 QBT), or it throws `INVALID_URI`.
  *
  * Behaviour change in 0.1.0: a space used to be emitted as `+`, which Core
  * shows as a literal plus, a lone surrogate was replaced with U+FFFD, and an
  * amount above `QBIT_MAX_MONEY` was emitted.
+ *
+ * @param fields - The address and the optional amount (in QBT), label and
+ * message.
+ * @returns The URI.
+ * @throws {QbitProtocolError} `INVALID_URI` for an invalid amount or a label
+ * or message with a lone surrogate.
+ * @throws {QbitProtocolError} Any code {@link decodeP2mrAddress} throws for
+ * the address.
+ *
+ * @remarks
+ * {@link parseQbitUri} reads the result back with the same address, amount,
+ * label and message. See
+ * [qbit Payment URIs](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/qbit-uri.md).
+ *
+ * @example
+ * ```ts
+ * import { formatQbitUri } from '@qbit-oss/protocol'
+ *
+ * formatQbitUri({
+ *   address: 'qbrt1zzasx2u2z7v9kn4q8e66r57mfw08xvrvdcqfcq6xfte0eau9dgdgqz42zd5',
+ *   amount: '0.5', // QBT
+ *   label: 'Coffee shop',
+ *   message: '1+1=2',
+ * })
+ * // 'qbit:qbrt1zzasx2u2z7v9kn4q8e66r57mfw08xvrvdcqfcq6xfte0eau9dgdgqz42zd5?amount=0.5&label=Coffee%20shop&message=1%2B1%3D2'
+ * ```
+ *
+ * @category URIs
  */
 export function formatQbitUri(fields: QbitUriFields): string {
   decodeP2mrAddress(fields.address)
@@ -2616,6 +4496,17 @@ function encodeQbitUriComponent(text: string): string {
   return encoded.replace(/[!'()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
 }
 
+/**
+ * Split a descriptor at its last `#` into the descriptor and its checksum,
+ * without verifying the checksum.
+ *
+ * @param input - The descriptor, with or without a `#checksum` suffix.
+ * @returns The descriptor text and, when there is a `#`, the checksum.
+ * @throws {QbitProtocolError} `INVALID_DESCRIPTOR` if the text after the last
+ * `#` is not 8 checksum characters.
+ *
+ * @category Descriptors
+ */
 export function splitDescriptorChecksum(input: string): DescriptorChecksumParts {
   const hash = input.lastIndexOf('#')
   if (hash === -1) {
@@ -2629,6 +4520,17 @@ export function splitDescriptorChecksum(input: string): DescriptorChecksumParts 
   return { descriptor, checksum }
 }
 
+/**
+ * Check that a descriptor carries a correct checksum.
+ *
+ * @param input - The descriptor with its `#checksum` suffix.
+ * @returns The descriptor text and checksum.
+ * @throws {QbitProtocolError} `INVALID_DESCRIPTOR` if the checksum is missing,
+ * malformed or wrong, or the descriptor has a character the checksum does not
+ * cover.
+ *
+ * @category Descriptors
+ */
 export function verifyDescriptorChecksum(input: string): DescriptorChecksumParts {
   const parts = splitDescriptorChecksum(input)
   if (parts.checksum === undefined) {
@@ -2641,6 +4543,44 @@ export function verifyDescriptorChecksum(input: string): DescriptorChecksumParts
   return parts
 }
 
+/**
+ * Parse an `mr(...)` or `rawmr(...)` descriptor, with or without a
+ * `#checksum`.
+ *
+ * Leading and trailing whitespace is trimmed. A checksum, when present, is
+ * verified unless `verifyChecksum: false` is passed. Keys are 32-byte hex,
+ * upper- or lowercase, or `pqc(...)` key expressions; `multi_a` and `sortedmulti_a`
+ * take 1 to 999 keys and a threshold from 1 to the key count, as qbit Core's
+ * parser does, so a threshold above 35 parses.
+ *
+ * @param input - The descriptor.
+ * @param options - Whether a checksum is required and whether it is verified.
+ * @returns The parsed descriptor, with the checksum it carried.
+ * @throws {QbitProtocolError} `INVALID_DESCRIPTOR` for anything else: a
+ * missing required checksum, a wrong checksum, another descriptor type, bad
+ * syntax or hex, a tree deeper than 128, an invalid threshold or key count,
+ * or a key path or key expression this package does not support.
+ *
+ * @remarks
+ * See
+ * [P2MR descriptor support](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptor-support.md) and
+ * [P2MR Descriptors](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptors.md).
+ *
+ * @example
+ * ```ts
+ * import { p2mrAddressFromDescriptor, parseP2mrDescriptor } from '@qbit-oss/protocol'
+ *
+ * const descriptor = parseP2mrDescriptor(
+ *   'mr(pk(0202020202020202020202020202020202020202020202020202020202020202))#vugajuwd',
+ *   { requireChecksum: true }
+ * )
+ * // { type: 'mr', tree: { type: 'pk', pubkey: Uint8Array(32) }, checksum: 'vugajuwd' }
+ * p2mrAddressFromDescriptor(descriptor, 'regtest')
+ * // 'qbrt1zzasx2u2z7v9kn4q8e66r57mfw08xvrvdcqfcq6xfte0eau9dgdgqz42zd5'
+ * ```
+ *
+ * @category Descriptors
+ */
 export function parseP2mrDescriptor(input: string, options: ParseP2mrDescriptorOptions = {}): ParsedP2mrDescriptor {
   const parts = splitDescriptorChecksum(input.trim())
   if (options.requireChecksum && parts.checksum === undefined) {
@@ -2692,6 +4632,20 @@ export function parseP2mrDescriptor(input: string, options: ParseP2mrDescriptorO
  * `multi_a(0,...)` or a 31-byte root) or failed with a `TypeError`, or a
  * `RangeError` stack overflow for very deep or cyclic trees. Thresholds above
  * 35 still serialize, as qbit Core's parser accepts them.
+ *
+ * @param descriptor - The descriptor object.
+ * @param includeChecksum - Whether to append a checksum. Default: whether
+ * `descriptor.checksum` is set.
+ * @returns The descriptor string. Public keys and roots are written as
+ * lowercase hex, and the checksum is computed afresh, not copied from
+ * `descriptor.checksum`.
+ * @throws {QbitProtocolError} `INVALID_DESCRIPTOR` for a malformed object, as
+ * listed above.
+ *
+ * @remarks
+ * See [P2MR Descriptors](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptors.md).
+ *
+ * @category Descriptors
  */
 export function serializeP2mrDescriptor(
   descriptor: ParsedP2mrDescriptor,
@@ -2725,6 +4679,20 @@ export function serializeP2mrDescriptor(
  * different error: `RangeError` (threshold 0 or above n, unknown leaf type,
  * stack overflow on very deep or cyclic trees), `INVALID_BYTES` (wrong-length
  * key) or `TypeError` (`null` and other non-objects).
+ *
+ * @param descriptor - A descriptor string, parsed with
+ * {@link parseP2mrDescriptor} and its default options, or a descriptor object.
+ * @returns The 32-byte Merkle root. For a `rawmr` descriptor object this is
+ * its own `root` array, not a copy.
+ * @throws {QbitProtocolError} `INVALID_DESCRIPTOR` for a descriptor
+ * `parseP2mrDescriptor` rejects, a malformed object, an `mr()` descriptor with
+ * no leaf a wallet can satisfy, or a tree with a `pk(pqc(...))` leaf, whose
+ * key needs derivation this package does not do.
+ *
+ * @remarks
+ * See [P2MR Descriptors](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptors.md).
+ *
+ * @category Descriptors
  */
 export function p2mrRootFromDescriptor(descriptor: string | ParsedP2mrDescriptor): Uint8Array {
   if (typeof descriptor !== 'string') {
@@ -2771,6 +4739,21 @@ function p2mrLeafScript(leaf: P2mrDescriptorLeaf): Uint8Array {
  * Encode the P2MR address a descriptor commits to. Throws `INVALID_DESCRIPTOR`
  * for an `mr()` descriptor whose every leaf is a `multi_a`/`sortedmulti_a` with
  * threshold > 35, which no one could ever spend; see `p2mrRootFromDescriptor`.
+ *
+ * @param descriptor - A descriptor string or object, as
+ * {@link p2mrRootFromDescriptor} takes it.
+ * @param network - The network whose HRP the address uses.
+ * @returns The lowercase address.
+ * @throws {QbitProtocolError} `INVALID_DESCRIPTOR` as
+ * {@link p2mrRootFromDescriptor} throws it, including for a `pk(pqc(...))`
+ * leaf, or `UNKNOWN_NETWORK` or `WRONG_HRP` for the network, as
+ * {@link encodeP2mrAddress} throws them (it throws a `TypeError` instead for a
+ * name `Object.prototype` defines).
+ *
+ * @remarks
+ * See [P2MR Descriptors](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptors.md).
+ *
+ * @category Descriptors
  */
 export function p2mrAddressFromDescriptor(
   descriptor: string | ParsedP2mrDescriptor,
@@ -2817,6 +4800,22 @@ export function p2mrAddressFromDescriptor(
  * more than 1,000,000 indices, ranges other than a two-element array, NaN, negative,
  * fractional or string timestamps, identical pairs and mixed-network pairs through
  * to Core, which rejected or misapplied them, or failed with a `TypeError`.
+ *
+ * @param pair - The receive (`external`) and change (`internal`) descriptors.
+ * @param range - The `[start, end]` derivation index range. Default
+ * `[0, 999]`.
+ * @param timestamp - `'now'` (the default) or seconds since the Unix epoch.
+ * @returns The receive entry, then the change entry, each with its checksum
+ * (verified when given, added otherwise), the same `timestamp` and `range`,
+ * and `active: true`.
+ * @throws {QbitProtocolError} `INVALID_DESCRIPTOR` for a request that breaks
+ * the rules above, or a descriptor that {@link parseP2mrDescriptor} rejects.
+ *
+ * @remarks
+ * See
+ * [P2MR descriptor support](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptor-support.md#formatp2mrimportdescriptors).
+ *
+ * @category Descriptors
  */
 export function formatP2mrImportDescriptors(
   pair: P2mrImportDescriptorPair,
@@ -2934,6 +4933,15 @@ function p2mrTreeHasWildcard(tree: P2mrDescriptorTree): boolean {
  * Parsing still accepts thresholds up to 999, as Core does. Strings go through
  * `parseP2mrDescriptor` and objects get the same checks; both throw
  * `INVALID_DESCRIPTOR` when malformed.
+ *
+ * @param descriptor - A descriptor string or object.
+ * @returns Whether some leaf can be satisfied: always `false` for `rawmr()`.
+ * @throws {QbitProtocolError} `INVALID_DESCRIPTOR` for a malformed descriptor.
+ *
+ * @remarks
+ * See [P2MR Descriptors](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/p2mr-descriptors.md).
+ *
+ * @category Descriptors
  */
 export function hasP2mrStandardSatisfaction(descriptor: string | ParsedP2mrDescriptor): boolean {
   if (typeof descriptor !== 'string') {
@@ -3042,6 +5050,17 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(item => typeof item === 'string')
 }
 
+/**
+ * Compute a descriptor's 8-character checksum, as qbit Core's descriptor
+ * checksum does.
+ *
+ * @param descriptor - The descriptor text, without a `#checksum` suffix.
+ * @returns The checksum, 8 characters from the bech32 character set.
+ * @throws {QbitProtocolError} `INVALID_DESCRIPTOR` if `descriptor` has a
+ * character outside the checksum's input character set.
+ *
+ * @category Descriptors
+ */
 export function descriptorChecksum(descriptor: string): string {
   let checksum = 1n
   let cls = 0
@@ -3079,6 +5098,16 @@ export function descriptorChecksum(descriptor: string): string {
   return out
 }
 
+/**
+ * Append `#` and the checksum to a descriptor.
+ *
+ * @param descriptor - The descriptor text, without a `#`.
+ * @returns `descriptor#checksum`.
+ * @throws {QbitProtocolError} `INVALID_DESCRIPTOR` if `descriptor` already has
+ * a `#`, or has a character outside the checksum's input character set.
+ *
+ * @category Descriptors
+ */
 export function addDescriptorChecksum(descriptor: string): string {
   if (descriptor.includes('#')) {
     throw new QbitProtocolError('INVALID_DESCRIPTOR', 'descriptor must not already include a checksum')

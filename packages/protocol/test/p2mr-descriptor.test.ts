@@ -13,6 +13,7 @@ import {
   p2mrBranchHash,
   p2mrLeafHash,
   p2mrRootFromDescriptor,
+  descriptorChecksum,
   parseP2mrDescriptor,
   serializeP2mrDescriptor,
   singleKeyLeafScript,
@@ -29,6 +30,12 @@ const RANGED_EXTERNAL = `mr(pk(pqc(${QRPV}/87h/1h/0h/0/*)))`
 const RANGED_INTERNAL = `mr(pk(pqc(${QRPV}/87h/1h/0h/1/*)))`
 
 describe('P2MR descriptors', () => {
+  it('matches the checksum in the parseP2mrDescriptor doc example', () => {
+    const descriptor = `mr(pk(${'02'.repeat(32)}))`
+    expect(descriptorChecksum(descriptor)).toBe('vugajuwd')
+    expect(parseP2mrDescriptor(`${descriptor}#vugajuwd`, { requireChecksum: true }).checksum).toBe('vugajuwd')
+  })
+
   it('parses, verifies, and serializes rawmr descriptors', () => {
     const descriptor = addDescriptorChecksum(`rawmr(${RAW_ROOT})`)
     const parsed = parseP2mrDescriptor(descriptor, { requireChecksum: true })
