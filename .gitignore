@@ -5,3 +5,4 @@ coverage/
 *.tsbuildinfo
 *.log
 .DS_Store
+api-docs/

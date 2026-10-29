@@ -1,0 +1,26 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "name": "qbit-js",
+  "entryPointStrategy": "packages",
+  "entryPoints": ["packages/protocol", "packages/api"],
+  // Packages do not inherit the root options. notExported and notDocumented
+  // run on each package as it is converted (packageOptions), invalidLink on the
+  // merged project (the root validation).
+  "packageOptions": {
+    "entryPoints": ["src/index.ts"],
+    "categoryOrder": ["Clients", "*"],
+    "validation": {
+      "notExported": true,
+      "invalidLink": true,
+      "notDocumented": true
+    }
+  },
+  "validation": {
+    "notExported": true,
+    "invalidLink": true,
+    "notDocumented": true
+  },
+  // Any validation warning fails the docs build and docs:api:check.
+  "treatWarningsAsErrors": true,
+  "out": "api-docs"
+}

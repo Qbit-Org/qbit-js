@@ -99,7 +99,7 @@ qbit-js rejects these URIs that Core's GUI accepts:
 interface ParsedQbitUri {
   address: string          // as written, minus one trailing '/', may be uppercase
   network: QbitNetworkName // from the address HRP
-  amount?: string          // validated QBT decimal, at most 8 fractional digits and 210,000,000 QBT
+  amount?: string          // QBT: `0` or digits with no leading zero, then optionally `.` and 1-8 digits; at most 210,000,000 QBT
   label?: string
   message?: string
   params: URLSearchParams  // every decoded pair, in order, keys as written

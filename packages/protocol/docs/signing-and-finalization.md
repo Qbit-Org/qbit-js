@@ -7,11 +7,14 @@ recover from partial signing, enforce sighash types and pick a witness.
   signature through the synchronous `onSigned` callback as soon as it is
   stored, and a failed signer call or callback throws `P2mrPsbtSigningError`
   carrying the partially signed PSBT, the plans signed so far, and the `phase`
-  (`'sign'`: nothing stored for the failed plan, but a stateful signer must
-  still treat its key use as consumed; `'onSigned'`: its signature is
-  already stored), so a retry passes that PSBT back in with only the unsigned
-  plans; `sign` and `onSigned` must both be synchronous, and one that returns
-  a promise fails its plan the same way (the promise is never left unhandled);
+  (`'sign'`: nothing stored for the failed plan and `onSigned` not called, but
+  a stateful signer must still treat its key use as consumed, so it records
+  each key use in `sign` before signing, not in `onSigned`; `'onSigned'`: its
+  signature is already stored), so a retry passes that PSBT back in with only
+  the unsigned plans, which include a `'sign'`-phase failed plan: the signer
+  is called for it again with the same digest; `sign` and `onSigned` must both
+  be synchronous, and one that returns a promise fails its plan the same way
+  (the promise is never left unhandled);
   a signature `Uint8Array` from another realm (vm, iframe, worker) is accepted
 - sighash-type guardrails on the signing path: `signP2mrPsbt` /
   `validateP2mrSigningPlans` accept only `SIGHASH_DEFAULT` unless the caller

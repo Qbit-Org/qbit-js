@@ -12,121 +12,276 @@ import { sha256 } from '@noble/hashes/sha2'
 // Esplora response types
 // ---------------------------------------------------------------------------
 
+/**
+ * An address's totals over one part of its history, as esplora reports them:
+ * its confirmed transactions (`chain_stats`) or its mempool transactions
+ * (`mempool_stats`).
+ *
+ * @category Addresses
+ */
 export interface EsploraChainStats {
+  /** Number of transaction outputs that pay to the address. */
   funded_txo_count: number
+  /**
+   * Total value of those outputs in satoshis. A total of everything received,
+   * not a balance: see {@link addressBalanceFromStats}.
+   */
   funded_txo_sum: number
+  /** Number of the address's outputs that transactions spend. */
   spent_txo_count: number
+  /**
+   * Total value of those spent outputs in satoshis. A total of everything
+   * spent, not a balance: see {@link addressBalanceFromStats}.
+   */
   spent_txo_sum: number
+  /** Number of distinct transactions that touch the address. */
   tx_count: number
 }
 
+/**
+ * An address's confirmed and mempool totals, esplora's
+ * `GET /address/:address` reply.
+ *
+ * @category Addresses
+ */
 export interface EsploraAddressStats {
+  /** The address the totals are for, as the backend returned it. */
   address: string
+  /** Totals over the address's confirmed transactions. */
   chain_stats: EsploraChainStats
+  /** Totals over the address's unconfirmed (mempool) transactions. */
   mempool_stats: EsploraChainStats
 }
 
+/**
+ * Whether a transaction is confirmed, and in which block, as esplora reports
+ * it: the `GET /tx/:txid/status` reply and the `status` of transactions and
+ * unspent outputs.
+ *
+ * @category Transactions
+ */
 export interface EsploraTxStatus {
+  /** Whether the transaction is in a block. */
   confirmed: boolean
+  /** Height of the block that contains the transaction, when it is confirmed. */
   block_height?: number
+  /** Hash of that block, as hex, when the transaction is confirmed. */
   block_hash?: string
+  /** Timestamp of that block in Unix seconds, when the transaction is confirmed. */
   block_time?: number
 }
 
+/**
+ * An unspent output of an address, an entry of esplora's
+ * `GET /address/:address/utxo` reply.
+ *
+ * @category Addresses
+ */
 export interface EsploraUtxo {
+  /** Id of the transaction that created the output. */
   txid: string
+  /** Index of the output in that transaction. */
   vout: number
+  /**
+   * Value of the output in satoshis, as the backend sent it.
+   * {@link EsploraClient.getAddressUtxos} does not validate it: check that it
+   * is a non-negative safe integer before using it.
+   */
   value: number
+  /** Whether the transaction that created the output is confirmed. */
   status: EsploraTxStatus
 }
 
+/**
+ * A transaction input, as esplora reports it.
+ *
+ * @category Transactions
+ */
 export interface EsploraVin {
+  /** Id of the transaction whose output the input spends. */
   txid: string
+  /** Index of that output in its transaction. */
   vout: number
+  /** The output the input spends, or `null` for a coinbase input. */
   prevout: EsploraVout | null
+  /** The input's scriptSig, as hex. */
   scriptsig: string
+  /** The input's scriptSig in assembly form. */
   scriptsig_asm: string
+  /** The input's witness stack, each item as hex, when it has one. */
   witness?: string[]
+  /** Whether this is a coinbase input. */
   is_coinbase: boolean
+  /** The input's sequence number. */
   sequence: number
 }
 
+/**
+ * A transaction output, as esplora reports it.
+ *
+ * @category Transactions
+ */
 export interface EsploraVout {
+  /** The output's scriptPubKey, as hex. */
   scriptpubkey: string
+  /** The output's scriptPubKey in assembly form. */
   scriptpubkey_asm: string
+  /** The scriptPubKey's type, as the backend names it. */
   scriptpubkey_type: string
+  /** The address the scriptPubKey pays to, when the backend gives one. */
   scriptpubkey_address?: string
+  /** Value of the output in satoshis. */
   value: number
 }
 
+/**
+ * A transaction, as esplora reports it.
+ *
+ * @category Transactions
+ */
 export interface EsploraTx {
+  /** Transaction id, as hex. */
   txid: string
+  /** Transaction version. */
   version: number
+  /** The transaction's lock time. */
   locktime: number
+  /** The transaction's inputs, in order. */
   vin: EsploraVin[]
+  /** The transaction's outputs, in order. */
   vout: EsploraVout[]
+  /** Serialized size in bytes. */
   size: number
+  /** Weight in weight units. */
   weight: number
+  /** Fee in satoshis. */
   fee: number
+  /** Whether the transaction is confirmed, and in which block. */
   status: EsploraTxStatus
 }
 
-/** esplora returns `{ "<target_blocks>": <sat/vB> }`, e.g. `{ "1": 12.3, "6": 4.1 }`. */
+/**
+ * Fee-rate estimates by confirmation target: esplora returns
+ * `{ "<target_blocks>": <sat/vB> }`, e.g. `{ "1": 12.3, "6": 4.1 }`.
+ * {@link feeTiersFromEstimates} validates them and sorts them into
+ * {@link FeeRateTier}s.
+ *
+ * @category Fees
+ */
 export type EsploraFeeEstimates = Record<string, number>
 
 /**
  * mempool-qbit retains mempool's field names, but the first three values come
  * from projected blocks 1, 2, and 3. Economy and minimum are policy floors,
  * not confirmation-target estimates.
+ *
+ * @remarks
+ * {@link MempoolQbitClient.getFeeEstimates} maps the first three to targets
+ * 1, 2 and 3; see
+ * [Endpoints and clients](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/endpoints.md).
+ *
+ * @category Fees
  */
 export interface MempoolRecommendedFees {
+  /** Fee rate in sat/vB from projected block 1. */
   fastestFee: number
+  /** Fee rate in sat/vB from projected block 2. */
   halfHourFee: number
+  /** Fee rate in sat/vB from projected block 3. */
   hourFee: number
+  /** A policy floor in sat/vB, not a confirmation-target estimate. */
   economyFee: number
+  /** A policy floor in sat/vB, not a confirmation-target estimate. */
   minimumFee: number
 }
 
+/**
+ * An address's complete history, as `getAddressHistory` returns it, split by
+ * confirmation status.
+ *
+ * @category Addresses
+ */
 export interface AddressHistory {
+  /** Confirmed transactions, in the order the backend listed them. */
   confirmed: EsploraTx[]
+  /** Unconfirmed (mempool) transactions, in the order the backend listed them. */
   mempool: EsploraTx[]
 }
 
 /**
  * Per-call cancellation and time budget. Both cover every dependent request of
  * the call — pagination, retries, backoff, and response-body reads.
+ *
+ * @remarks
+ * See [Resilience](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/resilience.md).
+ *
+ * @category Configuration
  */
 export interface RequestOptions {
   /**
    * Aborting rejects the call with an `aborted` `QbitApiError` and stops further
-   * requests (`unknown_outcome` from `broadcastTx` once its POST may have been sent).
+   * requests; the
+   * [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes) says when
+   * `broadcastTx` rejects with `unknown_outcome` instead. An `aborted` error's
+   * `cause` is the signal's reason; such an `unknown_outcome` carries the
+   * `aborted` error as its `cause`.
    */
   signal?: AbortSignal
   /**
    * Overall budget for the call in ms; exceeding it rejects with a `timeout`
-   * `QbitApiError` (`unknown_outcome` from `broadcastTx` once its POST may have been sent).
+   * `QbitApiError`. The
+   * [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes) says
+   * when `broadcastTx` rejects with `unknown_outcome` instead.
+   * It must be a positive number no greater than 2147483647; any other value
+   * rejects the call with an `http` `QbitApiError` before a request is sent.
    */
   deadlineMs?: number
 }
 
+/**
+ * Options for `getAddressHistory`: the call's cancellation and deadline, and
+ * bounds on its scan.
+ *
+ * @remarks
+ * See [Address history](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/address-history.md).
+ *
+ * @category Addresses
+ */
 export interface AddressHistoryOptions extends RequestOptions {
   /**
    * Maximum history page fetches for the whole call, including the terminal
-   * empty response and a rescan (default 256). The address-stats reads are not
-   * page fetches, nor is `EsploraClient`'s `/txs/mempool` fetch.
+   * empty response and a rescan (default 256 on `EsploraClient`). The
+   * address-stats reads are not page fetches, nor is `EsploraClient`'s
+   * `/txs/mempool` fetch. On `MempoolQbitClient` it defaults to, and can lower
+   * but not raise, the constructor's `maxAddressHistoryPages`. Omitted or
+   * `null`, it takes the default; any other value that is not a positive safe
+   * integer rejects with an `http` `QbitApiError`.
    */
   maxPages?: number
   /**
    * Maximum raw transaction rows accepted for the whole call, a rescan
-   * included, before failing closed (default 6,400).
+   * included, before failing closed (default 6,400). Omitted or `null`, it
+   * takes the default; any other value that is not a positive safe integer
+   * rejects with an `http` `QbitApiError`.
    */
   maxTransactions?: number
 }
 
+/**
+ * Options for `broadcastTx`: the call's cancellation and deadline, and the
+ * transaction id.
+ *
+ * @remarks
+ * See [Broadcasting](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md).
+ *
+ * @category Transactions
+ */
 export interface BroadcastTxOptions extends RequestOptions {
   /**
    * Transaction id (64 hex characters) of `rawTxHex`. Derived from the hex when
-   * omitted; when both are available they must agree.
+   * omitted; when both are available they must agree. A value that is not 64
+   * hex characters, or that disagrees with the hex, rejects the call with a
+   * `TypeError` before anything is sent.
    */
   txid?: string
 }
@@ -135,6 +290,41 @@ export interface BroadcastTxOptions extends RequestOptions {
 // Error taxonomy (user-presentable)
 // ---------------------------------------------------------------------------
 
+/**
+ * What went wrong, as {@link QbitApiError.kind} reports it:
+ *
+ * - `rate_limit`: an HTTP 429 reply the client stopped retrying.
+ * - `payload_too_large`: an HTTP 413 reply.
+ * - `not_found`: an HTTP 404 reply.
+ * - `http`: any other non-2xx reply, a refused redirect, a submission the node
+ *   rejected, an invalid `baseUrl` or numeric constructor option, or an
+ *   invalid `deadlineMs`, `maxPages` or `maxTransactions`. An invalid
+ *   `fetchFn` is `network` instead, and invalid `broadcastTx` and
+ *   `feeTiersFromEstimates` arguments are `TypeError`s.
+ * - `network`: fetch threw (offline, DNS, CORS), or no fetch implementation
+ *   was available.
+ * - `timeout`: an attempt exceeded `timeoutMs`, or the call's `deadlineMs`
+ *   expired.
+ * - `aborted`: the call's or the client's `AbortSignal` fired.
+ * - `parse`: a body was not the expected JSON or text, could not be read, or
+ *   failed the client's validation.
+ * - `pagination_limit`: a history scan exceeded its page or transaction bound.
+ * - `invalid_cursor`: an address-history scan could not be shown complete
+ *   (retry it later), or a `MempoolQbitClient.getAddressTxs` cursor is stale,
+ *   unrelated or unconfirmed.
+ * - `unknown_outcome`: a submission may have reached the node. Resubmitting
+ *   the same hex is harmless; never rebuild the payment with different inputs.
+ *   See
+ *   [Broadcasting](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#recovering-from-an-unknown-outcome).
+ *
+ * An error from another version of this package can carry a kind this version
+ * does not list, so keep a default branch when switching on it.
+ *
+ * @remarks
+ * See [Resilience](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/resilience.md).
+ *
+ * @category Errors
+ */
 export type QbitApiErrorKind =
   | 'rate_limit' // HTTP 429
   | 'payload_too_large' // HTTP 413
@@ -146,17 +336,27 @@ export type QbitApiErrorKind =
   | 'parse' // body was not the expected JSON/text
   | 'pagination_limit' // history scan exceeded its configured page or transaction bound
   | 'invalid_cursor' // an address-history scan could not be shown complete; retry it
-  | 'unknown_outcome' // a submission may have reached the node; check the txid before resubmitting
+  | 'unknown_outcome' // a submission may have reached the node; see docs/broadcasting.md
 
+/**
+ * Optional fields of a new {@link QbitApiError}. Each one given is copied to the
+ * error's property of the same name, except `unredactedCause`.
+ *
+ * @category Errors
+ */
 export interface QbitApiErrorOptions {
+  /** The error's {@link QbitApiError.status}. */
   status?: number
+  /** The error's {@link QbitApiError.url}. */
   url?: string
+  /** The error's {@link QbitApiError.cause}. */
   cause?: unknown
   /**
    * The underlying error before redaction. It is kept off the error object:
    * read it with `QbitApiError.unredactedCause(error)`.
    */
   unredactedCause?: unknown
+  /** The error's {@link QbitApiError.retryAfterMs}. */
   retryAfterMs?: number
   /**
    * Trimmed response body preview, capped at 200 characters. Errors the client
@@ -173,17 +373,66 @@ const unredactedCauses = new WeakMap<object, unknown>()
 /** Brand shared by every copy of this class: `Symbol.for` keys are global across builds and realms. */
 const QBIT_API_ERROR_BRAND = Symbol.for('qbit-js.QbitApiError')
 
+/**
+ * The error the clients and adapters throw for a failed request, a reply they
+ * reject, or an invalid constructor option, `deadlineMs`, `maxPages` or
+ * `maxTransactions`, classified by {@link QbitApiError.kind}. Its `name` is
+ * `'QbitApiError'`.
+ *
+ * Recognize it with {@link QbitApiError.is} rather than `instanceof`, which is
+ * false for an error from another copy of this package (the other build, or
+ * another version).
+ *
+ * @remarks
+ * Errors the client creates redact the base URL from `url`, `message` and
+ * `responseBody`, and attach underlying errors as a redacted `cause`, with the
+ * exceptions {@link QbitApiError.cause} lists; see
+ * [Logging errors](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/logging-and-redaction.md).
+ * The kinds, and which failures are retried, are in
+ * [Resilience](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/resilience.md).
+ *
+ * @category Errors
+ */
 export class QbitApiError extends Error {
+  /**
+   * What went wrong; see {@link QbitApiErrorKind}. An error from another
+   * version of this package can carry a kind this version does not list.
+   */
   readonly kind: QbitApiErrorKind
+  /** HTTP status of the reply the error is about, when there was one. */
   readonly status?: number
+  /**
+   * URL of the request the error is about, when the error names one. Errors
+   * the client creates show the base URL as its origin, followed by `/...` in
+   * place of any path, then the endpoint path, e.g.
+   * `https://host/.../blocks/tip/height`.
+   */
   readonly url?: string
+  /**
+   * The reply's `Retry-After` header in ms, as the client parsed it
+   * (delta-seconds or an HTTP date), on the errors the client builds from a
+   * reply's status, such as `rate_limit`, when the reply carried one.
+   */
   readonly retryAfterMs?: number
   /**
    * The underlying error. Errors the client creates attach a redacted copy,
-   * safe to log: see `QbitApiError.unredactedCause`.
+   * safe to log: see `QbitApiError.unredactedCause`. A JSON `parse` error's
+   * cause is a generic `SyntaxError` instead. Two causes are passed through
+   * unchanged: an `aborted` error's, which is the signal's reason, and a
+   * `QbitApiError`, such as one a custom `fetchFn` threw.
    */
   readonly cause?: unknown
+  /**
+   * Trimmed response body preview, capped at 200 characters. Errors the client
+   * creates redact the base URL from it as they do in `message`, but do not
+   * escape control characters in it.
+   */
   readonly responseBody?: string
+  /**
+   * On an `unknown_outcome` error, the transaction id of the submission, when
+   * known: one was supplied or could be derived from the hex. See
+   * [Recovering from an unknown outcome](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#recovering-from-an-unknown-outcome).
+   */
   readonly txid?: string
 
   /**
@@ -191,7 +440,12 @@ export class QbitApiError extends Error {
    * undefined. Its message, stack and properties can contain the full request
    * URL, base-URL secrets included, so it is kept off the error object, where
    * no logger, error reporter or serializer can reach it. Do not log it where
-   * the base URL is secret.
+   * the base URL is secret. It is only found for an error from this copy of
+   * the package.
+   *
+   * @param error - Any value; an error from this copy of the package that has
+   *   an unredacted cause yields it.
+   * @returns The unredacted underlying error, or undefined.
    */
   static unredactedCause(error: unknown): unknown {
     return typeof error === 'object' && error !== null ? unredactedCauses.get(error) : undefined
@@ -206,6 +460,29 @@ export class QbitApiError extends Error {
    * instead. It identifies the class, not where the error came from: any code
    * can set the brand. An error from another version can carry a `kind` this
    * version does not list, so keep a default branch when switching on it.
+   *
+   * @param value - Any value, typically a caught error.
+   * @returns True when `value` carries the `QbitApiError` brand.
+   *
+   * @example
+   * ```ts
+   * try {
+   *   await client.getAddressBalance(address)
+   * } catch (error) {
+   *   if (!QbitApiError.is(error)) throw error
+   *   switch (error.kind) {
+   *     case 'parse':
+   *       // The backend's reply failed validation; see the Response validation page.
+   *       break
+   *     case 'rate_limit':
+   *       // error.retryAfterMs is the server's Retry-After, when it sent one.
+   *       break
+   *     default:
+   *       // Every other kind, including any a newer version adds.
+   *       throw error
+   *   }
+   * }
+   * ```
    */
   static is(value: unknown): value is QbitApiError {
     return (
@@ -213,6 +490,15 @@ export class QbitApiError extends Error {
     )
   }
 
+  /**
+   * Creates an error of `kind`. A custom `fetchFn` can throw one; how the
+   * client passes it on is described under {@link EsploraClientOptions.fetchFn}.
+   *
+   * @param kind - What went wrong.
+   * @param message - The error message, used as given.
+   * @param options - Optional fields, copied to the properties of the same
+   *   name; `unredactedCause` is kept off the error object.
+   */
   constructor(kind: QbitApiErrorKind, message: string, options: QbitApiErrorOptions = {}) {
     super(message)
     this.name = 'QbitApiError'
@@ -237,11 +523,32 @@ Object.defineProperty(QbitApiError.prototype, QBIT_API_ERROR_BRAND, { value: tru
  * Fetch credential policy, the values of the DOM's `RequestCredentials`.
  * Declared here so the published types compile without the DOM lib, which
  * `@types/node` does not provide this name from.
+ *
+ * @category Configuration
  */
 export type QbitFetchCredentials = 'omit' | 'same-origin' | 'include'
 
+/**
+ * Options for the {@link EsploraClient} and {@link MempoolQbitClient}
+ * constructors. The constructor throws an `http` {@link QbitApiError} for an
+ * invalid `baseUrl` or an out-of-range option instead of storing it.
+ * `timeoutMs`, `retries`, `retryBaseDelayMs` and `maxRetryAfterMs` reject
+ * `null`; only an omitted option takes its default.
+ *
+ * @remarks
+ * See [Configuration](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/configuration.md) and
+ * [Redirects and transport security](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/transport-security.md).
+ *
+ * @category Configuration
+ */
 export interface EsploraClientOptions {
-  /** Base URL for the esplora endpoint, e.g. `https://blockstream.info/testnet/api`. */
+  /**
+   * Base URL for the esplora endpoint, e.g. `https://blockstream.info/testnet/api`.
+   * It must be an absolute `http(s)` URL without whitespace, control or format
+   * characters, backslashes, credentials, a query or a fragment, since
+   * endpoint paths are appended to it; trailing slashes are dropped. A plain
+   * `http` URL also needs a loopback host or `allowInsecureHttp`.
+   */
   baseUrl: string
   /**
    * Accept a plain `http:` baseUrl on a non-loopback host (default false).
@@ -262,29 +569,56 @@ export interface EsploraClientOptions {
    * body to itself: on a submission, its `network` error never proves that
    * nothing was sent, and its response body never triggers the `/tx/push`
    * fallback.
+   *
+   * The client cannot tell whether a submission's POST was sent before such
+   * an error was thrown, so it takes the error at its word. A kind other than
+   * `network`, `timeout` or `aborted` propagates as it is: an `http`,
+   * `not_found`, `payload_too_large` or `rate_limit` then reads as a submission
+   * that was not accepted, and one that matches a `/tx/push` row of the
+   * [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes)
+   * makes `MempoolQbitClient` submit again. A `network` error from this copy
+   * whose original cause is a connection failure before anything was sent is
+   * retried, which re-sends the POST. So throw a `QbitApiError` only when
+   * nothing was sent; once the request may have been sent, return the reply
+   * or throw the underlying error, and let the client classify the failure.
    */
   fetchFn?: typeof fetch
   /** Fetch credential policy (default `omit`). */
   credentials?: QbitFetchCredentials
-  /** Per-request timeout in ms (default 15000). */
+  /**
+   * Per-request timeout in ms (default 15000; an integer from 1 to
+   * 2147483647). It covers each attempt's response headers and its whole body.
+   */
   timeoutMs?: number
   /**
-   * Retry attempts for transient failures — network/timeout/5xx/429 on reads
-   * (default 2). Submissions only repeat attempts that provably never reached
-   * the server; see `broadcastTx`.
+   * Retry attempts after the first (default 2; an integer from 0 to 10).
+   * Reads retry only network errors, attempts that timed out, and HTTP 429,
+   * 500, 502, 503 and 504 replies; every other non-2xx status, 501, 505, 507
+   * and 511 included, fails at once. Submissions repeat only attempts that
+   * provably were not processed (a 429 within `maxRetryAfterMs`, or a
+   * connection failure before anything was sent); see the
+   * [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes).
    */
   retries?: number
-  /** Base backoff in ms; grows exponentially per attempt (default 300). */
+  /**
+   * Base backoff in ms (default 300; a finite number from 0 to 2147483647).
+   * It doubles with each attempt, up to 2147483647 ms. When a reply's status
+   * is what is retried, its `Retry-After`, if accepted, replaces it.
+   */
   retryBaseDelayMs?: number
   /**
    * Longest server-requested `Retry-After` delay the client will sleep before
-   * retrying, in ms (default 30000, at most 2147483647). A longer request is not
-   * slept on: a read's 429/5xx (`rate_limit` / `http`) or a submission's 429
-   * (`rate_limit`) is thrown at once with `retryAfterMs` set. A submission's
-   * 5xx is never retried, so the cap does not apply to it; see `broadcastTx`.
+   * retrying, in ms (default 30000; an integer from 0 to 2147483647). A longer
+   * request is not slept on: a read's 429 (`rate_limit`) or its 500, 502, 503
+   * or 504 (`http`) is thrown at once with `retryAfterMs` set. A submission's
+   * 429 is not re-sent then, and is judged by its body first, as the
+   * [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes) says.
    */
   maxRetryAfterMs?: number
-  /** Extra request headers. UDID/telemetry headers are intentionally unsupported. */
+  /**
+   * Extra request headers, copied when the client is constructed and sent with
+   * every request. UDID/telemetry headers are intentionally unsupported.
+   */
   headers?: Record<string, string>
   /**
    * Sleep function (injectable for tests); defaults to an abortable setTimeout.
@@ -295,8 +629,19 @@ export interface EsploraClientOptions {
   signal?: AbortSignal
 }
 
+/**
+ * Options for the {@link MempoolQbitClient} constructor: those of
+ * {@link EsploraClientOptions}, and a bound on its combined-history requests.
+ *
+ * @category Configuration
+ */
 export interface MempoolQbitClientOptions extends EsploraClientOptions {
-  /** Maximum combined-history requests fetched per call (default 256). */
+  /**
+   * Maximum combined-history requests fetched per call (default 256), by
+   * `getAddressHistory`, `getAddressTxs` and `getAddressMempoolTxs`. Unless it
+   * is omitted or `null`, it must be a positive safe integer, or the
+   * constructor throws an `http` `QbitApiError`.
+   */
   maxAddressHistoryPages?: number
 }
 
@@ -516,6 +861,33 @@ interface InflightRequest {
   controller: AbortController
 }
 
+/**
+ * Typed client for an esplora (electrs) REST backend, at a configurable base
+ * URL.
+ *
+ * Every method takes a final {@link RequestOptions} argument, `{ signal,
+ * deadlineMs }`, that cancels the call or bounds its duration across every
+ * request it makes. Reads are retried on transient failures, and concurrent
+ * identical reads share one request; a submission (`broadcastTx`) is never
+ * re-sent once it may have reached the node. A failed request, or a reply a
+ * method rejects, rejects the call with a {@link QbitApiError}, and so does an
+ * invalid `deadlineMs` (as `http`), before any request is sent.
+ *
+ * The raw endpoint methods (`getAddressStats`, `getAddressUtxos`,
+ * `getAddressTxs`, `getAddressMempoolTxs`, `getTx`, `getTxStatus`,
+ * `getFeeEstimates`) return the backend's JSON without checking its shape or
+ * values. `getAddressBalance`, `getAddressHistory`, `getFeeTiers` and
+ * `getTxHex` validate what they return.
+ *
+ * For a mempool-qbit backend, use {@link MempoolQbitClient}.
+ *
+ * @remarks
+ * See [Endpoints and clients](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/endpoints.md),
+ * [Configuration](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/configuration.md) and
+ * [Resilience](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/resilience.md).
+ *
+ * @category Clients
+ */
 export class EsploraClient {
   /** As configured, without trailing slashes. It can carry secrets: errors show `errorUrl(path)`. */
   protected readonly baseUrl: string
@@ -531,6 +903,27 @@ export class EsploraClient {
   /** In-flight GET de-dup: concurrent identical GETs share one request. */
   private readonly inflight = new Map<string, InflightRequest>()
 
+  /**
+   * Creates a client for the esplora backend at `options.baseUrl`. It sends no
+   * request until a method is called.
+   *
+   * @param options - The backend's base URL, and transport, timeout and retry
+   *   settings.
+   * @throws {@link QbitApiError} `http` when `baseUrl` is missing or not an
+   *   accepted URL, or `timeoutMs`, `retries`, `retryBaseDelayMs` or
+   *   `maxRetryAfterMs` is out of range; `network` when `fetchFn` is not a
+   *   function, or is omitted and the global `fetch` is not one.
+   *
+   * @example
+   * ```ts
+   * import { EsploraClient } from '@qbit-oss/api'
+   *
+   * const client = new EsploraClient({
+   *   baseUrl: 'https://esplora.example/regtest/api',
+   *   timeoutMs: 10_000, // per attempt, headers and body
+   * })
+   * ```
+   */
   constructor(options: EsploraClientOptions) {
     if (!options.baseUrl) {
       throw new QbitApiError('http', 'EsploraClient requires a baseUrl')
@@ -564,10 +957,36 @@ export class EsploraClient {
 
   // --- esplora endpoints -------------------------------------------------
 
+  /**
+   * An address's confirmed and mempool totals, from `GET /address/:address`.
+   * The reply is returned as parsed, without checking its shape or values;
+   * {@link EsploraClient.getAddressBalance} validates them.
+   *
+   * @param address - The address, URL-encoded into the path.
+   * @param options - Cancellation and deadline for the call.
+   * @returns The parsed reply.
+   * @throws {@link QbitApiError} when the request fails (`not_found`,
+   *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
+   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
+   *   reply is not JSON or cannot be read.
+   */
   getAddressStats(address: string, options?: RequestOptions): Promise<EsploraAddressStats> {
     return this.getJson<EsploraAddressStats>(`/address/${encodeURIComponent(address)}`, options)
   }
 
+  /**
+   * An address's unspent outputs, from `GET /address/:address/utxo`. The reply
+   * is returned as parsed, without checking its shape or values: check that
+   * each `value` is a non-negative safe integer before summing them.
+   *
+   * @param address - The address, URL-encoded into the path.
+   * @param options - Cancellation and deadline for the call.
+   * @returns The parsed reply.
+   * @throws {@link QbitApiError} when the request fails (`not_found`,
+   *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
+   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
+   *   reply is not JSON or cannot be read.
+   */
   getAddressUtxos(address: string, options?: RequestOptions): Promise<EsploraUtxo[]> {
     return this.getJson<EsploraUtxo[]>(`/address/${encodeURIComponent(address)}/utxo`, options)
   }
@@ -575,6 +994,22 @@ export class EsploraClient {
   /**
    * Confirmed transaction history for an address, newest first, 25 per page.
    * Pass the last txid of the previous page as `afterTxid` to paginate.
+   *
+   * One request to `GET /address/:address/txs/chain[/:afterTxid]`, whose reply
+   * is returned as parsed, without checking its shape or values. An empty page
+   * does not prove the history complete: electrs answers a cursor it does not
+   * know with `[]`. {@link EsploraClient.getAddressHistory} returns a history
+   * checked against the address stats.
+   *
+   * @param address - The address, URL-encoded into the path.
+   * @param afterTxid - The last txid of the previous page; omit it for the
+   *   first page.
+   * @param options - Cancellation and deadline for the call.
+   * @returns The parsed page.
+   * @throws {@link QbitApiError} when the request fails (`not_found`,
+   *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
+   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
+   *   reply is not JSON or cannot be read.
    */
   getAddressTxs(address: string, afterTxid?: string, options?: RequestOptions): Promise<EsploraTx[]> {
     const suffix = afterTxid ? `/${encodeURIComponent(afterTxid)}` : ''
@@ -585,6 +1020,17 @@ export class EsploraClient {
    * Unconfirmed (mempool) transactions touching an address. electrs lists at
    * most `--rest-default-max-mempool-txs` (default 50) of them, with no way to
    * page further; `getAddressHistory` detects that cap.
+   *
+   * One request to `GET /address/:address/txs/mempool`, whose reply is
+   * returned as parsed, without checking its shape or values.
+   *
+   * @param address - The address, URL-encoded into the path.
+   * @param options - Cancellation and deadline for the call.
+   * @returns The parsed reply.
+   * @throws {@link QbitApiError} when the request fails (`not_found`,
+   *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
+   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
+   *   reply is not JSON or cannot be read.
    */
   getAddressMempoolTxs(address: string, options?: RequestOptions): Promise<EsploraTx[]> {
     return this.getJson<EsploraTx[]>(`/address/${encodeURIComponent(address)}/txs/mempool`, options)
@@ -606,6 +1052,37 @@ export class EsploraClient {
    * with `invalid_cursor`. Stats without a non-negative safe-integer
    * `tx_count` reject with `parse`. `maxPages` and `maxTransactions` cover
    * both scans.
+   *
+   * @remarks
+   * Some causes of `invalid_cursor` last until the backend changes: an address
+   * with more than 50 mempool transactions fails until enough confirm. See
+   * [Address history](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/address-history.md).
+   *
+   * @param address - The address, URL-encoded into the paths.
+   * @param options - Cancellation and deadline for the whole scan, and its
+   *   page and transaction bounds.
+   * @returns The confirmed and mempool transactions.
+   * @throws {@link QbitApiError} `invalid_cursor` when the history cannot be
+   *   shown complete (the stats changed during both scans, the counts differ, a
+   *   txid repeats or a cursor stops advancing); retry it later.
+   *   `pagination_limit` when the scan exceeds `maxPages` or `maxTransactions`.
+   *   `parse` when a reply is not JSON or cannot be read, the stats lack a
+   *   valid `tx_count`, a page is not an array of transactions that each have
+   *   a 64-hex `txid`, a boolean `status.confirmed`, and `vin` and `vout`
+   *   arrays of objects, and spend from or pay to the address, or a page lists
+   *   a transaction under the wrong confirmation status. `http` for an invalid
+   *   `maxPages` or `maxTransactions`. Any kind a
+   *   failed request has (`not_found`, `rate_limit`, `payload_too_large`,
+   *   `http`, `network`, `timeout`, `aborted`).
+   *
+   * @example
+   * ```ts
+   * const controller = new AbortController() // e.g. aborted when the user switches address
+   * const { confirmed, mempool } = await client.getAddressHistory(address, {
+   *   signal: controller.signal,
+   *   deadlineMs: 30_000, // the whole scan, retries and backoff included
+   * })
+   * ```
    */
   getAddressHistory(address: string, options: AddressHistoryOptions = {}): Promise<AddressHistory> {
     return this.runOperation(options, signal => this.scanAddressHistory(address, options, signal))
@@ -681,6 +1158,19 @@ export class EsploraClient {
     return { confirmed: state.confirmed, mempool: state.mempool }
   }
 
+  /**
+   * A transaction, from `GET /tx/:txid`. The reply is returned as parsed,
+   * without checking its shape or values, nor that it is the transaction
+   * requested; {@link EsploraClient.getTxHex} checks the latter.
+   *
+   * @param txid - The transaction id, URL-encoded into the path.
+   * @param options - Cancellation and deadline for the call.
+   * @returns The parsed reply.
+   * @throws {@link QbitApiError} when the request fails (`not_found`,
+   *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
+   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
+   *   reply is not JSON or cannot be read.
+   */
   getTx(txid: string, options?: RequestOptions): Promise<EsploraTx> {
     return this.getJson<EsploraTx>(`/tx/${encodeURIComponent(txid)}`, options)
   }
@@ -694,12 +1184,26 @@ export class EsploraClient {
    * compared case-insensitively. The transaction must be encoded as qbit
    * Core's decoder requires: every count and length in its shortest
    * CompactSize form and at most 0x02000000, and no witness flag when every
-   * witness stack is empty. Anything else, including the empty `200`
-   * reply mempool.qbit.org serves, throws a `parse` `QbitApiError`, so a
-   * backend cannot hand back an empty string or another transaction. Spaces,
-   * tabs and line breaks around the hex are ignored. The txid does not commit
+   * witness stack is empty. Anything else, an empty `200` reply included,
+   * throws a `parse` `QbitApiError`, so a backend cannot hand back an empty
+   * string or another transaction. Spaces, tabs and line breaks around the
+   * hex are ignored. The txid does not commit
    * to witness data, so a reply with altered or stripped witnesses still
    * passes; compare the wtxid if you need them.
+   *
+   * @remarks
+   * See
+   * [Response validation](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/response-validation.md), and
+   * [Endpoints and clients](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/endpoints.md) for the backends.
+   *
+   * @param txid - The transaction id (not the wtxid), URL-encoded into the
+   *   path of `GET /tx/:txid/hex`.
+   * @param options - Cancellation and deadline for the call.
+   * @returns The transaction's hex, in lowercase.
+   * @throws {@link QbitApiError} `parse` when the reply is not that
+   *   transaction's hex, as above, or its body cannot be read; any kind a
+   *   failed request has (`not_found`, `rate_limit`, `payload_too_large`,
+   *   `http`, `network`, `timeout`, `aborted`).
    */
   async getTxHex(txid: string, options?: RequestOptions): Promise<string> {
     const path = `/tx/${encodeURIComponent(txid)}/hex`
@@ -720,14 +1224,55 @@ export class EsploraClient {
     return hex
   }
 
+  /**
+   * Whether a transaction is confirmed, and in which block, from
+   * `GET /tx/:txid/status`. The reply is returned as parsed, without checking
+   * its shape or values.
+   *
+   * @param txid - The transaction id, URL-encoded into the path.
+   * @param options - Cancellation and deadline for the call.
+   * @returns The parsed reply.
+   * @throws {@link QbitApiError} when the request fails (`not_found`,
+   *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
+   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
+   *   reply is not JSON or cannot be read.
+   */
   getTxStatus(txid: string, options?: RequestOptions): Promise<EsploraTxStatus> {
     return this.getJson<EsploraTxStatus>(`/tx/${encodeURIComponent(txid)}/status`, options)
   }
 
+  /**
+   * Fee-rate estimates by confirmation target, from `GET /fee-estimates`. The
+   * reply is returned as parsed, without checking its shape or values: pass it
+   * to {@link feeTiersFromEstimates}, as {@link EsploraClient.getFeeTiers}
+   * does, to validate it. For a mempool-qbit backend, use
+   * {@link MempoolQbitClient}; see
+   * [Endpoints and clients](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/endpoints.md).
+   *
+   * @param options - Cancellation and deadline for the call.
+   * @returns The parsed reply.
+   * @throws {@link QbitApiError} when the request fails (`not_found`,
+   *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
+   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
+   *   reply is not JSON or cannot be read.
+   */
   getFeeEstimates(options?: RequestOptions): Promise<EsploraFeeEstimates> {
     return this.getJson<EsploraFeeEstimates>('/fee-estimates', options)
   }
 
+  /**
+   * Height of the chain tip, from `GET /blocks/tip/height`: the reply, trimmed,
+   * converted with `Number()`. The result must be an integer; it is not
+   * otherwise checked. `Number()` also accepts signed, hex and exponent forms,
+   * and converts an empty reply to 0, which is returned.
+   *
+   * @param options - Cancellation and deadline for the call.
+   * @returns The tip height.
+   * @throws {@link QbitApiError} `parse` when the converted reply is not an
+   *   integer, or its body cannot be read; any kind a failed request has
+   *   (`not_found`, `rate_limit`, `payload_too_large`, `http`, `network`,
+   *   `timeout`, `aborted`).
+   */
   async getTipHeight(options?: RequestOptions): Promise<number> {
     const text = await this.getText('/blocks/tip/height', options)
     const height = Number(text.trim())
@@ -740,44 +1285,72 @@ export class EsploraClient {
     return height
   }
 
+  /**
+   * Hash of the chain tip's block, from `GET /blocks/tip/hash`: the reply,
+   * trimmed. It is not checked to be a block hash.
+   *
+   * @param options - Cancellation and deadline for the call.
+   * @returns The trimmed reply.
+   * @throws {@link QbitApiError} `parse` when the body cannot be read; any kind
+   *   a failed request has (`not_found`, `rate_limit`, `payload_too_large`,
+   *   `http`, `network`, `timeout`, `aborted`).
+   */
   async getTipHash(options?: RequestOptions): Promise<string> {
     return (await this.getText('/blocks/tip/hash', options)).trim()
   }
 
   /**
-   * Broadcast a raw transaction hex. Resolves with the txid once the node has
-   * the transaction, including when it reports the transaction as already in
-   * its mempool or chain. A submission is never re-sent after an attempt that
-   * may have reached the node: a timeout, an ambiguous network error, or a
-   * 5xx reply whose body carries no verdict from the node rejects with
-   * `unknown_outcome` carrying the txid so the caller can check
-   * `getTxStatus(txid)` before resubmitting the same hex. Only 429 replies and
-   * connection failures that happened before anything was sent are retried; a
-   * 429 whose `Retry-After` exceeds `maxRetryAfterMs` is not waited on and
-   * rejects at once as `rate_limit` with `retryAfterMs`, without a re-send.
-   * A redirect is never followed. A refused one (a 3xx, a browser opaque
-   * redirect, or a reply from a redirect the runtime followed) rejects with
-   * `unknown_outcome` too, with the `http` refusal as `cause`: the POST
-   * reached the backend, which may have accepted it before redirecting, and
-   * a runtime that followed the redirect may have re-sent it.
-   * Coded node rejections fail closed as `http` errors whatever the HTTP
-   * status, since qbit Core's own JSON-RPC server answers 500 for every RPC
-   * error and a backend or proxy may relay that status. When no txid
-   * can be derived from the hex and none is supplied, a 2xx reply resolves only
-   * if its body is itself a 64-hex txid; any other 2xx body is `unknown_outcome`.
-   * Hex `txidFromRawTx` cannot read, including encodings qbit Core refuses to
-   * decode, is still sent as it is, and the node gives the verdict.
-   * A malformed `rawTxHex` argument or an `options.txid` that is not a 64-hex
-   * transaction id matching the hex throws a `TypeError` before anything is sent.
+   * Broadcast a signed transaction with `POST /tx`. Resolves with its txid
+   * only when a 2xx reply echoes the txid, or a non-2xx reply reports the
+   * transaction already known and the txid is known (derived from the hex or
+   * passed as `options.txid`). The POST is never re-sent once it may have
+   * reached the node; when the outcome cannot be told, the call rejects with
+   * `unknown_outcome`.
    *
-   * `options.signal` / `options.deadlineMs` bound the whole call. An abort or
-   * expired deadline before the POST is sent rejects with `aborted` /
-   * `timeout`; once the POST may have been sent (in flight or while its reply
-   * is read) it rejects with `unknown_outcome`, with that error as `cause`.
-   * A reply whose body stalls past `timeoutMs` or cannot be read is
-   * `unknown_outcome` too. A 429 reply is the exception throughout: it proves
-   * nothing was submitted, so one whose body is lost is retried (then
-   * `rate_limit`), and an abort or deadline during its body is definite.
+   * @remarks
+   * Which replies resolve, reject or are `unknown_outcome` is in the
+   * [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes); see also
+   * [Recovering from an unknown outcome](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#recovering-from-an-unknown-outcome)
+   * and [The txid](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#the-txid).
+   *
+   * @param rawTxHex - The signed transaction, as hex, sent as the request body
+   *   of `POST /tx`.
+   * @param options - Cancellation and deadline for the call, and the txid.
+   * @returns The txid in lowercase: the one supplied or derived from the hex,
+   *   or, when there is neither, the 64-hex txid the reply carried.
+   * @throws `TypeError` (as a rejection) when `rawTxHex` is not a string, or
+   *   `options.txid` is not a 64-hex transaction id matching the hex.
+   * @throws {@link QbitApiError} `unknown_outcome` when the submission may have
+   *   reached the node. `http`, `not_found`, `payload_too_large` or
+   *   `rate_limit` when this submission was not accepted; for a resubmission,
+   *   that proves nothing about the original. `network` for a connection
+   *   failure before anything was sent, once retries run out. `aborted` or
+   *   `timeout` when the call was cancelled or its deadline expired before the
+   *   POST was sent or re-sent, or while a 429 body was read. A custom
+   *   `fetchFn`'s own `QbitApiError` propagates as it is, even if the POST was
+   *   already sent, unless its kind is `network`, `timeout` or `aborted`, so
+   *   its `http`, `not_found`, `payload_too_large` or `rate_limit` proves that
+   *   this submission was not accepted only if that `fetchFn` throws one only
+   *   when nothing was sent; see {@link EsploraClientOptions.fetchFn}.
+   *
+   * @example
+   * ```ts
+   * try {
+   *   const txid = await client.broadcastTx(rawTxHex)
+   * } catch (error) {
+   *   if (QbitApiError.is(error) && error.kind === 'unknown_outcome') {
+   *     // The node may already have it, and lookups such as getTx(txid) cannot
+   *     // rule that out. Resubmitting the same rawTxHex is harmless (error.txid
+   *     // is set unless no txid was supplied and none could be derived from the
+   *     // hex). Never rebuild the payment with different inputs: that can
+   *     // double-spend or pay twice.
+   *   } else {
+   *     // This submission was not accepted, provided that any custom fetchFn
+   *     // throws a QbitApiError only when nothing was sent.
+   *     throw error
+   *   }
+   * }
+   * ```
    */
   async broadcastTx(rawTxHex: string, options?: BroadcastTxOptions): Promise<string> {
     return this.submitTx('/tx', rawTxHex, resolveBroadcastTxid(rawTxHex, options), options)
@@ -785,12 +1358,54 @@ export class EsploraClient {
 
   // --- adapters (clean, wallet-friendly shapes) --------------------------
 
-  /** Confirmed + mempool balance for an address, in satoshis. */
+  /**
+   * Confirmed + mempool balance for an address, in satoshis.
+   *
+   * Reads the address stats with {@link EsploraClient.getAddressStats} and
+   * validates them with {@link addressBalanceFromStats}.
+   *
+   * @remarks
+   * On electrs, a `parse` error for a negative total can be transient right
+   * after a block; retry it on the next poll. See
+   * [Response validation](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/response-validation.md).
+   *
+   * @param address - The address, URL-encoded into the path of
+   *   `GET /address/:address`.
+   * @param options - Cancellation and deadline for the call.
+   * @returns The confirmed, mempool and total balance.
+   * @throws {@link QbitApiError} `parse` when the reply is not JSON, cannot be
+   *   read, or fails {@link addressBalanceFromStats}'s checks; any kind a failed
+   *   request has (`not_found`, `rate_limit`, `payload_too_large`, `http`,
+   *   `network`, `timeout`, `aborted`).
+   *
+   * @example
+   * ```ts
+   * const { confirmedSats, mempoolSats, totalSats } = await client.getAddressBalance(address)
+   * // mempoolSats can be negative while mempool transactions spend confirmed outputs.
+   * ```
+   */
   async getAddressBalance(address: string, options?: RequestOptions): Promise<AddressBalance> {
     return addressBalanceFromStats(await this.getAddressStats(address, options))
   }
 
-  /** Fee-rate tiers (sat/vB), ascending by confirmation target. */
+  /**
+   * Fee-rate tiers (sat/vB), ascending by confirmation target.
+   *
+   * Reads the estimates with `getFeeEstimates` and validates them with
+   * {@link feeTiersFromEstimates} under its default ceiling,
+   * {@link DEFAULT_MAX_FEE_RATE_SAT_VB}. For a lower ceiling, call
+   * `feeTiersFromEstimates(await client.getFeeEstimates(), { maxFeeRate })`.
+   *
+   * @remarks
+   * See [Response validation](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/response-validation.md).
+   *
+   * @param options - Cancellation and deadline for the call.
+   * @returns The tiers; `[]` when the backend returned no estimates.
+   * @throws {@link QbitApiError} `parse` when the reply is not JSON, cannot be
+   *   read, or fails {@link feeTiersFromEstimates}'s checks; any kind a failed
+   *   request has (`not_found`, `rate_limit`, `payload_too_large`, `http`,
+   *   `network`, `timeout`, `aborted`).
+   */
   async getFeeTiers(options?: RequestOptions): Promise<FeeRateTier[]> {
     return feeTiersFromEstimates(await this.getFeeEstimates(options))
   }
@@ -841,6 +1456,10 @@ export class EsploraClient {
     })
   }
 
+  /**
+   * GET the body as text. It joins an identical GET already in flight, and a
+   * non-2xx reply throws the same errors as `getJson`.
+   */
   protected getText(path: string, options?: RequestOptions): Promise<string> {
     return this.runOperation(options, async signal => {
       const response = await this.request(path, { method: 'GET', dedup: true }, { signal })
@@ -853,11 +1472,11 @@ export class EsploraClient {
 
   /**
    * POST a transaction submission under the submission retry policy and
-   * classify the node's reply. `txid` identifies the submission in
-   * `unknown_outcome` errors and is the result for already-known replies.
-   * An abort or deadline once the POST may have been sent, including while
-   * the reply body is read, is an `unknown_outcome` too, unless the reply is
-   * a 429.
+   * classify the reply as the outcome table in `docs/broadcasting.md` says.
+   * `txid` identifies the submission in `unknown_outcome` errors and, when
+   * known, is the result for already-known non-2xx replies. An abort or
+   * deadline once the POST may have been sent, including while the reply body
+   * is read, is an `unknown_outcome` too, unless the reply is a 429.
    */
   protected submitTx(path: string, body: string, txid: string | undefined, options?: RequestOptions): Promise<string> {
     return this.runOperation(options, async signal => {
@@ -928,6 +1547,16 @@ export class EsploraClient {
     })
   }
 
+  /**
+   * Send a request to `path` under the client's retry policy (a GET or HEAD is
+   * a read; any other method is a submission) and resolve with the reply,
+   * fully buffered, whatever its status; a redirect is refused with an error
+   * instead. With `dedup`, it joins a request to
+   * the same URL already in flight, whatever its method. Where the runtime has
+   * no usable `Response` constructor, the reply is a buffered stand-in with
+   * the status fields, `headers`, `url`, `text()`, `json()` and `clone()`, and
+   * `body: null`.
+   */
   protected request(
     path: string,
     init: { method: string; body?: string; headers?: Record<string, string>; dedup: boolean },
@@ -989,12 +1618,15 @@ export class EsploraClient {
   /**
    * Idempotent requests (GET/HEAD) retry on network errors, timeouts, and
    * transient statuses. Any other method is a submission: an attempt is only
-   * repeated when it provably never reached the server (429, or a connection
-   * failure before anything was sent), and an attempt that may have been
-   * processed fails with `unknown_outcome` instead of being re-sent; that
-   * includes an abort or deadline that fires while a submission is in flight,
-   * and a refused redirect. `txid` labels that error when the submission is a
-   * transaction.
+   * repeated when it provably was not processed (a 429 within the retry and
+   * `Retry-After` limits, or a connection failure before anything was sent;
+   * see `docs/broadcasting.md`). Any other attempt is never re-sent: a reply
+   * that arrives whole is returned for the caller to judge, and one that may
+   * have been processed without such a reply (a transport failure, an abort or
+   * deadline in flight unless the reply is a 429, or a refused redirect) fails
+   * with `unknown_outcome`. `txid` labels that error when the submission is a
+   * transaction. A custom fetchFn's own QbitApiError is taken at its word,
+   * whether or not the POST was sent; see `EsploraClientOptions.fetchFn`.
    */
   private async requestWithRetry(
     url: string,
@@ -1006,8 +1638,8 @@ export class EsploraClient {
     const errorUrl = redactBaseUrl(url, this.baseUrl)
     let lastError: QbitApiError | undefined
     for (let attempt = 0; attempt <= this.retries; attempt += 1) {
-      // Every earlier attempt was provably unsent (or a read), so an abort or
-      // deadline before this one starts is a definite `aborted` / `timeout`.
+      // Every earlier attempt was provably unprocessed (or a read), so an abort
+      // or deadline before this one starts is a definite `aborted` / `timeout`.
       if (signal.aborted) throw abortErrorFor(signal)
       const reply: { status?: number; retryAfterMs?: number; refusedRedirect?: true } = {}
       let response: Response
@@ -1055,10 +1687,10 @@ export class EsploraClient {
             cause: lastError,
           })
         }
-        // A read whose transient reply (429/5xx) fails mid-body is retried like
-        // the status itself, honouring Retry-After within the cap; the final
-        // attempt's failure surfaces as before. A stalled body is a timeout and
-        // takes the timeout path below.
+        // A read whose transient reply (429, 500, 502, 503 or 504) fails
+        // mid-body is retried like the status itself, honouring Retry-After
+        // within the cap; the final attempt's failure surfaces as before. A
+        // stalled body is a timeout and takes the timeout path below.
         if (
           idempotent &&
           lastError.kind === 'parse' &&
@@ -1073,6 +1705,11 @@ export class EsploraClient {
           }
           throw lastError
         }
+        // On a submission, any other kind here is a custom fetchFn's own
+        // QbitApiError, passed on by its kind although the POST may already
+        // have been sent: its `http`, `not_found` or `rate_limit` proves the
+        // submission was not accepted only if the fetchFn throws one only when
+        // nothing was sent (see EsploraClientOptions.fetchFn).
         if (lastError.kind !== 'network' && lastError.kind !== 'timeout' && lastError.kind !== 'aborted') {
           throw lastError
         }
@@ -1103,7 +1740,8 @@ export class EsploraClient {
       if (retryable && attempt < this.retries) {
         const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'))
         // Never park the request (and every de-duplicated waiter) on an
-        // unbounded server-chosen delay: hand the error, with retryAfterMs, to the caller.
+        // unbounded server-chosen delay: return the reply. A read throws it with
+        // retryAfterMs; a submission judges its body first (submitTx).
         if (retryAfterMs !== undefined && retryAfterMs > this.maxRetryAfterMs) return response
         // Never wait on cleanup: a body whose cancel never settles must not
         // hold the call past an abort or deadline.
@@ -1242,10 +1880,34 @@ const MEMPOOL_QBIT_ADDRESS_PAGE_SIZE = 10
 /**
  * Adapter for mempool-qbit's public Node API (`/api/v1` prefix). Most routes
  * match Esplora, but address pagination and fees use mempool-style shapes.
+ *
+ * It takes the same options as {@link EsploraClient}, plus
+ * `maxAddressHistoryPages`. Its address-history methods page through the
+ * combined `/address/:address/txs` route instead of `/txs/chain` and
+ * `/txs/mempool`; `getFeeEstimates` maps
+ * `/fees/recommended` to targets 1, 2 and 3; and `broadcastTx` falls back to
+ * the `/tx/push` form route when `/tx` reports that it did not submit the
+ * transaction.
+ *
+ * @remarks
+ * See [Endpoints and clients](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/endpoints.md).
+ *
+ * @category Clients
  */
 export class MempoolQbitClient extends EsploraClient {
   private readonly maxAddressHistoryPages: number
 
+  /**
+   * Creates a client for the mempool-qbit backend at `options.baseUrl`. It
+   * sends no request until a method is called.
+   *
+   * @param options - The {@link EsploraClient} options, and
+   *   `maxAddressHistoryPages`.
+   * @throws {@link QbitApiError} the errors of the {@link EsploraClient}
+   *   constructor, or `http` when `maxAddressHistoryPages` (omitted or `null`
+   *   takes the default) is not a positive
+   *   safe integer.
+   */
   constructor(options: MempoolQbitClientOptions) {
     super(options)
     const maxAddressHistoryPages = options.maxAddressHistoryPages ?? DEFAULT_MAX_ADDRESS_HISTORY_PAGES
@@ -1266,6 +1928,20 @@ export class MempoolQbitClient extends EsploraClient {
    * confirmed rows that follow, so an address whose mempool rows fill whole
    * pages (50 each by default) rejects with `invalid_cursor` while it has
    * confirmed history, rather than returning none.
+   *
+   * @remarks
+   * qbit-electrs answers a cursor it finds nowhere with `422`, which rejects
+   * as an `http` `QbitApiError`. See
+   * [Address history](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/address-history.md).
+   *
+   * @param address - The address, URL-encoded into the paths.
+   * @param options - Cancellation and deadline for the whole traversal, and
+   *   its page and transaction bounds; `maxPages` cannot exceed the
+   *   constructor's `maxAddressHistoryPages`.
+   * @returns The confirmed and mempool transactions.
+   * @throws {@link QbitApiError} as {@link EsploraClient.getAddressHistory}
+   *   does, except that no page is checked for a confirmation status, since
+   *   the combined route lists both.
    */
   override getAddressHistory(address: string, options: AddressHistoryOptions = {}): Promise<AddressHistory> {
     return this.runOperation(options, signal => this.scanCombinedAddressHistory(address, options, signal))
@@ -1342,6 +2018,31 @@ export class MempoolQbitClient extends EsploraClient {
    * instead of the confirmed rows that follow, so the call rejects with
    * `invalid_cursor` if the stats count more confirmed transactions than it
    * found.
+   *
+   * Each call scans from the first page of the combined route, and returns
+   * at most 25 confirmed transactions, those after `afterTxid` when it is
+   * given. The rows are not validated: only those whose `status.confirmed` is
+   * `true` are kept, and their `txid`s are compared with the cursor and with
+   * each other. A reply that is not an array of objects can reject with a
+   * `TypeError` instead of a `QbitApiError`.
+   *
+   * @remarks
+   * See [Endpoints and clients](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/endpoints.md).
+   *
+   * @param address - The address, URL-encoded into the path.
+   * @param afterTxid - The last txid of the previous page, which must be a
+   *   confirmed transaction in the address's history; omit it for the first
+   *   page.
+   * @param options - Cancellation and deadline for the call.
+   * @returns Up to 25 confirmed transactions.
+   * @throws {@link QbitApiError} `invalid_cursor` when `afterTxid` is stale,
+   *   unrelated or unconfirmed, a cursor stops advancing, or the stats check
+   *   above fails. `pagination_limit` when the scan needs more than
+   *   `maxAddressHistoryPages` requests. `parse` when a reply is not JSON or
+   *   cannot be read, or the stats lack a valid `tx_count`. Any kind a failed
+   *   request has (`not_found`, `rate_limit`, `payload_too_large`, `http`,
+   *   `network`, `timeout`, `aborted`); qbit-electrs answers a cursor it finds
+   *   nowhere with `422` (`http`).
    */
   override getAddressTxs(address: string, afterTxid?: string, options?: RequestOptions): Promise<EsploraTx[]> {
     return this.runOperation(options, signal => this.scanAddressTxs(address, afterTxid, signal))
@@ -1439,6 +2140,21 @@ export class MempoolQbitClient extends EsploraClient {
   /**
    * mempool-qbit does not expose `/txs/mempool`. Page through the combined
    * history until confirmed entries begin, collecting the leading mempool set.
+   *
+   * The rows are not validated: those whose `status.confirmed` is not `true`
+   * are kept, deduplicated by `txid`, and a page holding a confirmed row, or
+   * an empty or short page, is taken as the end. A reply that is not an array
+   * of objects can reject with a `TypeError` instead of a `QbitApiError`. Use
+   * `getAddressHistory` for a history checked against the address stats.
+   *
+   * @param address - The address, URL-encoded into the path.
+   * @param options - Cancellation and deadline for the call.
+   * @returns The address's unconfirmed transactions.
+   * @throws {@link QbitApiError} `pagination_limit` when the scan needs more
+   *   than `maxAddressHistoryPages` requests. `invalid_cursor` when a cursor
+   *   stops advancing. `parse` when a reply is not JSON or cannot be read. Any
+   *   kind a failed request has (`not_found`, `rate_limit`,
+   *   `payload_too_large`, `http`, `network`, `timeout`, `aborted`).
    */
   override getAddressMempoolTxs(address: string, options?: RequestOptions): Promise<EsploraTx[]> {
     return this.runOperation(options, signal => this.scanAddressMempoolTxs(address, signal))
@@ -1480,10 +2196,37 @@ export class MempoolQbitClient extends EsploraClient {
     return mempoolTxs
   }
 
+  /**
+   * mempool-qbit's named fee rates, from `GET /fees/recommended`, including
+   * the `economyFee` and `minimumFee` policy floors. The reply is returned as
+   * parsed, without checking its shape or values.
+   *
+   * @param options - Cancellation and deadline for the call.
+   * @returns The parsed reply.
+   * @throws {@link QbitApiError} when the request fails (`not_found`,
+   *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
+   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
+   *   reply is not JSON or cannot be read.
+   */
   getMempoolRecommendedFees(options?: RequestOptions): Promise<MempoolRecommendedFees> {
     return this.getJson<MempoolRecommendedFees>('/fees/recommended', options)
   }
 
+  /**
+   * Fee-rate estimates for confirmation targets 1, 2 and 3, from mempool-qbit's
+   * projected blocks: {@link MempoolQbitClient.getMempoolRecommendedFees}
+   * mapped by {@link feeEstimatesFromMempoolRecommendedFees}, which checks
+   * the three rates it uses. The fee-rate ceiling is applied by
+   * {@link feeTiersFromEstimates}, as `getFeeTiers` does.
+   *
+   * @param options - Cancellation and deadline for the call.
+   * @returns `{ "1": fastestFee, "2": halfHourFee, "3": hourFee }`.
+   * @throws {@link QbitApiError} `parse` when the reply is not JSON, cannot be
+   *   read, or is not an object whose `fastestFee`, `halfHourFee` and `hourFee`
+   *   are finite numbers above 0; any kind a failed request has (`not_found`,
+   *   `rate_limit`, `payload_too_large`, `http`, `network`, `timeout`,
+   *   `aborted`).
+   */
   override async getFeeEstimates(options?: RequestOptions): Promise<EsploraFeeEstimates> {
     return feeEstimatesFromMempoolRecommendedFees(await this.getMempoolRecommendedFees(options))
   }
@@ -1491,13 +2234,29 @@ export class MempoolQbitClient extends EsploraClient {
   /**
    * Broadcast via `/tx`, falling back to the `/tx/push` form route only when
    * `/tx` reported that it did not submit the transaction. The fallback is a
-   * second submission, so it follows the same policy: an already-known reply
-   * resolves with the txid and an uncertain attempt rejects with
-   * `unknown_outcome`. An uncertain `/tx` attempt never falls back.
+   * second submission; its result is the call's, judged as
+   * `EsploraClient.broadcastTx` judges a reply. One signal and deadline cover
+   * both requests.
    *
-   * One signal and deadline cover both requests, with the same abort rules as
-   * `EsploraClient.broadcastTx`. An abort or expired deadline during `/tx`
-   * never sends the `/tx/push` fallback.
+   * @remarks
+   * The `/tx/push` rows of the
+   * [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes)
+   * say when the fallback is sent. An uncertain `/tx` attempt never falls back,
+   * and neither does an abort or expired deadline during `/tx`. The exception
+   * is a `QbitApiError` that a custom `fetchFn` throws, which is judged by its
+   * kind, status and body alone: a `not_found` 404, an `http` 405 or 501, or,
+   * from this copy of the package, an `http` 400 whose `responseBody` is the
+   * generic failure falls back even when the `fetchFn` threw it after the
+   * `/tx` POST was sent. The same hex can then reach the backend twice, which
+   * is harmless, but a rejection of the fallback proves nothing about `/tx`.
+   *
+   * @param rawTxHex - The signed transaction, as hex: the body of `POST /tx`,
+   *   and sent as `txHash=<rawTxHex>` to the `/tx/push` fallback.
+   * @param options - Cancellation and deadline for both requests, and the txid.
+   * @returns The txid, as {@link EsploraClient.broadcastTx} returns it.
+   * @throws `TypeError` as {@link EsploraClient.broadcastTx} does.
+   * @throws {@link QbitApiError} as {@link EsploraClient.broadcastTx} does, for
+   *   `/tx`, or for the fallback when it is sent.
    */
   override async broadcastTx(rawTxHex: string, options?: BroadcastTxOptions): Promise<string> {
     const txid = resolveBroadcastTxid(rawTxHex, options)
@@ -1537,10 +2296,22 @@ export class MempoolQbitClient extends EsploraClient {
 // Adapters & helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * An address's balance in satoshis, from {@link addressBalanceFromStats}.
+ *
+ * @category Addresses
+ */
 export interface AddressBalance {
+  /** The address, as the stats reply named it. */
   address: string
+  /** Confirmed balance: confirmed funded minus spent sums. Never negative. */
   confirmedSats: number
+  /**
+   * Net change from mempool transactions: mempool funded minus spent sums.
+   * It can be negative while mempool transactions spend confirmed outputs.
+   */
   mempoolSats: number
+  /** `confirmedSats + mempoolSats`, a non-negative safe integer. */
   totalSats: number
 }
 
@@ -1570,6 +2341,15 @@ export interface AddressBalance {
  * does not deduplicate mempool stats against the chain, so a spend that was
  * just confirmed can count in both `chain_stats` and `mempool_stats` for a
  * moment. Retry it on the next poll.
+ *
+ * @remarks
+ * See [Response validation](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/response-validation.md).
+ *
+ * @param stats - Address stats, such as {@link EsploraClient.getAddressStats}
+ *   returns; any value is accepted and checked.
+ * @returns The confirmed, mempool and total balance.
+ * @throws {@link QbitApiError} `parse` when `stats` fails the checks above.
+ * @category Addresses
  */
 export function addressBalanceFromStats(stats: EsploraAddressStats): AddressBalance {
   if (
@@ -1601,6 +2381,8 @@ export function addressBalanceFromStats(stats: EsploraAddressStats): AddressBala
  * Default `maxFeeRate` for {@link feeTiersFromEstimates}, in sat/vB. qbit Core's
  * `sendrawtransaction` refuses fee rates above `DEFAULT_MAX_RAW_TX_FEE_RATE{COIN / 10}`
  * per kvB by default (`src/node/transaction.h:27`), which is 10,000 sat/vB.
+ *
+ * @category Fees
  */
 export const DEFAULT_MAX_FEE_RATE_SAT_VB = 10_000
 
@@ -1625,6 +2407,11 @@ function hasSafeTxoSums(value: unknown): boolean {
   return isRecord(value) && isSafeSatAmount(value['funded_txo_sum']) && isSafeSatAmount(value['spent_txo_sum'])
 }
 
+/**
+ * A fee rate for one confirmation target, from {@link feeTiersFromEstimates}.
+ *
+ * @category Fees
+ */
 export interface FeeRateTier {
   /** Confirmation target in blocks. */
   target: number
@@ -1638,6 +2425,13 @@ export interface FeeRateTier {
  * Throws a `parse` {@link QbitApiError} unless `fees` is an object whose
  * `fastestFee`, `halfHourFee` and `hourFee` are finite numbers above 0. The
  * fee-rate ceiling is applied downstream by {@link feeTiersFromEstimates}.
+ *
+ * @param fees - mempool-qbit's recommended fees, such as
+ *   {@link MempoolQbitClient.getMempoolRecommendedFees} returns; any value is
+ *   accepted and checked.
+ * @returns `{ "1": fastestFee, "2": halfHourFee, "3": hourFee }`.
+ * @throws {@link QbitApiError} `parse` when `fees` fails the checks above.
+ * @category Fees
  */
 export function feeEstimatesFromMempoolRecommendedFees(fees: MempoolRecommendedFees): EsploraFeeEstimates {
   if (!isRecord(fees)) {
@@ -1669,7 +2463,22 @@ export function feeEstimatesFromMempoolRecommendedFees(fees: MempoolRecommendedF
  * cap the total fee before signing, or both.
  * Previously, malformed entries were silently dropped and no ceiling applied.
  *
+ * @remarks
+ * See [Response validation](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/response-validation.md).
+ *
+ * @param estimates - Fee estimates, such as `getFeeEstimates` returns; any
+ *   value is accepted and checked.
+ * @param options - `maxFeeRate`, the highest accepted rate in sat/vB.
+ * @returns The tiers, ascending by `target`.
  * @throws TypeError when `options.maxFeeRate` is not a finite number above 0.
+ * @throws {@link QbitApiError} `parse` when `estimates` fails the checks above.
+ *
+ * @example
+ * ```ts
+ * // 500 sat/vB leaves room for fee spikes and is 1/20 of the default worst case.
+ * const tiers = feeTiersFromEstimates(await client.getFeeEstimates(), { maxFeeRate: 500 })
+ * ```
+ * @category Fees
  */
 export function feeTiersFromEstimates(
   estimates: EsploraFeeEstimates,
@@ -1711,6 +2520,17 @@ export function feeTiersFromEstimates(
  * section included) in a longer CompactSize form than its value needs or above
  * 0x02000000 (Core's MAX_SIZE), or a witness flag with every witness stack
  * empty.
+ *
+ * Only the structure is read: scripts, values and signatures are not checked.
+ *
+ * @remarks
+ * See [Broadcasting](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md) and
+ * [Response validation](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/response-validation.md).
+ *
+ * @param rawTxHex - The transaction as hex, in either case.
+ * @returns The txid as 64 lowercase hex characters.
+ * @throws {@link QbitApiError} `parse` when the hex is not such a transaction.
+ * @category Transactions
  */
 export function txidFromRawTx(rawTxHex: string): string {
   const txid = tryTxidFromRawTx(rawTxHex)
@@ -2161,7 +2981,7 @@ function unknownOutcomeError(
   const subject = txid === undefined ? 'the transaction' : `txid ${txid}`
   return new QbitApiError(
     'unknown_outcome',
-    `transaction submission outcome unknown (${reason}); ${subject} may have been accepted, check its status before resubmitting`,
+    `transaction submission outcome unknown (${reason}); ${subject} may have been accepted; resubmit the same hex, and never rebuild the payment with different inputs`,
     { ...options, url, ...(txid === undefined ? {} : { txid }) }
   )
 }
@@ -2235,7 +3055,8 @@ function isAlreadyKnownBroadcastReply(reply: BroadcastReply): boolean {
  * as well as a rejection or an auth failure, and `sendrawtransaction` itself
  * never raises -32602. qbit-electrs answers `Connection error` once it cannot
  * reconnect to the daemon (src/daemon.rs). Codes proving the backend never
- * connected (`ECONNREFUSED`, `ENOTFOUND`, `EAI_AGAIN`) stay definite failures.
+ * connected (`PRE_CONNECTION_ERROR_CODES`: `ECONNREFUSED`, `ENOTFOUND`,
+ * `EAI_AGAIN`, `UND_ERR_CONNECT_TIMEOUT`) stay definite failures.
  */
 function isRelayedTransportFailure(reply: BroadcastReply): boolean {
   if (typeof reply.code === 'string') return !PRE_CONNECTION_ERROR_CODES.has(reply.code)
@@ -2277,11 +3098,13 @@ const DEFINITE_REJECTION_REPLY =
   /^(?:bad txns |bad witness nonstandard|bad cb length|txn mempool conflict|tx decode failed|tx size\b|tx output not p2mr|scriptsig (?:size|not pushonly)|scriptpubkey\b|bare multisig|datacarrier|dust\b|non (?:bip68 )?final|(?:mempool |block |(?:non )?mandatory )script verify flag|min relay fee not met|mempool min fee not met|insufficient fee|max feerate exceeded|mempool full|too long mempool chain|truc violation|missing ephemeral spends|bip125 replacement disallowed|too many potential replacements|replacement adds unconfirmed|missing inputs|no mempool\b)/
 
 /**
- * A reply in which the node itself refused or rejected this submission, so
- * the transaction was not accepted whatever the HTTP status says: a node
- * verdict code, a relayed code proving the backend never connected to the
- * node, or, when the body carries no code at all, one of Core's reject
- * reasons. Already-known replies (-27) are resolved before this is consulted.
+ * A reply in which the node itself refused or rejected this submission: a
+ * node verdict code, a relayed code proving the backend never connected to
+ * the node, or, when the body carries no code at all, one of Core's reject
+ * reasons. It is consulted only for a 5xx other than 501, 505 and 511, where
+ * a match makes the reply a definite `http` error instead of an
+ * `unknown_outcome`; see the outcome table in `docs/broadcasting.md`.
+ * Already-known replies are resolved before this is consulted.
  */
 function isDefiniteNodeRejection(reply: BroadcastReply): boolean {
   if (typeof reply.code === 'number') return isNodeVerdictCode(reply.code)
@@ -2296,6 +3119,9 @@ function isDefiniteNodeRejection(reply: BroadcastReply): boolean {
  */
 function shouldRetryBroadcastViaTxPush(error: unknown): boolean {
   if (!QbitApiError.is(error)) return false
+  // A custom fetchFn's own QbitApiError is judged the same way, although it may
+  // have been thrown after the `/tx` POST was sent; the fallback then sends the
+  // same hex a second time, which is harmless.
   if (
     (error.kind === 'not_found' && error.status === 404) ||
     (error.kind === 'http' && (error.status === 405 || error.status === 501))

@@ -94,6 +94,17 @@ Prettier skips what `.gitignore` lists and what `.prettierignore` excludes:
 - `pnpm-lock.yaml` and every `package.json`, whose formatting npm and pnpm own;
 - every `*.yml` and `*.yaml` file, including the workflows.
 
+## API reference
+
+`corepack pnpm docs:api` builds the API reference for both packages with
+[TypeDoc](https://typedoc.org), from the TSDoc comments in each package's
+`src/index.ts`, into `api-docs/` (gitignored); `typedoc.json` configures it.
+`corepack pnpm docs:api:check` runs the same validation without writing
+anything: it reports undocumented exports, documented types that reference
+unexported ones, and `{@link}` tags that do not resolve.
+`.github/workflows/docs.yml` runs both on pull requests and publishes the
+reference to GitHub Pages on pushes to `main`.
+
 ## Fixtures
 
 The fixtures in `packages/protocol/fixtures` and `packages/api/test/fixtures`
