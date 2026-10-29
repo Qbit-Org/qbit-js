@@ -59,7 +59,12 @@ function firstLog(): Promise<unknown> {
 
 /** The code block a README copies from an example, as a user would paste it. */
 function readmeBlock(readme: string): string {
-  const lines = readFileSync(new URL(`../../${readme}`, import.meta.url), 'utf8').split('\n')
+  return snippetBlock(readFileSync(new URL(`../../${readme}`, import.meta.url), 'utf8'))
+}
+
+/** The first snippet block in `markdown`, with LF line endings whatever it has, as a CRLF checkout gives. */
+function snippetBlock(markdown: string): string {
+  const lines = markdown.split(/\r?\n/)
   const start = lines.findIndex(line => line.startsWith('<!-- snippet: ')) + 2
   return lines.slice(start, lines.indexOf('```', start)).join('\n')
 }
@@ -152,6 +157,17 @@ describe('README quick starts', () => {
     expect(await logged).toEqual(expected)
 
     expect(() => runAsCommonJs(readmeBlock('packages/protocol/README.md'))).not.toThrow()
+  })
+
+  it('reads each README block the same from a CRLF checkout', () => {
+    for (const readme of ['packages/api/README.md', 'packages/protocol/README.md']) {
+      const lf = readFileSync(new URL(`../../${readme}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n')
+      const block = snippetBlock(lf)
+
+      expect(block, readme).toContain('@qbit-oss/')
+      expect(block, readme).not.toContain('```')
+      expect(snippetBlock(lf.replace(/\n/g, '\r\n')), readme).toBe(block)
+    }
   })
 
   it("type-checks the api README's in a browser project, with the DOM library and no @types/node", () => {

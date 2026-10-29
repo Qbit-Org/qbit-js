@@ -25,7 +25,8 @@
 // Only the READMEs are scanned: README.md, examples/README.md and
 // packages/*/README.md. A marker in any other Markdown file that git tracks
 // fails both modes too, since its block would never be checked; listing those
-// files needs git.
+// files needs git. A tracked file missing from the working tree, deleted but
+// not yet removed with `git rm`, holds no marker: it is skipped with a note.
 //
 //   node examples/scripts/readme-snippets.mjs --check   exit 1 if a block is out of date
 //   node examples/scripts/readme-snippets.mjs --write   rewrite the blocks that are
@@ -123,6 +124,11 @@ for (const readme of readmes) {
 // A marker outside the READMEs scanned above would leave its block unchecked.
 const tracked = execFileSync('git', ['ls-files', '-z', '--', '*.md'], { cwd: repoRoot, encoding: 'utf8' })
 for (const path of tracked.split('\0').filter(path => path !== '' && !readmes.includes(path))) {
+  // git lists the index, which still holds a file deleted from the working tree.
+  if (!existsSync(join(repoRoot, path))) {
+    console.warn(`note: skipped ${path}: git tracks it, but it is not in the working tree`)
+    continue
+  }
   readFileSync(join(repoRoot, path), 'utf8')
     .split(/\r?\n/)
     .forEach((line, index) => {

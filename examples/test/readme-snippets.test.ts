@@ -55,4 +55,29 @@ describe('readme-snippets.mjs', () => {
     expect(result.status).toBe(1)
     expect(result.stderr).toContain(`${page}:3: snippet markers are read only in the READMEs`)
   })
+
+  it('skips, with a note, a tracked Markdown file missing from the working tree', () => {
+    const root = checkout()
+    // Deleted from disk, but not yet with `git rm`, so git still lists it.
+    const page = 'packages/api/docs/guide.md'
+    mkdirSync(dirname(join(root, page)), { recursive: true })
+    writeFileSync(join(root, page), '# Guide\n')
+    git(root, 'add', page)
+    rmSync(join(root, page))
+
+    const result = check(root)
+
+    expect(result.stderr).toContain(`note: skipped ${page}: git tracks it, but it is not in the working tree`)
+    expect(result.status).toBe(0)
+
+    // A marker in another tracked file still fails the check.
+    const other = 'packages/api/docs/other.md'
+    writeFileSync(join(root, other), '<!-- snippet: examples/src/api-quick-start.ts#quick-start -->\n')
+    git(root, 'add', other)
+
+    const failed = check(root)
+
+    expect(failed.status).toBe(1)
+    expect(failed.stderr).toContain(`${other}:1: snippet markers are read only in the READMEs`)
+  })
 })

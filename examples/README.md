@@ -18,7 +18,7 @@ workspace package, `@qbit-oss/examples`; it is never published.
 | [`check-balance.ts`](src/check-balance.ts) | `EsploraClient`, `getAddressBalance`, `getFeeTiers`, and `feeTiersFromEstimates` with the wallet's own `maxFeeRate` |
 | [`payment-uri.ts`](src/payment-uri.ts) | `formatQbitUri` and `parseQbitUri`, and handling a rejected URI |
 | [`message-proof.ts`](src/message-proof.ts) | `createP2mrMessageProof` and `verifyP2mrMessageProof` with `{ expectedAddress }` |
-| [`send-payment.ts`](src/send-payment.ts) | A whole payment: UTXO scan and selection, PSBT, signing plans, signing with `onSigned`, finalizing, extracting and broadcasting, then recovering from `unknown_outcome`, or abandoning a transaction no node will take |
+| [`send-payment.ts`](src/send-payment.ts) | A whole payment: UTXO scan and selection, skipping coinbase outputs that are not mature, PSBT, signing plans, signing with `onSigned`, finalizing, extracting and broadcasting, then recovering from `unknown_outcome`, or abandoning a transaction no node will take |
 
 ## Running them
 
@@ -58,10 +58,11 @@ before it resubmits anything, resubmits only the same hex, and never rebuilds
 the payment. A lookup finds the transaction only when the reply's `txid` is its
 txid, since `getTx` returns the reply as parsed, without checking that it is the
 transaction requested. When less than two poll intervals are left, it looks
-the transaction up once more, resubmits once if that lookup does not find it,
-and stops, so a short deadline still settles a transaction that never reached
-the node without a burst of requests. A `not_found` lookup only means the
-indexer does not know the transaction yet.
+the transaction up once more, with at most half of the time then left,
+resubmits once with the rest if that lookup does not find it, and stops, so a
+short deadline still settles a transaction that never reached the node, even
+when that lookup stalls, without a burst of requests. A `not_found` lookup only
+means the indexer does not know the transaction yet.
 `getTxStatus` cannot tell either way, since qbit-electrs answers
 `{ confirmed: false }` for a txid it has never seen. One deadline covers the
 whole payment. Signing blocks the thread, so a cancel issued meanwhile takes
@@ -124,4 +125,5 @@ when a copy differs from its region. The script lists every copied block, so
 it also fails when a marker is deleted or a new one is not listed. It reads
 markers only in `README.md`, `examples/README.md` and `packages/*/README.md`,
 and fails on a marker in any other Markdown file git tracks, whose block it
-would never check.
+would never check. A tracked file missing from the working tree holds no
+marker, so it skips that file with a note.

@@ -132,13 +132,14 @@ function setUp(
 }
 
 /**
- * The unsigned transaction a payment builds, read from its PSBT. The store
- * refuses the first signature, so nothing is signed, stored or sent.
+ * The unsigned transaction a payment builds, read from its PSBT, and the
+ * requests it made. The store refuses the first signature, so nothing is
+ * signed, stored or sent.
  */
 async function plannedTransaction(
   options: Omit<StubEsploraOptions, 'address'>,
   overrides: Partial<SendPaymentParams> = {}
-): Promise<P2mrTransaction> {
+): Promise<{ tx: P2mrTransaction; requests: string[] }> {
   const { esplora, send, pending } = setUp(options, undefined, () => {
     throw new Error('test: no signature')
   })
@@ -146,13 +147,23 @@ async function plannedTransaction(
   if (!P2mrPsbtSigningError.is(error)) throw error
   expect(pending.size).toBe(0)
   expect(esplora.broadcasts).toEqual([])
-  return psbtUnsignedTransaction(error.psbt)
+  return { tx: psbtUnsignedTransaction(error.psbt), requests: esplora.requests }
 }
 
 /** The outputs `tx` spends, as `txid:vout` with the txid as explorers show it. */
 const outpointsOf = (tx: P2mrTransaction) =>
   tx.inputs.map(({ prevout }) => `${bytesToHex(prevout.txid.slice().reverse())}:${prevout.vout}`)
-const confirmed = (txid: string, value: number): EsploraUtxo => ({ txid, vout: 0, value, status: { confirmed: true } })
+/** An output in the block at `blockHeight`. The stub's tip is at height 2,000. */
+const confirmedAt = (blockHeight: number, txid: string, value: number, vout = 0): EsploraUtxo => ({
+  txid,
+  vout,
+  value,
+  status: { confirmed: true, block_height: blockHeight },
+})
+/** An output 1,901 blocks deep, so the payment needs no lookup to spend it. */
+const confirmed = (txid: string, value: number) => confirmedAt(100, txid, value)
+/** An output 10 blocks deep, so the payment looks up its funding transaction first. */
+const young = (txid: string, value: number, vout = 0) => confirmedAt(1_991, txid, value, vout)
 
 /** A client that hands broadcastTx a txid that does not match the hex, which it refuses with a TypeError before sending. */
 class MismatchedTxidClient extends EsploraClient {
@@ -630,7 +641,7 @@ describe('send-payment example', () => {
     const recipient = addressToScriptPubKey(to, 'regtest')
     for (const changeSats of [DUST_THRESHOLD_SATS - 1n, DUST_THRESHOLD_SATS]) {
       const value = Number(amountSats + feeSats + changeSats)
-      const funding: EsploraUtxo = { txid: 'd4'.repeat(32), vout: 2, value, status: { confirmed: true } }
+      const funding: EsploraUtxo = { ...confirmed('d4'.repeat(32), value), vout: 2 }
       const { send } = setUp({ utxos: [funding] })
 
       const { txid } = await send(20_000, { amountSats, feeRate: WALLET_MAX_FEE_RATE })
@@ -737,7 +748,7 @@ describe('send-payment example', () => {
   })
 
   it('accepts the longest deadline and poll interval a timer can wait', async () => {
-    const tx = await plannedTransaction({}, { deadlineMs: 2_147_483_647, pollMs: 2_147_483_647 })
+    const { tx } = await plannedTransaction({}, { deadlineMs: 2_147_483_647, pollMs: 2_147_483_647 })
 
     expect(tx.inputs).toHaveLength(2)
 
@@ -782,7 +793,7 @@ describe('send-payment example', () => {
       { txid: 'b2'.repeat(32), vout: 0, value: 200_000, status: { confirmed: false } },
     ]
 
-    const tx = await plannedTransaction({ utxos })
+    const { tx } = await plannedTransaction({ utxos })
 
     // 100,000 alone cannot pay 110,000 and the fee; with 60,000, it pays them
     // and returns the rest. Two inputs and two outputs, as in the first test.
@@ -797,7 +808,7 @@ describe('send-payment example', () => {
     // 106 inputs with two outputs take at most 12 + 106 * 3,763 + 2 * 43 = 398,976.
     const utxos = Array.from({ length: 120 }, (_, index) => confirmed(index.toString(16).padStart(64, '0'), 10_000))
 
-    const tx = await plannedTransaction({ utxos }, { amountSats: 661_067n, feeRate: 1 })
+    const { tx } = await plannedTransaction({ utxos }, { amountSats: 661_067n, feeRate: 1 })
 
     expect(tx.inputs).toHaveLength(106)
     expect(tx.outputs.map(output => output.value)).toEqual([661_067n])
@@ -845,6 +856,172 @@ describe('send-payment example', () => {
 
     expect(QbitApiError.is(error) && error.kind).toBe('unknown_outcome')
     expect(failing.requests).toEqual([`GET /tx/${paid.txid}`, 'POST /tx'])
+  })
+
+  it('skips a coinbase output with fewer than 1,000 confirmations, and spends one with 1,000', async () => {
+    // A wallet funded by mining, at tip 2,000. qbit Core refuses to spend the
+    // larger coinbase output, at height 1,002, until the next block.
+    const immature = confirmedAt(1_002, 'c0'.repeat(32), 500_000)
+    const mature = confirmedAt(1_001, 'c1'.repeat(32), 200_000)
+
+    const { tx, requests } = await plannedTransaction({
+      utxos: [immature, mature],
+      tipHeight: 2_000,
+      coinbase: [immature.txid, mature.txid],
+    })
+
+    expect(outpointsOf(tx)).toEqual([`${mature.txid}:0`])
+    // Only the younger one needs a lookup.
+    expect(requests.filter(request => request.startsWith('GET /tx/'))).toEqual([`GET /tx/${immature.txid}`])
+  })
+
+  it('looks each young funding transaction up once, and spends its outputs when no coinbase made them', async () => {
+    // Two outputs of one transaction 10 blocks deep, and one whose row gives no block height.
+    const noHeight: EsploraUtxo = { txid: 'f6'.repeat(32), vout: 0, value: 40_000, status: { confirmed: true } }
+    const utxos = [young('e5'.repeat(32), 60_000, 0), young('e5'.repeat(32), 50_000, 1), noHeight]
+
+    // 60,000 and 50,000 cannot pay 120,000 and the fee; with 40,000 they can.
+    const { tx, requests } = await plannedTransaction({ utxos }, { amountSats: 120_000n })
+
+    expect(outpointsOf(tx)).toEqual([`${'e5'.repeat(32)}:0`, `${'e5'.repeat(32)}:1`, `${'f6'.repeat(32)}:0`])
+    expect(requests.filter(request => request.startsWith('GET /tx/'))).toEqual([
+      `GET /tx/${'e5'.repeat(32)}`,
+      `GET /tx/${'f6'.repeat(32)}`,
+    ])
+  })
+
+  it('refuses with immature_funds when only coinbase outputs that are not mature could pay, before any key is used', async () => {
+    const immature = young('c0'.repeat(32), 500_000)
+    const utxos = [immature, confirmed('d4'.repeat(32), 20_000)]
+
+    for (const [amountSats, code, fundingLookups] of [
+      [AMOUNT_SATS, 'immature_funds', 1],
+      // Not even the coinbase output could pay this, so nothing is looked up.
+      [1_000_000n, 'insufficient_funds', 0],
+    ] as const) {
+      const { esplora, send, reservations, pending } = setUp({ utxos, coinbase: [immature.txid] })
+
+      const error = await caught(send(20_000, { amountSats }))
+
+      expect(codeOf(error)).toBe(code)
+      expect(lookups(esplora.requests)).toBe(fundingLookups)
+      expect(reservations).toEqual([])
+      expect(pending.size).toBe(0)
+      expect(esplora.broadcasts).toEqual([])
+    }
+  })
+
+  it('looks up at most 106 funding transactions, and counts the young outputs of any other as unspendable', async () => {
+    // 107 coinbase outputs 10 blocks deep, each larger than any of the three mature outputs.
+    const immature = Array.from({ length: 107 }, (_, index) => young(index.toString(16).padStart(64, '0'), 100_000))
+    const mature = ['d1', 'd2', 'd3'].map(byte => confirmed(byte.repeat(32), 50_000))
+    const options = { utxos: [...immature, ...mature], coinbase: immature.map(utxo => utxo.txid) }
+
+    // The three mature outputs pay 110,000 and the fee: 150,000 - 110,000 >= 2 * (12 + 3 * 3,763 + 43).
+    const { tx, requests } = await plannedTransaction(options)
+
+    expect(outpointsOf(tx)).toEqual(mature.map(utxo => `${utxo.txid}:0`))
+    expect(lookups(requests)).toBe(106)
+
+    // They cannot pay 150,000, and the outputs it did not look up count as unspendable.
+    const { esplora, send, reservations } = setUp(options)
+
+    const error = await caught(send(20_000, { amountSats: 150_000n }))
+
+    expect(codeOf(error)).toBe('immature_funds')
+    expect(error instanceof Error && error.message).toContain('did not check')
+    expect(lookups(esplora.requests)).toBe(106)
+    expect(reservations).toEqual([])
+  })
+
+  it('stops a stalled funding transaction lookup at the deadline, before any key is used', async () => {
+    const { esplora, send, reservations, pending } = setUp({
+      utxos: [young('e5'.repeat(32), 200_000)],
+      stallLookups: true,
+    })
+    const started = Date.now()
+
+    const error = await caught(send(300))
+
+    expect(QbitApiError.is(error) && error.kind).toBe('timeout')
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(lookups(esplora.requests)).toBe(1)
+    expect(reservations).toEqual([])
+    expect(pending.size).toBe(0)
+    expect(esplora.broadcasts).toEqual([])
+  })
+
+  it('refuses to pay when a funding transaction lookup does not answer with that transaction and its coinbase flag', async () => {
+    const funding = young('e5'.repeat(32), 200_000)
+    const replies: [string, unknown][] = [
+      ...NOT_THE_TRANSACTION,
+      ['the transaction without inputs', { txid: funding.txid, vin: [] }],
+      ['the transaction without vin', { txid: funding.txid }],
+      ['an is_coinbase that is not a boolean', { txid: funding.txid, vin: [{ is_coinbase: 'false' }] }],
+    ]
+    for (const [name, body] of replies) {
+      const { esplora, send, reservations } = setUp({ utxos: [funding], lookupReply: () => body })
+
+      const error = await caught(send())
+
+      expect(QbitApiError.is(error) && error.kind, name).toBe('parse')
+      expect(reservations, name).toEqual([])
+      expect(esplora.broadcasts, name).toEqual([])
+    }
+
+    // The txid compares case-insensitively.
+    const { tx } = await plannedTransaction({
+      utxos: [funding],
+      lookupReply: txid => ({ txid: txid.toUpperCase(), vin: [{ is_coinbase: false }] }),
+    })
+    expect(outpointsOf(tx)).toEqual([`${funding.txid}:0`])
+  })
+
+  it.each([
+    ['a negative tip height', -1],
+    ['a tip height above 2^53', 2 ** 60],
+  ])('refuses %s, which is not a block height, before any key is used', async (_, tipHeight) => {
+    const { esplora, send, reservations } = setUp({ tipHeight })
+
+    const error = await caught(send())
+
+    expect(QbitApiError.is(error) && error.kind).toBe('parse')
+    expect(reservations).toEqual([])
+    expect(esplora.broadcasts).toEqual([])
+  })
+
+  it('keeps an end that passes between two readings of the clock an unknown outcome, never an invalid option', async () => {
+    const esplora = stubEsplora({ address: from })
+    const client = new EsploraClient({ baseUrl: BASE_URL, fetchFn: esplora.fetchFn })
+    const end = Date.now() + 1_000
+    // The clock reads 1 ms before `end`, then `end`, as if it ticked between two readings.
+    const clock = vi
+      .spyOn(Date, 'now')
+      .mockReturnValueOnce(end - 1)
+      .mockReturnValue(end)
+    try {
+      const error = await caught(
+        reconcileBroadcast(client, paid.rawTxHex, { end, signal: new AbortController().signal, pollMs: 1 })
+      )
+
+      expect(QbitApiError.is(error) && error.kind).toBe('unknown_outcome')
+      expect(esplora.requests).toEqual([])
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
+  it('leaves the last round time to resubmit when its lookup stalls', async () => {
+    // The first POST never reached the node, the indexer never answers, and
+    // less than two polls are left.
+    const stalled = stubEsplora({ address: from, stallReads: true })
+    const client = new EsploraClient({ baseUrl: BASE_URL, fetchFn: stalled.fetchFn })
+
+    await reconcileBroadcast(client, paid.rawTxHex, reconcileOptions(1_000, 1_000))
+
+    expect(lookups(stalled.requests)).toBe(1)
+    expect(stalled.broadcasts).toEqual([paid.rawTxHex])
+    expect(stalled.known.has(paid.txid)).toBe(true)
   })
 
   it('abandons a transaction no node will take any more, and returns the inputs a fee bump must spend', async () => {

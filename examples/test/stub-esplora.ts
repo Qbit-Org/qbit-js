@@ -34,6 +34,14 @@ export interface StubEsploraOptions {
   confirmedSats?: number
   mempoolSats?: number
   utxos?: EsploraUtxo[]
+  /** Height of the chain tip (default 2,000). */
+  tipHeight?: number
+  /**
+   * Txids of the `utxos` rows' funding transactions that are coinbase
+   * transactions. `GET /tx/:txid` answers each funding transaction the rows
+   * name, with `is_coinbase` on its first input.
+   */
+  coinbase?: string[]
   /** The address's transactions, in one page each; the address stats count them. */
   history?: { confirmed: unknown[]; mempool: unknown[] }
   feeEstimates?: Record<string, number>
@@ -53,6 +61,8 @@ export interface StubEsploraOptions {
   lookupReply?: (txid: string) => unknown
   /** Leave every GET unanswered until the client aborts it. */
   stallReads?: boolean
+  /** Leave every `GET /tx/:txid` unanswered until the client aborts it. */
+  stallLookups?: boolean
 }
 
 export interface StubEsplora {
@@ -85,7 +95,8 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
     const address = encodeURIComponent(options.address)
     const history = options.history ?? { confirmed: [], mempool: [] }
     const signal = init?.signal
-    if (method === 'GET' && options.stallReads && signal) {
+    const stalls = options.stallReads || (options.stallLookups && /^\/tx\/[0-9a-f]{64}$/.test(path))
+    if (method === 'GET' && stalls && signal) {
       return new Promise<Response>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)))
     }
 
@@ -108,6 +119,7 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
     if (method === 'GET' && path === `/address/${address}/txs/chain`) return json(history.confirmed)
     if (method === 'GET' && path.startsWith(`/address/${address}/txs/chain/`)) return json([]) // after the one page
     if (method === 'GET' && path === '/fee-estimates') return json(options.feeEstimates ?? {})
+    if (method === 'GET' && path === '/blocks/tip/height') return new Response(String(options.tipHeight ?? 2_000))
 
     const status = /^\/tx\/([0-9a-f]{64})\/status$/.exec(path)
     if (method === 'GET' && status) {
@@ -119,7 +131,7 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
     if (method === 'GET' && lookup) {
       if (options.lookupReply) return json(options.lookupReply(lookup[1]!))
       const tx = known.get(lookup[1]!)
-      if (tx === undefined) return txNotFound()
+      if (tx === undefined) return fundingTx(lookup[1]!) ?? txNotFound()
       if (indexerLag > 0) {
         indexerLag -= 1
         return txNotFound()
@@ -155,6 +167,16 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
     }
     return new Response('not found', { status: 404 })
   }) as typeof fetch
+
+  /** The funding transaction of the `utxos` rows with txid `txid`, if any, with the fields the examples read. */
+  function fundingTx(txid: string) {
+    const row = (options.utxos ?? []).find(row => row.txid === txid)
+    if (row === undefined) return undefined
+    const vin = options.coinbase?.includes(txid)
+      ? { txid: '00'.repeat(32), vout: 0xffff_ffff, prevout: null, is_coinbase: true }
+      : { txid: 'ff'.repeat(32), vout: 0, is_coinbase: false }
+    return json({ txid, vin: [vin], status: row.status })
+  }
 
   return { fetchFn, requests, broadcasts, known }
 }
