@@ -48,16 +48,23 @@ const RELAYED_RPC_TIMEOUT = 'sendrawtransaction RPC error: {"code":"ETIMEDOUT"}'
 /** A node message the English phrase matcher does not recognise, so only the code can classify the reply. */
 const LOCALIZED_MESSAGE = 'Transaktion bereits in der Blockkette'
 type RpcErrorShape = (code: number | string, message: string) => string
-const RPC_ERROR_TEXT: RpcErrorShape = (code, message) => `sendrawtransaction RPC error: ${JSON.stringify({ code, message })}`
+const RPC_ERROR_TEXT: RpcErrorShape = (code, message) =>
+  `sendrawtransaction RPC error: ${JSON.stringify({ code, message })}`
 /** Every body shape a backend or gateway uses to relay a coded node error. */
 const RPC_ERROR_SHAPES: [string, RpcErrorShape][] = [
   ['esplora plain text', RPC_ERROR_TEXT],
   ['flat JSON object', (code, message) => JSON.stringify({ code, message })],
   ['JSON-RPC envelope', (code, message) => JSON.stringify({ result: null, error: { code, message }, id: 'qbit-js' })],
   ['nested error without a message', code => JSON.stringify({ error: { code } })],
-  ['HTTP status beside the nested error', (code, message) => JSON.stringify({ code: 400, message: 'Bad Request', error: { code, message } })],
+  [
+    'HTTP status beside the nested error',
+    (code, message) => JSON.stringify({ code: 400, message: 'Bad Request', error: { code, message } }),
+  ],
   ['JSON string around the plain text', (code, message) => JSON.stringify(RPC_ERROR_TEXT(code, message))],
-  ['JSON error string around the plain text', (code, message) => JSON.stringify({ error: RPC_ERROR_TEXT(code, message) })],
+  [
+    'JSON error string around the plain text',
+    (code, message) => JSON.stringify({ error: RPC_ERROR_TEXT(code, message) }),
+  ],
   ['JSON message around the plain text', (code, message) => JSON.stringify({ message: RPC_ERROR_TEXT(code, message) })],
 ]
 /** Codes that fail closed as `http`: the backend never connected, or the node rejected the transaction. */
@@ -115,7 +122,11 @@ async function rejection(promise: Promise<unknown>): Promise<QbitApiError> {
 
 describe('txidFromRawTx', () => {
   it('hashes the legacy encoding', () => {
-    expect(Buffer.from(sha256d(Buffer.from(LEGACY_TX_HEX, 'hex'))).reverse().toString('hex')).toBe(TXID)
+    expect(
+      Buffer.from(sha256d(Buffer.from(LEGACY_TX_HEX, 'hex')))
+        .reverse()
+        .toString('hex')
+    ).toBe(TXID)
     expect(txidFromRawTx(LEGACY_TX_HEX)).toBe(TXID)
     expect(txidFromRawTx(LEGACY_TX_HEX.toUpperCase())).toBe(TXID)
   })
@@ -133,7 +144,11 @@ describe('txidFromRawTx', () => {
     expect(P2MR_TX.txid).toBe('49d7493c4a5c9690713879e066f0a41ce1523b64870dfdcebed40c6ca09f5c84')
     expect(P2MR_TX.rawTxHex.slice(8, 12)).toBe('0001')
     expect(P2MR_TX.rawTxHex.length).toBeGreaterThan(P2MR_TX.unsignedTxHex.length + 7000)
-    expect(Buffer.from(sha256d(Buffer.from(P2MR_TX.unsignedTxHex, 'hex'))).reverse().toString('hex')).toBe(P2MR_TX.txid)
+    expect(
+      Buffer.from(sha256d(Buffer.from(P2MR_TX.unsignedTxHex, 'hex')))
+        .reverse()
+        .toString('hex')
+    ).toBe(P2MR_TX.txid)
 
     expect(txidFromRawTx(P2MR_TX.rawTxHex)).toBe(P2MR_TX.txid)
     expect(txidFromRawTx(P2MR_TX.unsignedTxHex)).toBe(P2MR_TX.txid)
@@ -218,13 +233,25 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['browser-style failure without a cause', new TypeError('Failed to fetch')],
     ['connection reset', fetchFailed(withCode('read ECONNRESET', 'ECONNRESET'))],
     ['socket closed mid-response', fetchFailed(withCode('other side closed', 'UND_ERR_SOCKET'))],
-    ['mixed connect and reset errors', fetchFailed(Object.assign(new AggregateError([withCode('x', 'ECONNREFUSED'), withCode('y', 'ECONNRESET')]), { code: 'ECONNREFUSED' }))],
+    [
+      'mixed connect and reset errors',
+      fetchFailed(
+        Object.assign(new AggregateError([withCode('x', 'ECONNREFUSED'), withCode('y', 'ECONNRESET')]), {
+          code: 'ECONNREFUSED',
+        })
+      ),
+    ],
     ['host unreachable without a connect syscall', fetchFailed(withCode('EHOSTUNREACH', 'EHOSTUNREACH'))],
     ['host unreachable while writing', fetchFailed(withCode('write EHOSTUNREACH', 'EHOSTUNREACH', 'write'))],
     ['network unreachable while reading', fetchFailed(withCode('read ENETUNREACH', 'ENETUNREACH', 'read'))],
     [
       'aggregate whose members lost the route after connecting',
-      fetchFailed(Object.assign(new AggregateError([withCode('x', 'EHOSTUNREACH', 'connect'), withCode('y', 'EHOSTUNREACH', 'write')]), { code: 'EHOSTUNREACH' })),
+      fetchFailed(
+        Object.assign(
+          new AggregateError([withCode('x', 'EHOSTUNREACH', 'connect'), withCode('y', 'EHOSTUNREACH', 'write')]),
+          { code: 'EHOSTUNREACH' }
+        )
+      ),
     ],
   ])('does not resend after an ambiguous network error (%s)', async (_case, failure) => {
     let n = 0
@@ -250,10 +277,20 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['connect timeout', fetchFailed(withCode('Connect Timeout Error', 'UND_ERR_CONNECT_TIMEOUT'))],
     [
       'happy-eyeballs aggregate of refused connections',
-      fetchFailed(Object.assign(new AggregateError([withCode('x', 'ECONNREFUSED'), withCode('y', 'ECONNREFUSED')]), { code: 'ECONNREFUSED' })),
+      fetchFailed(
+        Object.assign(new AggregateError([withCode('x', 'ECONNREFUSED'), withCode('y', 'ECONNREFUSED')]), {
+          code: 'ECONNREFUSED',
+        })
+      ),
     ],
-    ['host unreachable at connect', fetchFailed(withCode('connect EHOSTUNREACH 10.0.0.1:443', 'EHOSTUNREACH', 'connect'))],
-    ['network unreachable at connect', fetchFailed(withCode('connect ENETUNREACH 10.0.0.1:443', 'ENETUNREACH', 'connect'))],
+    [
+      'host unreachable at connect',
+      fetchFailed(withCode('connect EHOSTUNREACH 10.0.0.1:443', 'EHOSTUNREACH', 'connect')),
+    ],
+    [
+      'network unreachable at connect',
+      fetchFailed(withCode('connect ENETUNREACH 10.0.0.1:443', 'ENETUNREACH', 'connect')),
+    ],
     [
       'happy-eyeballs aggregate of unreachable connects',
       fetchFailed(
@@ -363,7 +400,10 @@ describe('EsploraClient.broadcastTx submission policy', () => {
 
   it.each([
     ['esplora already in block chain', ALREADY_IN_CHAIN],
-    ['esplora outputs already in utxo set', 'sendrawtransaction RPC error: {"code":-27,"message":"Transaction outputs already in utxo set"}'],
+    [
+      'esplora outputs already in utxo set',
+      'sendrawtransaction RPC error: {"code":-27,"message":"Transaction outputs already in utxo set"}',
+    ],
     ['esplora already in mempool', 'sendrawtransaction RPC error: {"code":-26,"message":"txn-already-in-mempool"}'],
     ['bare txn-already-known', 'txn-already-known'],
     ['bare txn-already-in-mempool', 'txn-already-in-mempool'],
@@ -372,7 +412,10 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['structured error object', JSON.stringify({ error: { message: 'txn-already-in-mempool' } })],
     ['structured message', JSON.stringify({ message: 'Transaction already in blockchain.' })],
     ['RPC code only', 'sendrawtransaction RPC error: {"code":-27,"message":"localized text"}'],
-    ['JSON-RPC envelope with -26 and an already-known message', JSON.stringify({ error: { code: -26, message: 'txn-already-in-mempool' } })],
+    [
+      'JSON-RPC envelope with -26 and an already-known message',
+      JSON.stringify({ error: { code: -26, message: 'txn-already-in-mempool' } }),
+    ],
   ])('resolves with the txid when the node already has the transaction (%s)', async (_case, body) => {
     const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
@@ -382,9 +425,15 @@ describe('EsploraClient.broadcastTx submission policy', () => {
   })
 
   it.each([
-    ['missing or spent inputs', 'sendrawtransaction RPC error: {"code":-26,"message":"bad-txns-inputs-missingorspent"}'],
+    [
+      'missing or spent inputs',
+      'sendrawtransaction RPC error: {"code":-26,"message":"bad-txns-inputs-missingorspent"}',
+    ],
     ['mempool conflict', 'sendrawtransaction RPC error: {"code":-26,"message":"txn-mempool-conflict"}'],
-    ['rejected replacement', 'sendrawtransaction RPC error: {"code":-26,"message":"insufficient fee, rejecting replacement"}'],
+    [
+      'rejected replacement',
+      'sendrawtransaction RPC error: {"code":-26,"message":"insufficient fee, rejecting replacement"}',
+    ],
     ['missing inputs', 'sendrawtransaction RPC error: {"code":-25,"message":"Missing inputs"}'],
     ['decode failure', 'sendrawtransaction RPC error: {"code":-22,"message":"TX decode failed"}'],
     ['bare validity rejection', 'bad-txns-inputs-missingorspent'],
@@ -407,7 +456,10 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['mempool-qbit unreadable node reply', 'sendrawtransaction RPC error: {"code":-32603}'],
     ['mempool-qbit unreadable non-200 node reply', 'sendrawtransaction RPC error: {"code":-32602}'],
     ['mempool-qbit JSON envelope', JSON.stringify({ error: RELAYED_RPC_TIMEOUT })],
-    ['mempool-qbit node reply stream closed early', 'sendrawtransaction RPC error: {"code":"ERR_STREAM_PREMATURE_CLOSE"}'],
+    [
+      'mempool-qbit node reply stream closed early',
+      'sendrawtransaction RPC error: {"code":"ERR_STREAM_PREMATURE_CLOSE"}',
+    ],
     ['mempool-qbit malformed node reply', 'sendrawtransaction RPC error: {"code":"HPE_INVALID_CONSTANT"}'],
     ['lower-case transport code in a JSON-RPC envelope', JSON.stringify({ error: { code: 'econnreset' } })],
     ['qbit-electrs daemon connection loss', 'Connection error'],
@@ -425,7 +477,10 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['DNS failure', 'sendrawtransaction RPC error: {"code":"ENOTFOUND"}'],
     ['DNS retry', 'sendrawtransaction RPC error: {"code":"EAI_AGAIN"}'],
     ['gateway application code', JSON.stringify({ code: 'BAD_REQUEST', message: 'invalid transaction hex' })],
-    ['gateway HTTP status echo', JSON.stringify({ code: 400, error: { code: 'INVALID_ARGUMENT', message: 'invalid transaction hex' } })],
+    [
+      'gateway HTTP status echo',
+      JSON.stringify({ code: 400, error: { code: 'INVALID_ARGUMENT', message: 'invalid transaction hex' } }),
+    ],
   ])('fails closed when the backend never reached the node (%s)', async (_case, body) => {
     const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
@@ -503,16 +558,19 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['63-character hex', OTHER_TXID.slice(1)],
     ['65-character hex', `${OTHER_TXID}a`],
     ['JSON-wrapped txid', JSON.stringify(OTHER_TXID)],
-  ])('reports an unknown outcome when a 2xx reply is not a txid and none is available to check it against (%s)', async (_case, body) => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 200, body }))
-    const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
+  ])(
+    'reports an unknown outcome when a 2xx reply is not a txid and none is available to check it against (%s)',
+    async (_case, body) => {
+      const { fetchFn, calls } = makeFetch(() => ({ status: 200, body }))
+      const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
-    const error = await rejection(client.broadcastTx('0200000000ffff'))
-    expect(error).toMatchObject({ kind: 'unknown_outcome', status: 200 })
-    expect(error.txid).toBeUndefined()
-    expect(error.responseBody).toBe(body.slice(0, 200))
-    expect(calls).toHaveLength(1)
-  })
+      const error = await rejection(client.broadcastTx('0200000000ffff'))
+      expect(error).toMatchObject({ kind: 'unknown_outcome', status: 200 })
+      expect(error.txid).toBeUndefined()
+      expect(error.responseBody).toBe(body.slice(0, 200))
+      expect(calls).toHaveLength(1)
+    }
+  )
 
   it.each([
     ['success reply without a derivable txid', 200, '00', undefined],
@@ -528,7 +586,9 @@ describe('EsploraClient.broadcastTx submission policy', () => {
   })
 
   it('carries the caller-supplied txid when the hex cannot be parsed', async () => {
-    const { fetchFn, calls } = makeFetch(i => (i === 0 ? { status: 502, body: 'bad gateway' } : { status: 400, body: 'txn-already-known' }))
+    const { fetchFn, calls } = makeFetch(i =>
+      i === 0 ? { status: 502, body: 'bad gateway' } : { status: 400, body: 'txn-already-known' }
+    )
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx('0200000000ffff', { txid: OTHER_TXID.toUpperCase() })).rejects.toMatchObject({
@@ -581,7 +641,9 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.broadcastTx(undefined as unknown as string)).rejects.toThrow(TypeError)
-    await expect(client.broadcastTx(Buffer.from(LEGACY_TX_HEX, 'hex') as unknown as string)).rejects.toThrow(/rawTxHex must be a hex string/)
+    await expect(client.broadcastTx(Buffer.from(LEGACY_TX_HEX, 'hex') as unknown as string)).rejects.toThrow(
+      /rawTxHex must be a hex string/
+    )
     expect(calls).toHaveLength(0)
   })
 
@@ -667,7 +729,13 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
 
   it.each([
     ['504 reply', () => ({ status: 504, body: 'gateway timeout' }), 504],
-    ['timeout', () => { throw abortError() }, undefined],
+    [
+      'timeout',
+      () => {
+        throw abortError()
+      },
+      undefined,
+    ],
   ])('reports an unknown outcome with the txid when /tx/push hits a %s', async (_case, pushReply, status) => {
     const { fetchFn, calls } = makeFetch(i => (i === 0 ? { status: 404, body: 'not found' } : pushReply()))
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
@@ -693,7 +761,9 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
 
   it('reports an unknown outcome when /tx/push relays a node transport failure', async () => {
     const { fetchFn, calls } = makeFetch(i =>
-      i === 0 ? { status: 400, body: GENERIC_BACKEND_FAILURE } : { status: 400, body: JSON.stringify({ error: RELAYED_RPC_TIMEOUT }) }
+      i === 0
+        ? { status: 400, body: GENERIC_BACKEND_FAILURE }
+        : { status: 400, body: JSON.stringify({ error: RELAYED_RPC_TIMEOUT }) }
     )
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
@@ -711,7 +781,11 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
     const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
-    await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({ kind: 'http', status: 400, responseBody: body })
+    await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
+      kind: 'http',
+      status: 400,
+      responseBody: body,
+    })
     expect(calls).toHaveLength(1)
   })
 
@@ -728,7 +802,9 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
   })
 
   it('reports an unknown outcome when /tx/push answers a 2xx that is not a txid and none is available', async () => {
-    const { fetchFn, calls } = makeFetch(i => (i === 0 ? { status: 404, body: 'Not Found' } : { status: 200, body: '<!doctype html><title>Login</title>' }))
+    const { fetchFn, calls } = makeFetch(i =>
+      i === 0 ? { status: 404, body: 'Not Found' } : { status: 200, body: '<!doctype html><title>Login</title>' }
+    )
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     const error = await rejection(client.broadcastTx('0200000000ffff'))
@@ -740,34 +816,56 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
 
   it('still fails closed when /tx/push rejects the transaction', async () => {
     const body = 'sendrawtransaction RPC error: {"code":-26,"message":"bad-txns-inputs-missingorspent"}'
-    const { fetchFn, calls } = makeFetch(i => (i === 0 ? { status: 400, body: GENERIC_BACKEND_FAILURE } : { status: 400, body }))
+    const { fetchFn, calls } = makeFetch(i =>
+      i === 0 ? { status: 400, body: GENERIC_BACKEND_FAILURE } : { status: 400, body }
+    )
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
-    await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({ kind: 'http', status: 400, responseBody: body })
+    await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
+      kind: 'http',
+      status: 400,
+      responseBody: body,
+    })
     expect(calls).toHaveLength(2)
   })
 
-  it.each(RPC_ERROR_SHAPES)('does not fall back after a structured relayed ETIMEDOUT from /tx (%s)', async (_shape, build) => {
-    const body = build('ETIMEDOUT', LOCALIZED_MESSAGE)
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
-    const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
+  it.each(RPC_ERROR_SHAPES)(
+    'does not fall back after a structured relayed ETIMEDOUT from /tx (%s)',
+    async (_shape, build) => {
+      const body = build('ETIMEDOUT', LOCALIZED_MESSAGE)
+      const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+      const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
-    await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({ kind: 'unknown_outcome', status: 400, txid: TXID })
-    expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`])
-  })
+      await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
+        kind: 'unknown_outcome',
+        status: 400,
+        txid: TXID,
+      })
+      expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`])
+    }
+  )
 
-  it.each(CODED_REJECTION_SHAPES)('fails closed without falling back on a %s /tx reply with code %s', async (_shape, code, build) => {
-    const body = build(code, LOCALIZED_MESSAGE)
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
-    const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
+  it.each(CODED_REJECTION_SHAPES)(
+    'fails closed without falling back on a %s /tx reply with code %s',
+    async (_shape, code, build) => {
+      const body = build(code, LOCALIZED_MESSAGE)
+      const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+      const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
-    await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({ kind: 'http', status: 400, responseBody: body })
-    expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`])
-  })
+      await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
+        kind: 'http',
+        status: 400,
+        responseBody: body,
+      })
+      expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`])
+    }
+  )
 
   it.each(RPC_ERROR_SHAPES)('resolves a structured -27 from /tx/push (%s)', async (_shape, build) => {
     const body = build(-27, LOCALIZED_MESSAGE)
-    const { fetchFn, calls } = makeFetch(i => (i === 0 ? { status: 400, body: GENERIC_BACKEND_FAILURE } : { status: 400, body }))
+    const { fetchFn, calls } = makeFetch(i =>
+      i === 0 ? { status: 400, body: GENERIC_BACKEND_FAILURE } : { status: 400, body }
+    )
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(TXID)
@@ -781,7 +879,11 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
     const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
-    await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({ kind: 'http', status: 400, responseBody: body })
+    await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
+      kind: 'http',
+      status: 400,
+      responseBody: body,
+    })
     expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`])
   })
 
@@ -789,13 +891,16 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
     ['HTTP status echo', 400, JSON.stringify({ code: 400, message: GENERIC_BACKEND_FAILURE })],
     ['gateway application code', 400, JSON.stringify({ code: 'BROADCAST_FAILED', message: GENERIC_BACKEND_FAILURE })],
     ['gateway 404 code', 404, JSON.stringify({ code: 'NOT_FOUND', message: 'no such route' })],
-  ])('still falls back to /tx/push when only a gateway code accompanies a no-submit reply (%s)', async (_case, status, body) => {
-    const { fetchFn, calls } = makeFetch(i => (i === 0 ? { status, body } : { status: 200, body: TXID }))
-    const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
+  ])(
+    'still falls back to /tx/push when only a gateway code accompanies a no-submit reply (%s)',
+    async (_case, status, body) => {
+      const { fetchFn, calls } = makeFetch(i => (i === 0 ? { status, body } : { status: 200, body: TXID }))
+      const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
-    await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(TXID)
-    expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`, `${BASE}/tx/push`])
-  })
+      await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(TXID)
+      expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`, `${BASE}/tx/push`])
+    }
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -813,9 +918,11 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
 const PROCESSED_SERVER_ERROR_STATUSES = [500, 502, 503, 504]
 const JSON_RPC_ENVELOPE: RpcErrorShape = (code, message) =>
   JSON.stringify({ result: null, error: { code, message }, id: 'qbit-js' })
-const SCRIPT_FAILURE_REASON = 'mempool-script-verify-flag-failed (Signature must be zero for failed CHECK(MULTI)SIG operation)'
+const SCRIPT_FAILURE_REASON =
+  'mempool-script-verify-flag-failed (Signature must be zero for failed CHECK(MULTI)SIG operation)'
 /** An nginx-style gateway page that contains reject-reason words off the start of the text. */
-const GATEWAY_HTML = '<html><head><title>502 Bad Gateway</title></head><body><center>nginx version 1.24 dust</center></body></html>'
+const GATEWAY_HTML =
+  '<html><head><title>502 Bad Gateway</title></head><body><center>nginx version 1.24 dust</center></body></html>'
 
 type ServerErrorOutcome = 'accepted' | 'rejected' | 'unknown'
 /** Every body a 5xx may carry, with the outcome the node's verdict (or its absence) dictates. */
@@ -829,7 +936,11 @@ const SERVER_ERROR_BODIES: [string, string, ServerErrorOutcome][] = [
   ['esplora text -26 with a localised message', RPC_ERROR_TEXT(-26, LOCALIZED_MESSAGE), 'rejected'],
   ['mempool-qbit code-only -26', 'sendrawtransaction RPC error: {"code":-26}', 'rejected'],
   ['JSON-RPC envelope -25', JSON_RPC_ENVELOPE(-25, 'Missing inputs'), 'rejected'],
-  ['JSON-RPC envelope -22', JSON_RPC_ENVELOPE(-22, 'TX decode failed. Make sure the tx has at least one input.'), 'rejected'],
+  [
+    'JSON-RPC envelope -22',
+    JSON_RPC_ENVELOPE(-22, 'TX decode failed. Make sure the tx has at least one input.'),
+    'rejected',
+  ],
   ['JSON-RPC envelope -28 warming up', JSON_RPC_ENVELOPE(-28, 'Loading block index...'), 'rejected'],
   ['JSON-RPC envelope -8 parameter error', JSON_RPC_ENVELOPE(-8, 'Invalid amount'), 'rejected'],
   ['JSON-RPC envelope -32700 unparsed request', JSON_RPC_ENVELOPE(-32700, 'Parse error'), 'rejected'],
@@ -859,7 +970,9 @@ const SERVER_ERROR_BODIES: [string, string, ServerErrorOutcome][] = [
 
 function serverErrorCases(outcome: ServerErrorOutcome): [number, string, string][] {
   return PROCESSED_SERVER_ERROR_STATUSES.flatMap(status =>
-    SERVER_ERROR_BODIES.filter(([, , o]) => o === outcome).map(([name, body]) => [status, name, body] as [number, string, string])
+    SERVER_ERROR_BODIES.filter(([, , o]) => o === outcome).map(
+      ([name, body]) => [status, name, body] as [number, string, string]
+    )
   )
 }
 
@@ -898,11 +1011,14 @@ for (const { name, make, prelude, urls } of SUBMISSION_PATHS) {
       return { calls, result: make(fetchFn).broadcastTx(rawTxHex) }
     }
 
-    it.each(serverErrorCases('accepted'))('resolves with the txid on HTTP %i carrying %s', async (status, _case, body) => {
-      const { calls, result } = submit(status, body)
-      await expect(result).resolves.toBe(TXID)
-      expect(calls.map(call => call.url)).toEqual(urls)
-    })
+    it.each(serverErrorCases('accepted'))(
+      'resolves with the txid on HTTP %i carrying %s',
+      async (status, _case, body) => {
+        const { calls, result } = submit(status, body)
+        await expect(result).resolves.toBe(TXID)
+        expect(calls.map(call => call.url)).toEqual(urls)
+      }
+    )
 
     it.each(serverErrorCases('rejected'))('fails closed on HTTP %i carrying %s', async (status, _case, body) => {
       const { calls, result } = submit(status, body)
@@ -912,16 +1028,29 @@ for (const { name, make, prelude, urls } of SUBMISSION_PATHS) {
       expect(calls.map(call => call.url)).toEqual(urls)
     })
 
-    it.each(serverErrorCases('unknown'))('reports an unknown outcome on HTTP %i carrying %s', async (status, _case, body) => {
-      const { calls, result } = submit(status, body)
-      const error = await rejection(result)
-      expect(error).toMatchObject({ kind: 'unknown_outcome', status, txid: TXID, responseBody: body.slice(0, 200), url: urls.at(-1)!.replace(BASE, SAFE_BASE) })
-      expect(error.message).toContain(TXID)
-      expect(calls.map(call => call.url)).toEqual(urls)
-    })
+    it.each(serverErrorCases('unknown'))(
+      'reports an unknown outcome on HTTP %i carrying %s',
+      async (status, _case, body) => {
+        const { calls, result } = submit(status, body)
+        const error = await rejection(result)
+        expect(error).toMatchObject({
+          kind: 'unknown_outcome',
+          status,
+          txid: TXID,
+          responseBody: body.slice(0, 200),
+          url: urls.at(-1)!.replace(BASE, SAFE_BASE),
+        })
+        expect(error.message).toContain(TXID)
+        expect(calls.map(call => call.url)).toEqual(urls)
+      }
+    )
 
     it('reports an already-known 5xx reply as an unknown outcome when no txid is available', async () => {
-      const { calls, result } = submit(500, JSON_RPC_ENVELOPE(-27, 'Transaction outputs already in utxo set'), '0200000000ffff')
+      const { calls, result } = submit(
+        500,
+        JSON_RPC_ENVELOPE(-27, 'Transaction outputs already in utxo set'),
+        '0200000000ffff'
+      )
       const error = await rejection(result)
       expect(error).toMatchObject({ kind: 'unknown_outcome', status: 500, url: urls.at(-1)!.replace(BASE, SAFE_BASE) })
       expect(error.txid).toBeUndefined()
@@ -932,19 +1061,30 @@ for (const { name, make, prelude, urls } of SUBMISSION_PATHS) {
     it('reports an unknown outcome when a 5xx body cannot be read', async () => {
       const { calls, result } = submit(500, unreadableBody())
       const error = await rejection(result)
-      expect(error).toMatchObject({ kind: 'unknown_outcome', status: 500, txid: TXID, url: urls.at(-1)!.replace(BASE, SAFE_BASE) })
-      expect(calls.map(call => call.url)).toEqual(urls)
-    })
-
-    it.each(RPC_ERROR_SHAPES)('classifies a 500 by its structured code before its status (%s)', async (_shape, build) => {
-      await expect(submit(500, build(-27, LOCALIZED_MESSAGE)).result).resolves.toBe(TXID)
-      await expect(submit(500, build(-26, LOCALIZED_MESSAGE)).result).rejects.toMatchObject({ kind: 'http', status: 500 })
-      await expect(submit(500, build('ETIMEDOUT', LOCALIZED_MESSAGE)).result).rejects.toMatchObject({
+      expect(error).toMatchObject({
         kind: 'unknown_outcome',
         status: 500,
         txid: TXID,
+        url: urls.at(-1)!.replace(BASE, SAFE_BASE),
       })
+      expect(calls.map(call => call.url)).toEqual(urls)
     })
+
+    it.each(RPC_ERROR_SHAPES)(
+      'classifies a 500 by its structured code before its status (%s)',
+      async (_shape, build) => {
+        await expect(submit(500, build(-27, LOCALIZED_MESSAGE)).result).resolves.toBe(TXID)
+        await expect(submit(500, build(-26, LOCALIZED_MESSAGE)).result).rejects.toMatchObject({
+          kind: 'http',
+          status: 500,
+        })
+        await expect(submit(500, build('ETIMEDOUT', LOCALIZED_MESSAGE)).result).rejects.toMatchObject({
+          kind: 'unknown_outcome',
+          status: 500,
+          txid: TXID,
+        })
+      }
+    )
   })
 }
 
@@ -960,7 +1100,9 @@ describe('5xx replies the server never processed', () => {
 
   it('still falls back to /tx/push after a 501 whose body carries a node code', async () => {
     const { fetchFn, calls } = makeFetch(i =>
-      i === 0 ? { status: 501, body: JSON_RPC_ENVELOPE(-26, 'bad-txns-inputs-missingorspent') } : { status: 200, body: TXID }
+      i === 0
+        ? { status: 501, body: JSON_RPC_ENVELOPE(-26, 'bad-txns-inputs-missingorspent') }
+        : { status: 200, body: TXID }
     )
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
@@ -973,7 +1115,11 @@ describe('5xx replies the server never processed', () => {
     const { fetchFn, calls } = makeFetch(() => ({ status: 500, body }))
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
-    await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({ kind: 'http', status: 500, responseBody: body })
+    await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
+      kind: 'http',
+      status: 500,
+      responseBody: body,
+    })
     expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`])
   })
 })

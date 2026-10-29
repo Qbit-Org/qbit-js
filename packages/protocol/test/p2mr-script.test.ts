@@ -48,9 +48,7 @@ describe('P2MR script and tree primitives', () => {
     const singleControl = buildControlBlock(P2MR_LEAF_VERSION_V1)
 
     expect(bytesToHex(singleControl)).toBe('c1')
-    expect(bytesToHex(verifyControlBlock(singleControl, leafHash, P2MR_LEAF_VERSION_V1))).toBe(
-      bytesToHex(leafHash)
-    )
+    expect(bytesToHex(verifyControlBlock(singleControl, leafHash, P2MR_LEAF_VERSION_V1))).toBe(bytesToHex(leafHash))
 
     const siblingControl = buildControlBlock(P2MR_LEAF_VERSION_V1, [SIBLING])
     expect(bytesToHex(verifyControlBlock(siblingControl, leafHash))).toBe(

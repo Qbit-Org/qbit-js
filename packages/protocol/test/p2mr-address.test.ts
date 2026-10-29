@@ -18,9 +18,7 @@ import {
 } from '../src/index'
 
 const RAW_ROOT = hexToBytes('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f')
-const DESCRIPTOR_ROOT = hexToBytes(
-  'b6c785589cc97898d4ca2a044d63d1dd48714693ce7a0038b4fd3baafb32afe9'
-)
+const DESCRIPTOR_ROOT = hexToBytes('b6c785589cc97898d4ca2a044d63d1dd48714693ce7a0038b4fd3baafb32afe9')
 
 describe('P2MR address codec', () => {
   it('matches qbit Core rawmr address vectors', () => {
@@ -53,9 +51,7 @@ describe('P2MR address codec', () => {
     const address = encodeP2mrAddress(RAW_ROOT, qbitNetworks.regtest)
     const scriptPubKey = p2mrScriptPubKey(RAW_ROOT)
 
-    expect(bytesToHex(scriptPubKey)).toBe(
-      '5220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'
-    )
+    expect(bytesToHex(scriptPubKey)).toBe('5220000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f')
     expect(bytesToHex(addressToScriptPubKey(address, 'regtest'))).toBe(bytesToHex(scriptPubKey))
     expect(outputScriptToAddress(scriptPubKey, 'regtest')).toBe(address)
   })
@@ -72,9 +68,9 @@ describe('P2MR address codec', () => {
     const address = p2mrAddressFromRoot(RAW_ROOT, 'regtest')
 
     expect(() => decodeP2mrAddress(address, 'mainnet')).toThrow(QbitProtocolError)
-    expect(() =>
-      decodeP2mrAddress('qbrt1pqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0sfy8ykg')
-    ).toThrow(QbitProtocolError)
+    expect(() => decodeP2mrAddress('qbrt1pqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0sfy8ykg')).toThrow(
+      QbitProtocolError
+    )
     expect(() => decodeP2mrAddress('qbrt1z2rkskwvnm8')).toThrow(QbitProtocolError)
     expect(() => decodeP2mrAddress(address.slice(0, -1) + 'x')).toThrow(QbitProtocolError)
   })

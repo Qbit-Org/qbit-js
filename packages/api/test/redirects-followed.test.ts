@@ -6,7 +6,13 @@ const BASE = 'https://esplora.example/regtest/api'
 const ADDR = 'qbrt1zqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0s8kqqny'
 const STATS = {
   address: ADDR,
-  chain_stats: { funded_txo_count: 1, funded_txo_sum: 5_000_000_000, spent_txo_count: 0, spent_txo_sum: 0, tx_count: 1 },
+  chain_stats: {
+    funded_txo_count: 1,
+    funded_txo_sum: 5_000_000_000,
+    spent_txo_count: 0,
+    spent_txo_sum: 0,
+    tx_count: 1,
+  },
   mempool_stats: { funded_txo_count: 0, funded_txo_sum: 0, spent_txo_count: 0, spent_txo_sum: 0, tx_count: 0 },
 }
 const TXID = 'ab'.repeat(32)
@@ -80,8 +86,14 @@ describe('replies from a redirect the runtime followed anyway', () => {
     ['an https to http downgrade', (url: string) => url.replace('https:', 'http:')],
     ['another host', (url: string) => url.replace('esplora.example', 'esplora.example.attacker.example')],
     ['another subdomain', (url: string) => url.replace('esplora.example', 'api.esplora.example')],
-    ['userinfo naming the backend', (url: string) => url.replace('esplora.example', 'esplora.example@attacker.example')],
-    ['the backend host in the path', (url: string) => url.replace('esplora.example', 'attacker.example/@esplora.example')],
+    [
+      'userinfo naming the backend',
+      (url: string) => url.replace('esplora.example', 'esplora.example@attacker.example'),
+    ],
+    [
+      'the backend host in the path',
+      (url: string) => url.replace('esplora.example', 'attacker.example/@esplora.example'),
+    ],
     ['a backslash path', (url: string) => url.replace('esplora.example', 'attacker.example\\@esplora.example')],
     ['an unreadable url', () => 'not a url'],
     ['another path on the same host', (url: string) => url.replace('/regtest/api', '/v2/api')],
@@ -110,7 +122,11 @@ describe('replies from a redirect the runtime followed anyway', () => {
       'https://esplora.example:443/regtest/api',
       (url: string) => url.replace(':443', ''),
     ],
-    ['an uppercase host and scheme', BASE, (url: string) => url.replace('https://esplora.example', 'HTTPS://ESPLORA.EXAMPLE')],
+    [
+      'an uppercase host and scheme',
+      BASE,
+      (url: string) => url.replace('https://esplora.example', 'HTTPS://ESPLORA.EXAMPLE'),
+    ],
     ['a trailing-dot host', BASE, (url: string) => url.replace('esplora.example', 'esplora.example.')],
     ['userinfo', BASE, (url: string) => url.replace('esplora.example', 'user:pw@esplora.example')],
     [
@@ -303,8 +319,7 @@ describe.each([
   it('names a redirect target by its origin, without userinfo, path or query', async () => {
     vi.stubGlobal('URL', RNURL)
     const target = 'https://user:PASS-SECRET@Attacker.Example:8443?k=QUERY-SECRET'
-    const redirected = (async () =>
-      new Response(null, { status: 302, headers: { location: target } })) as typeof fetch
+    const redirected = (async () => new Response(null, { status: 302, headers: { location: target } })) as typeof fetch
     const relative = (async () =>
       new Response(null, { status: 302, headers: { location: '/moved?k=QUERY-SECRET' } })) as typeof fetch
     const schemeRelative = (async () =>
@@ -343,7 +358,11 @@ describe.each([
 
     expect(() => new EsploraClient({ baseUrl: BASE, fetchFn })).not.toThrow()
     expect(() => new EsploraClient({ baseUrl: 'http://LOCALHOST:3002/api', fetchFn })).not.toThrow()
-    for (const baseUrl of ['HTTP://ESPLORA.EXAMPLE/api', 'http://esplora.example/@localhost', 'http:esplora.example/api']) {
+    for (const baseUrl of [
+      'HTTP://ESPLORA.EXAMPLE/api',
+      'http://esplora.example/@localhost',
+      'http:esplora.example/api',
+    ]) {
       expect(() => new EsploraClient({ baseUrl, fetchFn })).toThrow(
         'baseUrl must use https unless its host is loopback; pass allowInsecureHttp: true to allow plain http'
       )
@@ -373,7 +392,11 @@ describe.each([
         'baseUrl must be an absolute http(s) URL without whitespace, control or format characters, backslashes, credentials, query or fragment'
       )
     }
-    for (const baseUrl of ['https://esplora.example/regtest/api/', 'https://b\u00fccher.example/api', 'http://127.0.0.1:3002']) {
+    for (const baseUrl of [
+      'https://esplora.example/regtest/api/',
+      'https://b\u00fccher.example/api',
+      'http://127.0.0.1:3002',
+    ]) {
       expect(() => new EsploraClient({ baseUrl, fetchFn }), baseUrl).not.toThrow()
     }
   })

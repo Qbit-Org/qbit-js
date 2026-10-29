@@ -134,17 +134,13 @@ describe('P2MR multi_a threshold cap', () => {
   })
 
   it('builds multi_a leaf scripts up to threshold 35 and rejects 36', () => {
-    expect(bytesToHex(multiALeafScript(35, PUBKEYS_36))).toBe(
-      bytesToHex(handBuiltMultiAScript(35, PUBKEYS_36))
-    )
+    expect(bytesToHex(multiALeafScript(35, PUBKEYS_36))).toBe(bytesToHex(handBuiltMultiAScript(35, PUBKEYS_36)))
     expect(() => multiALeafScript(36, PUBKEYS_36)).toThrow(RangeError)
     expect(() => multiALeafScript(36, PUBKEYS_36)).toThrow(
       'multi_a threshold must not exceed 35 (P2MR v1 initial-stack consensus limit)'
     )
     // A threshold above the key count is reported as such, not as the cap.
-    expect(() => multiALeafScript(40, PUBKEYS_36.slice(0, 3))).toThrow(
-      'threshold cannot exceed pubkey count'
-    )
+    expect(() => multiALeafScript(40, PUBKEYS_36.slice(0, 3))).toThrow('threshold cannot exceed pubkey count')
     const pubkeys999 = Array.from({ length: 999 }, (_, index) => PUBKEYS_36[index % 36]!)
     expect(() => multiALeafScript(999, pubkeys999)).toThrow(RangeError)
     // Only the threshold is capped: P2MR has no script size limit, so n stays 999.
@@ -169,12 +165,12 @@ describe('P2MR multi_a threshold cap', () => {
     // Recorded before the threshold cap was added.
     const golden = 'qb1zhwgjxu7rapus7jsg9hhg7nm0s5ckha70u59lnzqgrvnwkhk9palsv6fcta'
     expect(p2mrAddressFromDescriptor(`mr(${multiA(35)})`, 'mainnet')).toBe(golden)
-    expect(
-      p2mrAddressFromDescriptor(`mr(${multiA(35, [...KEYS_36].reverse(), 'sortedmulti_a')})`, 'mainnet')
-    ).toBe(golden)
-    expect(
-      p2mrAddressFromRoot(p2mrLeafHash(P2MR_LEAF_VERSION_V1, multiALeafScript(35, PUBKEYS_36)), 'mainnet')
-    ).toBe(golden)
+    expect(p2mrAddressFromDescriptor(`mr(${multiA(35, [...KEYS_36].reverse(), 'sortedmulti_a')})`, 'mainnet')).toBe(
+      golden
+    )
+    expect(p2mrAddressFromRoot(p2mrLeafHash(P2MR_LEAF_VERSION_V1, multiALeafScript(35, PUBKEYS_36)), 'mainnet')).toBe(
+      golden
+    )
   })
 
   it('still expands a tree with a spendable leaf, committing to its k = 36 leaf as Core does', () => {

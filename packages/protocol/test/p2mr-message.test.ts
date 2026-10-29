@@ -41,18 +41,14 @@ describe('P2MR message proofs', () => {
   it('matches the wallet and data-signature tagged-hash vectors', () => {
     const messageHash = qbitWalletMessageHash(MESSAGE)
 
-    expect(bytesToHex(messageHash)).toBe(
-      '07987083bbf212a3d5e2956bc6454958a3b6992b1fa86ffe828a212f773da47e'
-    )
+    expect(bytesToHex(messageHash)).toBe('07987083bbf212a3d5e2956bc6454958a3b6992b1fa86ffe828a212f773da47e')
     expect(bytesToHex(qbitDataSigPqcHash(messageHash))).toBe(
       '74acdbd7c47e61f31d09c5e9092a251f14cadbe23c4dba168aea1868d72ff87e'
     )
   })
 
   it('matches the qbit Core QbitDataSigPQC vector', () => {
-    const messageHash = hexToBytes(
-      '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'
-    )
+    const messageHash = hexToBytes('000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f')
 
     expect(bytesToHex(qbitDataSigPqcHash(messageHash))).toBe(
       '892da4f0deede06b7aa1721ae45968148b1e7d88e164dcf73dfac5be497d410f'
@@ -76,51 +72,31 @@ describe('P2MR message proofs', () => {
       leaf_version: 0xc0,
       control_block: 'c1',
     })
-    expect(verifyP2mrMessageProof(MESSAGE, proof, verifyPqc, { expectedNetwork: 'regtest' })).toBe(
-      true
-    )
+    expect(verifyP2mrMessageProof(MESSAGE, proof, verifyPqc, { expectedNetwork: 'regtest' })).toBe(true)
     expect(verifyPqc).toHaveBeenCalledOnce()
   })
 
   it.each([
     ['unsupported version', { ...validProof(), version: 2 }],
-    [
-      'truncated signature',
-      { ...validProof(), signature: validProof().signature.slice(0, -2) },
-    ],
-    [
-      'uppercase hex',
-      { ...validProof(), signature: validProof().signature.toUpperCase() },
-    ],
+    ['truncated signature', { ...validProof(), signature: validProof().signature.slice(0, -2) }],
+    ['uppercase hex', { ...validProof(), signature: validProof().signature.toUpperCase() }],
   ])('rejects %s before PQC verification', (_case, proof) => {
     const verifyPqc = vi.fn(fixtureVerifier())
 
-    expect(verifyP2mrMessageProof(MESSAGE, proof, verifyPqc, { expectedNetwork: 'regtest' })).toBe(
-      false
-    )
+    expect(verifyP2mrMessageProof(MESSAGE, proof, verifyPqc, { expectedNetwork: 'regtest' })).toBe(false)
     expect(verifyPqc).not.toHaveBeenCalled()
   })
 
   it.each([
     ['message', 'different message', validProof()],
-    [
-      'address',
-      MESSAGE,
-      { ...validProof(), address: p2mrAddressFromPubkey(OTHER_PUBKEY, 'regtest') },
-    ],
+    ['address', MESSAGE, { ...validProof(), address: p2mrAddressFromPubkey(OTHER_PUBKEY, 'regtest') }],
     ['pubkey', MESSAGE, { ...validProof(), pubkey: bytesToHex(OTHER_PUBKEY) }],
     ['signature', MESSAGE, { ...validProof(), signature: `00${validProof().signature.slice(2)}` }],
     ['leaf script', MESSAGE, { ...validProof(), leaf_script: `20${bytesToHex(OTHER_PUBKEY)}b3` }],
     ['control block', MESSAGE, { ...validProof(), control_block: 'c3' }],
-    [
-      'merkle root',
-      MESSAGE,
-      { ...validProof(), p2mr_merkle_root: `00${validProof().p2mr_merkle_root.slice(2)}` },
-    ],
+    ['merkle root', MESSAGE, { ...validProof(), p2mr_merkle_root: `00${validProof().p2mr_merkle_root.slice(2)}` }],
   ])('rejects a tampered %s', (_field, message, proof) => {
-    expect(
-      verifyP2mrMessageProof(message, proof, fixtureVerifier(), { expectedNetwork: 'regtest' })
-    ).toBe(false)
+    expect(verifyP2mrMessageProof(message, proof, fixtureVerifier(), { expectedNetwork: 'regtest' })).toBe(false)
   })
 
   it('rejects proof construction when the control commitment and address differ', () => {
@@ -175,9 +151,7 @@ describe('P2MR message proof address binding', () => {
         expectedNetwork: qbitNetworks.regtest,
       })
     ).toBe(true)
-    expect(
-      verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedNetwork: 'regtest' })
-    ).toBe(true)
+    expect(verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedNetwork: 'regtest' })).toBe(true)
   })
 
   it('accepts any valid spelling of the expected address supplied by the relying party', () => {
@@ -200,12 +174,8 @@ describe('P2MR message proof address binding', () => {
     const proof = { ...validProof(), address }
     const verifyPqc = vi.fn(fixtureVerifier())
 
-    expect(
-      verifyP2mrMessageProof(MESSAGE, proof, verifyPqc, { expectedAddress: REGTEST_ADDRESS })
-    ).toBe(false)
-    expect(
-      verifyP2mrMessageProof(MESSAGE, proof, verifyPqc, { expectedNetwork: 'regtest' })
-    ).toBe(false)
+    expect(verifyP2mrMessageProof(MESSAGE, proof, verifyPqc, { expectedAddress: REGTEST_ADDRESS })).toBe(false)
+    expect(verifyP2mrMessageProof(MESSAGE, proof, verifyPqc, { expectedNetwork: 'regtest' })).toBe(false)
     expect(verifyPqc).not.toHaveBeenCalled()
   })
 
@@ -224,9 +194,7 @@ describe('P2MR message proof address binding', () => {
     const verifyPqc = vi.fn(fixtureVerifier())
 
     for (const expectedNetwork of ['mainnet', 'testnet4', 'signet'] as const) {
-      expect(
-        verifyP2mrMessageProof(MESSAGE, validProof(), verifyPqc, { expectedNetwork })
-      ).toBe(false)
+      expect(verifyP2mrMessageProof(MESSAGE, validProof(), verifyPqc, { expectedNetwork })).toBe(false)
       expect(
         verifyP2mrMessageProof(MESSAGE, validProof(), verifyPqc, {
           expectedAddress: REGTEST_ADDRESS,
@@ -248,9 +216,7 @@ describe('P2MR message proof address binding', () => {
           expectedNetwork: network,
         })
       ).toBe(true)
-      expect(verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedNetwork: network })).toBe(
-        true
-      )
+      expect(verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedNetwork: network })).toBe(true)
       expect(
         verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), {
           expectedAddress: p2mrAddressFromPubkey(PUBKEY, network === 'regtest' ? 'mainnet' : 'regtest'),
@@ -269,15 +235,9 @@ describe('P2MR message proof address binding', () => {
         expectedNetwork: 'signet',
       })
     ).toBe(true)
-    expect(
-      verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedNetwork: 'signet' })
-    ).toBe(true)
-    expect(
-      verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedNetwork: 'testnet4' })
-    ).toBe(true)
-    expect(
-      verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedNetwork: 'regtest' })
-    ).toBe(false)
+    expect(verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedNetwork: 'signet' })).toBe(true)
+    expect(verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedNetwork: 'testnet4' })).toBe(true)
+    expect(verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedNetwork: 'regtest' })).toBe(false)
   })
 
   it('fails closed when the expectation itself is inconsistent with the expected network', () => {
@@ -304,12 +264,7 @@ describe('P2MR message proof address binding', () => {
     const verifyPqc = vi.fn(fixtureVerifier())
 
     expect(
-      verifyP2mrMessageProof(
-        MESSAGE,
-        validProof(),
-        verifyPqc,
-        options as unknown as VerifyP2mrMessageProofOptions
-      )
+      verifyP2mrMessageProof(MESSAGE, validProof(), verifyPqc, options as unknown as VerifyP2mrMessageProofOptions)
     ).toBe(false)
     expect(verifyPqc).not.toHaveBeenCalled()
   })
@@ -338,12 +293,7 @@ describe('P2MR message proof address binding', () => {
   ])('throws TypeError for %s', (_case, options) => {
     const verifyPqc = vi.fn(fixtureVerifier())
     const call = () =>
-      verifyP2mrMessageProof(
-        MESSAGE,
-        validProof(),
-        verifyPqc,
-        options as unknown as VerifyP2mrMessageProofOptions
-      )
+      verifyP2mrMessageProof(MESSAGE, validProof(), verifyPqc, options as unknown as VerifyP2mrMessageProofOptions)
 
     expect(call).toThrow(TypeError)
     expect(call).toThrow(OPTIONS_REQUIRED)
@@ -358,12 +308,7 @@ describe('P2MR message proof address binding', () => {
     // `verifyP2mrMessageProof(m, p, v, cfg.expect)` with `cfg.expect` missing must not
     // fall through to an unbound check and accept the re-spelled address.
     expect(() =>
-      verifyP2mrMessageProof(
-        MESSAGE,
-        reSpelledOnMainnet,
-        verifyPqc,
-        config.expect as VerifyP2mrMessageProofOptions
-      )
+      verifyP2mrMessageProof(MESSAGE, reSpelledOnMainnet, verifyPqc, config.expect as VerifyP2mrMessageProofOptions)
     ).toThrow(TypeError)
     expect(verifyPqc).not.toHaveBeenCalled()
   })
@@ -391,17 +336,13 @@ describe('P2MR message proof address binding', () => {
     const legacyProof: P2mrMessageProof = { ...validProof(), address: REGTEST_ADDRESS.toUpperCase() }
     const verifyPqc = vi.fn(fixtureVerifier())
 
-    expect(
-      verifyP2mrMessageProof(MESSAGE, legacyProof, verifyPqc, { expectedAddress: REGTEST_ADDRESS })
-    ).toBe(false)
+    expect(verifyP2mrMessageProof(MESSAGE, legacyProof, verifyPqc, { expectedAddress: REGTEST_ADDRESS })).toBe(false)
     expect(
       verifyP2mrMessageProof(MESSAGE, legacyProof, verifyPqc, {
         expectedAddress: REGTEST_ADDRESS.toUpperCase(),
       })
     ).toBe(false)
-    expect(
-      verifyP2mrMessageProof(MESSAGE, legacyProof, verifyPqc, { expectedNetwork: 'regtest' })
-    ).toBe(false)
+    expect(verifyP2mrMessageProof(MESSAGE, legacyProof, verifyPqc, { expectedNetwork: 'regtest' })).toBe(false)
     expect(verifyPqc).not.toHaveBeenCalled()
 
     const recreated = proofFor(legacyProof.address)
@@ -418,12 +359,8 @@ describe('P2MR message proof address binding', () => {
     const proof = proofFor(REGTEST_ADDRESS.toUpperCase())
 
     expect(proof.address).toBe(REGTEST_ADDRESS)
-    expect(
-      verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedAddress: REGTEST_ADDRESS })
-    ).toBe(true)
-    expect(
-      verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedNetwork: 'regtest' })
-    ).toBe(true)
+    expect(verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedAddress: REGTEST_ADDRESS })).toBe(true)
+    expect(verifyP2mrMessageProof(MESSAGE, proof, fixtureVerifier(), { expectedNetwork: 'regtest' })).toBe(true)
   })
 
   it('round-trips a JSON-serialized proof through address-bound verification', () => {

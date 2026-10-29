@@ -1,10 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import {
-  QbitProtocolError,
-  addDescriptorChecksum,
-  formatP2mrImportDescriptors,
-} from '../src/index'
+import { QbitProtocolError, addDescriptorChecksum, formatP2mrImportDescriptors } from '../src/index'
 
 // One BIP32 payload encoded under each network's private version bytes, so only
 // the network differs between these keys.
@@ -69,40 +65,32 @@ describe('formatP2mrImportDescriptors rejects these requests, which Core v1.0.0 
     ['trailing NBSP', `${external()} `, internal()],
   ])('rejects a descriptor with %s', (_name, externalDesc, internalDesc) => {
     expect(
-      importError(() => formatP2mrImportDescriptors({ external: externalDesc, internal: internalDesc }))
-        .message
+      importError(() => formatP2mrImportDescriptors({ external: externalDesc, internal: internalDesc })).message
     ).toMatch(/import descriptor must not have leading or trailing whitespace$/)
   })
 
   it('rejects a non-string descriptor from an untyped caller', () => {
     expect(
-      importError(() =>
-        formatP2mrImportDescriptors({ external: undefined, internal: internal() } as never)
-      ).message
+      importError(() => formatP2mrImportDescriptors({ external: undefined, internal: internal() } as never)).message
     ).toBe('external import descriptor must be a string')
   })
 
   it('accepts ranges of up to 1,000,000 indices (end inclusive), like Core', () => {
     expect(formatP2mrImportDescriptors(PAIR, [0, 999_999])[0]?.range).toEqual([0, 999_999])
-    expect(
-      formatP2mrImportDescriptors(PAIR, [0x7fffffff - 999_999, 0x7fffffff])[1]?.range
-    ).toEqual([0x7fffffff - 999_999, 0x7fffffff])
+    expect(formatP2mrImportDescriptors(PAIR, [0x7fffffff - 999_999, 0x7fffffff])[1]?.range).toEqual([
+      0x7fffffff - 999_999,
+      0x7fffffff,
+    ])
   })
 
-  it.each([
-    [[0, 1_000_000]],
-    [[5, 1_000_005]],
-    [[0, 0x7fffffff]],
-  ] as const)('rejects range %j as too large', range => {
-    expect(importError(() => formatP2mrImportDescriptors(PAIR, [...range])).message).toBe(
-      'Range is too large'
-    )
+  it.each([[[0, 1_000_000]], [[5, 1_000_005]], [[0, 0x7fffffff]]] as const)('rejects range %j as too large', range => {
+    expect(importError(() => formatP2mrImportDescriptors(PAIR, [...range])).message).toBe('Range is too large')
   })
 
   it('rejects ranges that are not a [start, end] pair', () => {
-    expect(
-      importError(() => formatP2mrImportDescriptors(PAIR, [0, 10, 20] as never)).message
-    ).toBe('descriptor range must be [start, end]')
+    expect(importError(() => formatP2mrImportDescriptors(PAIR, [0, 10, 20] as never)).message).toBe(
+      'descriptor range must be [start, end]'
+    )
     expect(importError(() => formatP2mrImportDescriptors(PAIR, 10 as never)).message).toBe(
       'descriptor range must be [start, end]'
     )
@@ -112,22 +100,17 @@ describe('formatP2mrImportDescriptors rejects these requests, which Core v1.0.0 
     expect(formatP2mrImportDescriptors(PAIR, [0, 999], timestamp)[0]?.timestamp).toBe(timestamp)
   })
 
-  it.each([NaN, 1.5, Infinity, -1, 1e20, 'yesterday', '1234', null])(
-    'rejects timestamp %s',
-    timestamp => {
-      expect(
-        importError(() => formatP2mrImportDescriptors(PAIR, [0, 999], timestamp as never)).message
-      ).toBe("import timestamp must be 'now' or a non-negative integer number of seconds")
-    }
-  )
+  it.each([NaN, 1.5, Infinity, -1, 1e20, 'yesterday', '1234', null])('rejects timestamp %s', timestamp => {
+    expect(importError(() => formatP2mrImportDescriptors(PAIR, [0, 999], timestamp as never)).message).toBe(
+      "import timestamp must be 'now' or a non-negative integer number of seconds"
+    )
+  })
 
   it('rejects an identical external and internal descriptor, with or without checksums', () => {
     const message = 'external and internal import descriptors must differ'
-    expect(
-      importError(() =>
-        formatP2mrImportDescriptors({ external: external(), internal: external() })
-      ).message
-    ).toBe(message)
+    expect(importError(() => formatP2mrImportDescriptors({ external: external(), internal: external() })).message).toBe(
+      message
+    )
     expect(
       importError(() =>
         formatP2mrImportDescriptors({

@@ -202,18 +202,12 @@ const EXTENDED_KEY_VERSION_PREFIXES = new Map<number, string>([
   [0x03f7d83a, 'qrpv'],
 ])
 const DESCRIPTOR_INPUT_CHARSET =
-  "0123456789()[],'/*abcdefgh@:$%{}" +
-  'IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~' +
-  'ijklmnopqrstuvwxyzABCDEFGH`#"\\ '
+  "0123456789()[],'/*abcdefgh@:$%{}" + 'IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~' + 'ijklmnopqrstuvwxyzABCDEFGH`#"\\ '
 const DESCRIPTOR_CHECKSUM_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
 const textEncoder = new TextEncoder()
 
-const bech32CharValues = new Map<string, number>(
-  Array.from(BECH32_CHARSET, (char, index) => [char, index])
-)
-const base58CharValues = new Map<string, number>(
-  Array.from(BASE58_CHARSET, (char, index) => [char, index])
-)
+const bech32CharValues = new Map<string, number>(Array.from(BECH32_CHARSET, (char, index) => [char, index]))
+const base58CharValues = new Map<string, number>(Array.from(BASE58_CHARSET, (char, index) => [char, index]))
 
 export type QbitProtocolErrorCode =
   | 'UNKNOWN_NETWORK'
@@ -280,10 +274,7 @@ export function assertMoneyRange(value: bigint, name = 'amount'): void {
     throw new QbitProtocolError('INVALID_AMOUNT', `${name} must be a bigint amount in satoshis`)
   }
   if (value < 0n || value > QBIT_MAX_MONEY) {
-    throw new QbitProtocolError(
-      'INVALID_AMOUNT',
-      `${name} ${value} is outside MoneyRange [0, ${QBIT_MAX_MONEY}]`
-    )
+    throw new QbitProtocolError('INVALID_AMOUNT', `${name} ${value} is outside MoneyRange [0, ${QBIT_MAX_MONEY}]`)
   }
 }
 
@@ -297,10 +288,7 @@ export function assertMoneyRange(value: bigint, name = 'amount'): void {
  */
 export function assertUint32(value: number, name: string): void {
   if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 0xffffffff) {
-    throw new QbitProtocolError(
-      'INVALID_INTEGER',
-      `${name} ${String(value)} must be an integer in [0, 4294967295]`
-    )
+    throw new QbitProtocolError('INVALID_INTEGER', `${name} ${String(value)} must be an integer in [0, 4294967295]`)
   }
 }
 
@@ -338,11 +326,7 @@ export interface CreateP2mrMessageProofParams {
   controlBlock?: Uint8Array
 }
 
-export type P2mrPqcVerifyFn = (
-  pubkey: Uint8Array,
-  digest: Uint8Array,
-  signature: Uint8Array
-) => boolean
+export type P2mrPqcVerifyFn = (pubkey: Uint8Array, digest: Uint8Array, signature: Uint8Array) => boolean
 
 /**
  * What a relying party expects a P2MR message proof to be bound to. At least one
@@ -478,9 +462,7 @@ export interface QbitProprietaryP2mrMerkleRootField {
 }
 
 export type QbitProprietaryP2mrField =
-  | QbitProprietaryP2mrMerkleRootField
-  | P2mrPsbtLeafScriptField
-  | P2mrPsbtScriptSigField
+  QbitProprietaryP2mrMerkleRootField | P2mrPsbtLeafScriptField | P2mrPsbtScriptSigField
 
 export interface EncodedQbitProprietaryP2mrField {
   identifier: typeof PSBT_QBIT_IDENTIFIER
@@ -573,10 +555,7 @@ export function qbitWalletMessageHash(message: string): Uint8Array {
     throw new TypeError('Qbit wallet message must be a string')
   }
   if (!isWellFormedUtf16(message)) {
-    throw new QbitProtocolError(
-      'INVALID_BYTES',
-      'Qbit wallet message must be well-formed UTF-16 (no lone surrogates)'
-    )
+    throw new QbitProtocolError('INVALID_BYTES', 'Qbit wallet message must be well-formed UTF-16 (no lone surrogates)')
   }
   return taggedHash(QBIT_WALLET_MESSAGE_DOMAIN, textEncoder.encode(message))
 }
@@ -602,10 +581,7 @@ export function qbitDataSigPqcHash(messageHash: Uint8Array): Uint8Array {
   return taggedHash(QBIT_DATA_SIG_PQC_DOMAIN, messageHash)
 }
 
-export function encodeP2mrAddress(
-  program: Uint8Array,
-  network: QbitNetworkName | QbitNetworkParams
-): string {
+export function encodeP2mrAddress(program: Uint8Array, network: QbitNetworkName | QbitNetworkParams): string {
   assertByteLength(program, P2MR_PROGRAM_BYTES, 'P2MR program')
   const params = getQbitNetwork(network)
   const data = [P2MR_WITNESS_VERSION, ...convertBits([...program], 8, 5, true)]
@@ -630,10 +606,7 @@ export function decodeP2mrAddress(
   if (expectedNetwork !== undefined) {
     const expected = getQbitNetwork(expectedNetwork)
     if (decoded.hrp !== expected.bech32Hrp) {
-      throw new QbitProtocolError(
-        'WRONG_HRP',
-        `expected ${expected.bech32Hrp} HRP, got ${decoded.hrp}`
-      )
+      throw new QbitProtocolError('WRONG_HRP', `expected ${expected.bech32Hrp} HRP, got ${decoded.hrp}`)
     }
     network = expected.name
   }
@@ -672,16 +645,9 @@ export function addressToScriptPubKey(
  * `Uint8Array` (a Node `Buffer` or one from another realm passes); anything
  * else throws `INVALID_BYTES`.
  */
-export function outputScriptToAddress(
-  scriptPubKey: Uint8Array,
-  network: QbitNetworkName | QbitNetworkParams
-): string {
+export function outputScriptToAddress(scriptPubKey: Uint8Array, network: QbitNetworkName | QbitNetworkParams): string {
   assertBytes(scriptPubKey, 'scriptPubKey')
-  if (
-    scriptPubKey.length !== 34 ||
-    scriptPubKey[0] !== OP_2 ||
-    scriptPubKey[1] !== P2MR_PROGRAM_BYTES
-  ) {
+  if (scriptPubKey.length !== 34 || scriptPubKey[0] !== OP_2 || scriptPubKey[1] !== P2MR_PROGRAM_BYTES) {
     throw new QbitProtocolError('INVALID_SCRIPT', 'expected OP_2 PUSH32 P2MR scriptPubKey')
   }
   return encodeP2mrAddress(copyBytes(scriptPubKey, 2), network)
@@ -774,10 +740,7 @@ function assertRestrictedOutputModeOutputs(
   })
 }
 
-export function p2mrAddressFromRoot(
-  root: Uint8Array,
-  network: QbitNetworkName | QbitNetworkParams
-): string {
+export function p2mrAddressFromRoot(root: Uint8Array, network: QbitNetworkName | QbitNetworkParams): string {
   return encodeP2mrAddress(root, network)
 }
 
@@ -804,11 +767,7 @@ export function multiALeafScript(threshold: number, pubkeys: readonly Uint8Array
 // Descriptor expansion passes capThreshold = false: it still needs a k > 35
 // leaf's hash so that a tree with another spendable leaf commits to the same
 // root as qbit Core.
-function buildMultiALeafScript(
-  threshold: number,
-  pubkeys: readonly Uint8Array[],
-  capThreshold: boolean
-): Uint8Array {
+function buildMultiALeafScript(threshold: number, pubkeys: readonly Uint8Array[], capThreshold: boolean): Uint8Array {
   if (!Number.isInteger(threshold) || threshold < 1) {
     throw new RangeError('threshold must be a positive integer')
   }
@@ -836,18 +795,10 @@ function buildMultiALeafScript(
   return concatBytes(...chunks)
 }
 
-export function p2mrLeafHash(
-  leafVersion: number,
-  script: Uint8Array = new Uint8Array()
-): Uint8Array {
+export function p2mrLeafHash(leafVersion: number, script: Uint8Array = new Uint8Array()): Uint8Array {
   assertLeafVersion(leafVersion)
   assertBytes(script, 'P2MR leaf script')
-  return taggedHash(
-    'P2MRLeaf',
-    Uint8Array.of(leafVersion),
-    compactSize(script.length),
-    script
-  )
+  return taggedHash('P2MRLeaf', Uint8Array.of(leafVersion), compactSize(script.length), script)
 }
 
 export function p2mrBranchHash(a: Uint8Array, b: Uint8Array): Uint8Array {
@@ -945,19 +896,13 @@ export function createP2mrMessageProof(params: CreateP2mrMessageProofParams): P2
 
   const expectedLeafScript = singleKeyLeafScript(pubkey)
   if (compareBytes(leafScript, expectedLeafScript) !== 0) {
-    throw new QbitProtocolError(
-      'INVALID_SCRIPT',
-      'P2MR message leaf script does not match its public key'
-    )
+    throw new QbitProtocolError('INVALID_SCRIPT', 'P2MR message leaf script does not match its public key')
   }
   const leafHash = p2mrLeafHash(leafVersion, leafScript)
   const merkleRoot = verifyControlBlock(controlBlock, leafHash, leafVersion)
   const decodedAddress = decodeP2mrAddress(address)
   if (compareBytes(decodedAddress.program, merkleRoot) !== 0) {
-    throw new QbitProtocolError(
-      'INVALID_SCRIPT',
-      'P2MR message control block does not commit to its address'
-    )
+    throw new QbitProtocolError('INVALID_SCRIPT', 'P2MR message control block does not commit to its address')
   }
 
   const messageHash = qbitWalletMessageHash(message)
@@ -1013,18 +958,14 @@ export function verifyP2mrMessageProof(
   // Checked outside the `try` so that untyped callers omitting the expectation
   // (or passing a missing config field) fail loudly instead of reading `false`.
   if (!isRecord(options)) {
-    throw new TypeError(
-      'verifyP2mrMessageProof requires options with { expectedAddress } and/or { expectedNetwork }'
-    )
+    throw new TypeError('verifyP2mrMessageProof requires options with { expectedAddress } and/or { expectedNetwork }')
   }
   // Read each field once: a getter or Proxy must not pass this check and then
   // read as unset when the binding is applied.
   const rawExpectedAddress: unknown = options.expectedAddress
   const rawExpectedNetwork: unknown = options.expectedNetwork
   if (rawExpectedAddress === undefined && rawExpectedNetwork === undefined) {
-    throw new TypeError(
-      'verifyP2mrMessageProof requires options with { expectedAddress } and/or { expectedNetwork }'
-    )
+    throw new TypeError('verifyP2mrMessageProof requires options with { expectedAddress } and/or { expectedNetwork }')
   }
   try {
     if (typeof message !== 'string' || typeof verifyPqc !== 'function' || !isRecord(proof)) {
@@ -1065,10 +1006,7 @@ export function verifyP2mrMessageProof(
 
     const messageHash = qbitWalletMessageHash(message)
     const datasigHash = qbitDataSigPqcHash(messageHash)
-    if (
-      candidate.message_hash !== bytesToHex(messageHash) ||
-      candidate.datasig_hash !== bytesToHex(datasigHash)
-    ) {
+    if (candidate.message_hash !== bytesToHex(messageHash) || candidate.datasig_hash !== bytesToHex(datasigHash)) {
       return false
     }
 
@@ -1078,11 +1016,7 @@ export function verifyP2mrMessageProof(
       return false
     }
     const leafHash = p2mrLeafHash(candidate.leaf_version, leafScript)
-    const merkleRoot = verifyControlBlock(
-      hexToBytes(candidate.control_block),
-      leafHash,
-      candidate.leaf_version
-    )
+    const merkleRoot = verifyControlBlock(hexToBytes(candidate.control_block), leafHash, candidate.leaf_version)
     // Decoding with `expectedNetwork` rejects a proof address with any other
     // network's HRP (signet and Testnet4 share `tq`), and the decoder rejects
     // non-ASCII look-alikes such as U+212A. The canonical-spelling check rejects
@@ -1097,10 +1031,7 @@ export function verifyP2mrMessageProof(
     }
     if (expectedAddress !== undefined) {
       const expected = decodeP2mrAddress(expectedAddress, expectedNetwork)
-      if (
-        expected.hrp !== proofAddress.hrp ||
-        compareBytes(expected.program, proofAddress.program) !== 0
-      ) {
+      if (expected.hrp !== proofAddress.hrp || compareBytes(expected.program, proofAddress.program) !== 0) {
         return false
       }
     }
@@ -1113,10 +1044,7 @@ export function verifyP2mrMessageProof(
 
 /** Canonical lowercase bech32m spelling of a decoded P2MR address. */
 function canonicalP2mrAddress(decoded: DecodedP2mrAddress): string {
-  return bech32Encode('bech32m', decoded.hrp, [
-    P2MR_WITNESS_VERSION,
-    ...convertBits([...decoded.program], 8, 5, true),
-  ])
+  return bech32Encode('bech32m', decoded.hrp, [P2MR_WITNESS_VERSION, ...convertBits([...decoded.program], 8, 5, true)])
 }
 
 export function isValidP2mrSighashType(hashType: number): boolean {
@@ -1125,8 +1053,7 @@ export function isValidP2mrSighashType(hashType: number): boolean {
     hashType >= 0 &&
     hashType <= 0xff &&
     (hashType <= SIGHASH_SINGLE ||
-      (hashType >= (SIGHASH_ANYONECANPAY | SIGHASH_ALL) &&
-        hashType <= (SIGHASH_ANYONECANPAY | SIGHASH_SINGLE)))
+      (hashType >= (SIGHASH_ANYONECANPAY | SIGHASH_ALL) && hashType <= (SIGHASH_ANYONECANPAY | SIGHASH_SINGLE)))
   )
 }
 
@@ -1136,10 +1063,7 @@ export function isValidP2mrSighashType(hashType: number): boolean {
  * (a Node `Buffer` or one from another realm passes); a string, array or other
  * view throws `INVALID_BYTES`, whatever its length.
  */
-export function encodeP2mrWitnessSignature(
-  signature: Uint8Array,
-  hashType: number = SIGHASH_DEFAULT
-): Uint8Array {
+export function encodeP2mrWitnessSignature(signature: Uint8Array, hashType: number = SIGHASH_DEFAULT): Uint8Array {
   assertByteLength(signature, PQC_SIGNATURE_BYTES, 'PQC signature')
   if (!isValidP2mrSighashType(hashType)) {
     throw new QbitProtocolError('INVALID_SCRIPT', 'invalid P2MR sighash type')
@@ -1461,10 +1385,7 @@ export function encodeP2mrPsbtScriptSigField(
  * Decode a PSBT_IN_P2MR_SCRIPT_SIG (0x19) record. `key` and `value` must be
  * `Uint8Array`s; anything else throws `INVALID_BYTES`.
  */
-export function decodeP2mrPsbtScriptSigField(
-  key: Uint8Array,
-  value: Uint8Array
-): P2mrPsbtScriptSigField {
+export function decodeP2mrPsbtScriptSigField(key: Uint8Array, value: Uint8Array): P2mrPsbtScriptSigField {
   assertBytes(key, 'P2MR script signature key')
   if (key.length !== 1 + P2MR_PROGRAM_BYTES + P2MR_PROGRAM_BYTES || key[0] !== PSBT_IN_P2MR_SCRIPT_SIG) {
     throw new QbitProtocolError('INVALID_PSBT', 'input P2MR script signature key must be type||pubkey32||leafhash32')
@@ -1491,10 +1412,7 @@ export function encodeP2mrPsbtLeafScriptField(
   }
 }
 
-export function decodeP2mrPsbtLeafScriptField(
-  key: Uint8Array,
-  value: Uint8Array
-): P2mrPsbtLeafScriptField {
+export function decodeP2mrPsbtLeafScriptField(key: Uint8Array, value: Uint8Array): P2mrPsbtLeafScriptField {
   if (key.length < 1 || key[0] !== PSBT_IN_P2MR_LEAF_SCRIPT) {
     throw new QbitProtocolError('INVALID_PSBT', 'input P2MR leaf script key has wrong type')
   }
@@ -1537,20 +1455,14 @@ export function decodeQbitProprietaryP2mrInputField(
 
   if (subtype === PSBT_QBIT_IN_P2MR_LEAF_SCRIPT) {
     return {
-      ...decodeP2mrPsbtLeafScriptField(
-        concatBytes(Uint8Array.of(PSBT_IN_P2MR_LEAF_SCRIPT), keyData),
-        value
-      ),
+      ...decodeP2mrPsbtLeafScriptField(concatBytes(Uint8Array.of(PSBT_IN_P2MR_LEAF_SCRIPT), keyData), value),
       type: 'p2mrLeafScript',
     }
   }
 
   if (subtype === PSBT_QBIT_IN_P2MR_SCRIPT_SIG) {
     return {
-      ...decodeP2mrPsbtScriptSigField(
-        concatBytes(Uint8Array.of(PSBT_IN_P2MR_SCRIPT_SIG), keyData),
-        value
-      ),
+      ...decodeP2mrPsbtScriptSigField(concatBytes(Uint8Array.of(PSBT_IN_P2MR_SCRIPT_SIG), keyData), value),
       type: 'p2mrScriptSig',
     }
   }
@@ -1558,9 +1470,7 @@ export function decodeQbitProprietaryP2mrInputField(
   throw new QbitProtocolError('INVALID_PSBT', 'unsupported qbit proprietary P2MR subtype')
 }
 
-export function encodeQbitProprietaryP2mrMerkleRootField(
-  merkleRoot: Uint8Array
-): EncodedQbitProprietaryP2mrField {
+export function encodeQbitProprietaryP2mrMerkleRootField(merkleRoot: Uint8Array): EncodedQbitProprietaryP2mrField {
   assertByteLength(merkleRoot, P2MR_PROGRAM_BYTES, 'qbit P2MR merkle root')
   return {
     identifier: PSBT_QBIT_IDENTIFIER,
@@ -1991,7 +1901,7 @@ function dedupeP2mrLeafScripts(leaves: readonly P2mrPsbtLeafScriptField[]): P2mr
   // Keys are unique and canonical, so a run of records with one control block
   // is at most a 0x1d record and a qbit 0x02 record. A record in a run repeats
   // an earlier one with the same script and leaf version.
-  for (let runStart = 0; runStart < order.length; ) {
+  for (let runStart = 0; runStart < order.length;) {
     const controlBlock = leaves[order[runStart]!]!.controlBlock
     let runEnd = runStart + 1
     while (runEnd < order.length && bytesEqual(leaves[order[runEnd]!]!.controlBlock, controlBlock)) runEnd += 1
@@ -2158,9 +2068,7 @@ export interface P2mrSigningPlanRef {
  * call. Its eventual settlement is ignored, so the signature is stored but
  * whether the persistence it started completed is unknown to the caller.
  */
-export type P2mrPsbtOnSignedFn = (
-  event: P2mrSigningPlanRef & { field: { key: Uint8Array; value: Uint8Array } }
-) => void
+export type P2mrPsbtOnSignedFn = (event: P2mrSigningPlanRef & { field: { key: Uint8Array; value: Uint8Array } }) => void
 
 export interface P2mrSigningOptions {
   /**
@@ -2360,10 +2268,7 @@ export function signP2mrPsbt(
       }
       if (signature !== undefined) {
         if (!isUint8Array(signature)) {
-          throw new QbitProtocolError(
-            'INVALID_SIGNER',
-            'sign must return a Uint8Array signature or undefined'
-          )
+          throw new QbitProtocolError('INVALID_SIGNER', 'sign must return a Uint8Array signature or undefined')
         }
         // The encoder copies the bytes, so the stored field never aliases the
         // signer's buffer, whichever realm it came from. Storing inside the
@@ -2526,19 +2431,13 @@ export function extractP2mrTransaction(psbt: Psbt, options: PsbtLimitOptions = {
   // An upper bound: re-encoding never lengthens the unsigned transaction or a witness.
   const size = finalWitnesses.reduce((sum, witness) => sum + witness.length, txBytes.length + 2)
   if (size > maxBytes) {
-    throw new QbitProtocolError(
-      'INVALID_PSBT',
-      `extracted transaction would be larger than maxBytes (${maxBytes})`
-    )
+    throw new QbitProtocolError('INVALID_PSBT', `extracted transaction would be larger than maxBytes (${maxBytes})`)
   }
   const witnesses = finalWitnesses.map(witness => parseWitnessStack(witness, budget))
   return serializeWitnessTransaction(tx, witnesses)
 }
 
-export function p2mrAddressFromPubkey(
-  pk32: Uint8Array,
-  network: QbitNetworkName | QbitNetworkParams
-): string {
+export function p2mrAddressFromPubkey(pk32: Uint8Array, network: QbitNetworkName | QbitNetworkParams): string {
   const script = singleKeyLeafScript(pk32)
   const root = p2mrLeafHash(P2MR_LEAF_VERSION_V1, script)
   return p2mrAddressFromRoot(root, network)
@@ -2677,10 +2576,7 @@ function qbitUriFieldName(key: string): QbitUriFieldName | undefined {
   // and meßage uppercase to MESSAGE. Capital ẞ (U+1E9E) folds only to ß that way,
   // so map ß to ss as Unicode casefolding does.
   const lower = key.toUpperCase().toLowerCase().replace(/ß/g, 'ss')
-  if (
-    key !== lower &&
-    (lower === 'amount' || lower === 'label' || lower === 'message' || lower.startsWith('req-'))
-  ) {
+  if (key !== lower && (lower === 'amount' || lower === 'label' || lower === 'message' || lower.startsWith('req-'))) {
     throw new QbitProtocolError('INVALID_URI', 'qbit URI amount, label, message and req- names must be lowercase ASCII')
   }
   // Core strips req- and accepts it only on amount, label and message
@@ -2738,10 +2634,7 @@ export function verifyDescriptorChecksum(input: string): DescriptorChecksumParts
   return parts
 }
 
-export function parseP2mrDescriptor(
-  input: string,
-  options: ParseP2mrDescriptorOptions = {}
-): ParsedP2mrDescriptor {
+export function parseP2mrDescriptor(input: string, options: ParseP2mrDescriptorOptions = {}): ParsedP2mrDescriptor {
   const parts = splitDescriptorChecksum(input.trim())
   if (options.requireChecksum && parts.checksum === undefined) {
     throw new QbitProtocolError('INVALID_DESCRIPTOR', 'descriptor is missing checksum')
@@ -2863,10 +2756,7 @@ function p2mrLeafScript(leaf: P2mrDescriptorLeaf): Uint8Array {
     return singleKeyLeafScript(leaf.pubkey)
   }
 
-  const pubkeys =
-    leaf.type === 'sortedmulti_a'
-      ? [...leaf.pubkeys].sort(compareBytes)
-      : leaf.pubkeys
+  const pubkeys = leaf.type === 'sortedmulti_a' ? [...leaf.pubkeys].sort(compareBytes) : leaf.pubkeys
   return buildMultiALeafScript(leaf.threshold, pubkeys, false)
 }
 
@@ -2932,14 +2822,8 @@ export function formatP2mrImportDescriptors(
   assertImportDescriptorText(pair.internal, 'internal')
   assertRangedP2mrImportDescriptor(pair.external, 'external')
   assertRangedP2mrImportDescriptor(pair.internal, 'internal')
-  if (
-    splitDescriptorChecksum(pair.external).descriptor ===
-    splitDescriptorChecksum(pair.internal).descriptor
-  ) {
-    throw new QbitProtocolError(
-      'INVALID_DESCRIPTOR',
-      'external and internal import descriptors must differ'
-    )
+  if (splitDescriptorChecksum(pair.external).descriptor === splitDescriptorChecksum(pair.internal).descriptor) {
+    throw new QbitProtocolError('INVALID_DESCRIPTOR', 'external and internal import descriptors must differ')
   }
   assertSingleNetworkImportDescriptors(pair)
   return [
@@ -3020,10 +2904,7 @@ function extendedKeyDecodePrefixes(params: QbitNetworkParams): string[] {
 function assertRangedP2mrImportDescriptor(descriptor: string, name: string): void {
   const parsed = parseP2mrDescriptor(descriptor)
   if (parsed.type !== 'mr' || !p2mrTreeHasWildcard(parsed.tree)) {
-    throw new QbitProtocolError(
-      'INVALID_DESCRIPTOR',
-      `${name} import descriptor must be ranged`
-    )
+    throw new QbitProtocolError('INVALID_DESCRIPTOR', `${name} import descriptor must be ranged`)
   }
 }
 
@@ -3063,11 +2944,7 @@ function p2mrTreeHasStandardSatisfaction(tree: P2mrDescriptorTree): boolean {
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     if (node.type === 'branch') {
       pending.push(node.left, node.right)
-    } else if (
-      node.type === 'pk' ||
-      node.type === 'pqc' ||
-      node.threshold <= P2MR_V1_MAX_MULTI_A_THRESHOLD
-    ) {
+    } else if (node.type === 'pk' || node.type === 'pqc' || node.threshold <= P2MR_V1_MAX_MULTI_A_THRESHOLD) {
       return true
     }
   }
@@ -3104,10 +2981,7 @@ function assertParsedP2mrDescriptor(descriptor: unknown): asserts descriptor is 
     }
     const type = node['type']
     if (type === 'branch') {
-      pending.push(
-        { node: node['left'], depth: depth + 1 },
-        { node: node['right'], depth: depth + 1 }
-      )
+      pending.push({ node: node['left'], depth: depth + 1 }, { node: node['right'], depth: depth + 1 })
     } else if (type === 'pk') {
       if (!isBytesOfLength(node['pubkey'], P2MR_PROGRAM_BYTES)) {
         throw new QbitProtocolError('INVALID_DESCRIPTOR', 'P2MR pubkey must be 32 bytes')
@@ -3129,9 +3003,7 @@ function assertParsedPqcKeyExpression(key: unknown): void {
     typeof key['key'] !== 'string' ||
     !isStringArray(key['path']) ||
     (origin !== undefined &&
-      (!isRecord(origin) ||
-        typeof origin['fingerprint'] !== 'string' ||
-        !isStringArray(origin['path'])))
+      (!isRecord(origin) || typeof origin['fingerprint'] !== 'string' || !isStringArray(origin['path'])))
   ) {
     throw new QbitProtocolError('INVALID_DESCRIPTOR', 'pqc descriptor key is malformed')
   }
@@ -3141,23 +3013,11 @@ function assertParsedPqcKeyExpression(key: unknown): void {
 
 // Same bounds as parseMultiADescriptor and qbit Core's multi_a() parser
 // (src/script/descriptor.cpp:2775-2786).
-function assertParsedMultiALeaf(
-  name: 'multi_a' | 'sortedmulti_a',
-  threshold: unknown,
-  pubkeys: unknown
-): void {
+function assertParsedMultiALeaf(name: 'multi_a' | 'sortedmulti_a', threshold: unknown, pubkeys: unknown): void {
   if (!Array.isArray(pubkeys) || pubkeys.length < 1 || pubkeys.length > P2MR_MAX_MULTI_A_PUBKEYS) {
-    throw new QbitProtocolError(
-      'INVALID_DESCRIPTOR',
-      `${name} requires 1..${P2MR_MAX_MULTI_A_PUBKEYS} pubkeys`
-    )
+    throw new QbitProtocolError('INVALID_DESCRIPTOR', `${name} requires 1..${P2MR_MAX_MULTI_A_PUBKEYS} pubkeys`)
   }
-  if (
-    typeof threshold !== 'number' ||
-    !Number.isInteger(threshold) ||
-    threshold < 1 ||
-    threshold > pubkeys.length
-  ) {
+  if (typeof threshold !== 'number' || !Number.isInteger(threshold) || threshold < 1 || threshold > pubkeys.length) {
     throw new QbitProtocolError('INVALID_DESCRIPTOR', `${name} threshold is out of range`)
   }
   for (const [index, pubkey] of pubkeys.entries()) {
@@ -3183,10 +3043,7 @@ export function descriptorChecksum(descriptor: string): string {
   for (const char of descriptor) {
     const position = DESCRIPTOR_INPUT_CHARSET.indexOf(char)
     if (position === -1) {
-      throw new QbitProtocolError(
-        'INVALID_DESCRIPTOR',
-        `descriptor contains invalid checksum character: ${char}`
-      )
+      throw new QbitProtocolError('INVALID_DESCRIPTOR', `descriptor contains invalid checksum character: ${char}`)
     }
 
     checksum = descriptorPolyMod(checksum, position & 31)
@@ -3417,10 +3274,7 @@ function parsePqcKeyExpression(expression: string): P2mrPqcKeyExpression {
 }
 
 function formatPqcKeyExpression(key: P2mrPqcKeyExpression): string {
-  const origin =
-    key.origin === undefined
-      ? ''
-      : `[${[key.origin.fingerprint, ...key.origin.path].join('/')}]`
+  const origin = key.origin === undefined ? '' : `[${[key.origin.fingerprint, ...key.origin.path].join('/')}]`
   const path = key.path.length === 0 ? '' : `/${key.path.join('/')}`
   return `${origin}${key.key}${path}`
 }
@@ -3511,10 +3365,7 @@ function parseMultiADescriptor(
   const threshold = Number.parseInt(thresholdText, 10)
   const pubkeys = parts.slice(1).map((part, index) => parseHex32(part, `${name} pubkey ${index}`))
   if (pubkeys.length > P2MR_MAX_MULTI_A_PUBKEYS) {
-    throw new QbitProtocolError(
-      'INVALID_DESCRIPTOR',
-      `${name} supports at most ${P2MR_MAX_MULTI_A_PUBKEYS} pubkeys`
-    )
+    throw new QbitProtocolError('INVALID_DESCRIPTOR', `${name} supports at most ${P2MR_MAX_MULTI_A_PUBKEYS} pubkeys`)
   }
   if (threshold < 1 || threshold > pubkeys.length) {
     throw new QbitProtocolError('INVALID_DESCRIPTOR', `${name} threshold is out of range`)
@@ -3532,13 +3383,7 @@ function assertDescriptorRange(range: [number, number]): void {
     throw new QbitProtocolError('INVALID_DESCRIPTOR', 'descriptor range must be [start, end]')
   }
   const [start, end] = range
-  if (
-    !Number.isSafeInteger(start) ||
-    !Number.isSafeInteger(end) ||
-    start < 0 ||
-    end < start ||
-    end > 0x7fffffff
-  ) {
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end < start || end > 0x7fffffff) {
     throw new QbitProtocolError('INVALID_DESCRIPTOR', 'descriptor range must be within 0..2^31-1')
   }
   // Core: `high >= low + 1000000` is "Range is too large" (rpc/util.cpp:1526-1527).
@@ -3552,13 +3397,15 @@ function bech32Encode(encoding: 'bech32m', hrp: string, data: readonly number[])
     throw new QbitProtocolError('WRONG_HRP', 'bech32 HRP must be printable lowercase ASCII')
   }
   const combined = [...data, ...bech32CreateChecksum(encoding, hrp, data)]
-  return `${hrp}1${combined.map(value => {
-    const char = BECH32_CHARSET[value]
-    if (char === undefined) {
-      throw new QbitProtocolError('INVALID_BECH32', 'invalid bech32 data value')
-    }
-    return char
-  }).join('')}`
+  return `${hrp}1${combined
+    .map(value => {
+      const char = BECH32_CHARSET[value]
+      if (char === undefined) {
+        throw new QbitProtocolError('INVALID_BECH32', 'invalid bech32 data value')
+      }
+      return char
+    })
+    .join('')}`
 }
 
 function bech32Decode(address: string): {
@@ -3571,10 +3418,7 @@ function bech32Decode(address: string): {
   // Unicode case folding would otherwise map look-alikes such as U+212A KELVIN
   // SIGN onto charset letters and let two spellings decode to one program.
   if (address.length > BECH32_MAX_LENGTH) {
-    throw new QbitProtocolError(
-      'INVALID_BECH32',
-      `bech32 strings cannot exceed ${BECH32_MAX_LENGTH} characters`
-    )
+    throw new QbitProtocolError('INVALID_BECH32', `bech32 strings cannot exceed ${BECH32_MAX_LENGTH} characters`)
   }
   let hasLower = false
   let hasUpper = false
@@ -3610,8 +3454,7 @@ function bech32Decode(address: string): {
   }
 
   const polymod = bech32Polymod([...bech32HrpExpand(hrp), ...values])
-  const encoding =
-    polymod === BECH32_CONST ? 'bech32' : polymod === BECH32M_CONST ? 'bech32m' : undefined
+  const encoding = polymod === BECH32_CONST ? 'bech32' : polymod === BECH32M_CONST ? 'bech32m' : undefined
   if (encoding === undefined) {
     throw new QbitProtocolError('INVALID_BECH32', 'invalid bech32 checksum')
   }
@@ -3622,11 +3465,7 @@ function bech32Decode(address: string): {
   }
 }
 
-function bech32CreateChecksum(
-  encoding: 'bech32m',
-  hrp: string,
-  data: readonly number[]
-): number[] {
+function bech32CreateChecksum(encoding: 'bech32m', hrp: string, data: readonly number[]): number[] {
   const constValue = encoding === 'bech32m' ? BECH32M_CONST : BECH32_CONST
   const values = [...bech32HrpExpand(hrp), ...data]
   const polymod = bech32Polymod([...values, 0, 0, 0, 0, 0, 0]) ^ constValue
@@ -3740,19 +3579,15 @@ function readUint32Be(bytes: Uint8Array, offset: number): number {
     throw new QbitProtocolError('INVALID_BYTES', 'cannot read uint32 from bytes')
   }
   return (
-    (bytes[offset]! * 0x1000000) +
-    ((bytes[offset + 1]! << 16) >>> 0) +
-    ((bytes[offset + 2]! << 8) >>> 0) +
-    bytes[offset + 3]!
-  ) >>> 0
+    (bytes[offset]! * 0x1000000 +
+      ((bytes[offset + 1]! << 16) >>> 0) +
+      ((bytes[offset + 2]! << 8) >>> 0) +
+      bytes[offset + 3]!) >>>
+    0
+  )
 }
 
-function convertBits(
-  data: readonly number[],
-  fromBits: number,
-  toBits: number,
-  pad: boolean
-): number[] {
+function convertBits(data: readonly number[], fromBits: number, toBits: number, pad: boolean): number[] {
   let acc = 0
   let bits = 0
   const ret: number[] = []
@@ -3799,13 +3634,7 @@ function compactSize(value: number): Uint8Array {
   if (value < 253) return Uint8Array.of(value)
   if (value <= 0xffff) return Uint8Array.of(253, value & 0xff, (value >> 8) & 0xff)
   if (value <= 0xffffffff) {
-    return Uint8Array.of(
-      254,
-      value & 0xff,
-      (value >> 8) & 0xff,
-      (value >> 16) & 0xff,
-      (value >> 24) & 0xff
-    )
+    return Uint8Array.of(254, value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >> 24) & 0xff)
   }
 
   let remaining = BigInt(value)
@@ -4220,10 +4049,7 @@ function serializeUnsignedTransaction(tx: P2mrTransaction): Uint8Array {
   return concatBytes(...parts)
 }
 
-function serializeWitnessTransaction(
-  tx: P2mrTransaction,
-  witnesses: readonly (readonly Uint8Array[])[]
-): Uint8Array {
+function serializeWitnessTransaction(tx: P2mrTransaction, witnesses: readonly (readonly Uint8Array[])[]): Uint8Array {
   const parts: Uint8Array[] = [
     uint32LE(tx.version, 'version'),
     Uint8Array.of(0x00, 0x01),
@@ -4403,10 +4229,7 @@ function prepareP2mrSigningPlans(
 
     const target = `${key.inputIndex}:${bytesToHex(pubkey)}:${bytesToHex(leafHash)}`
     if (targets.has(target)) {
-      throw new QbitProtocolError(
-        'INVALID_PSBT',
-        `input ${key.inputIndex}: duplicate P2MR signing plan`
-      )
+      throw new QbitProtocolError('INVALID_PSBT', `input ${key.inputIndex}: duplicate P2MR signing plan`)
     }
     targets.add(target)
 
@@ -4416,15 +4239,8 @@ function prepareP2mrSigningPlans(
     }
     // finalizeP2mrPsbt would refuse this input whatever is signed.
     assertNoP2mrFinalScriptSig(psbt.inputs[key.inputIndex]!, key.inputIndex)
-    if (
-      input.scriptSigs.some(
-        sig => bytesEqual(sig.pubkey, pubkey) && bytesEqual(sig.leafHash, leafHash)
-      )
-    ) {
-      throw new QbitProtocolError(
-        'INVALID_PSBT',
-        `input ${key.inputIndex}: signing plan already has a P2MR signature`
-      )
+    if (input.scriptSigs.some(sig => bytesEqual(sig.pubkey, pubkey) && bytesEqual(sig.leafHash, leafHash))) {
+      throw new QbitProtocolError('INVALID_PSBT', `input ${key.inputIndex}: signing plan already has a P2MR signature`)
     }
     // Core's SignPSBTInput SIGHASH_MISMATCH rules: the plan's type must equal the
     // input's PSBT_IN_SIGHASH_TYPE (if present) and the type of every P2MR
@@ -4488,10 +4304,7 @@ function prepareP2mrSigningPlans(
  * reveals one leaf and Core signs only its best partial plan (sign.cpp:743-756);
  * plans on one leaf pass, so co-signers can complete a `multi_a` leaf in turn.
  */
-function assertFinalizeUsesP2mrPlans(
-  summary: PsbtSummary,
-  plans: readonly PreparedP2mrSigningPlan[]
-): void {
+function assertFinalizeUsesP2mrPlans(summary: PsbtSummary, plans: readonly PreparedP2mrSigningPlan[]): void {
   const placeholder = new Uint8Array(PQC_SIGNATURE_BYTES)
   const planned = new Map<number, P2mrPsbtScriptSigField[]>()
   for (const { inputIndex, pubkey, leafHash, hashType } of plans) {
@@ -4710,11 +4523,7 @@ function p2mrSigningTemplate(leafVersion: number, script: Uint8Array): P2mrSigni
  * signature checked after one would not verify. Neither template contains
  * OP_CODESEPARATOR, so the fixed position is right for every accepted leaf.
  */
-function p2mrSigningTemplateHasKey(
-  leafVersion: number,
-  script: Uint8Array,
-  pubkey: Uint8Array
-): boolean {
+function p2mrSigningTemplateHasKey(leafVersion: number, script: Uint8Array, pubkey: Uint8Array): boolean {
   const template = p2mrSigningTemplate(leafVersion, script)
   return template !== undefined && template.keys.some(key => bytesEqual(key, pubkey))
 }
@@ -4842,11 +4651,7 @@ function selectP2mrWitness(
     itemLengths.push(leaf.script.length, controlBlock.length)
     let size = compactSize(itemLengths.length).length
     for (const length of itemLengths) size += compactSize(length).length + length
-    if (
-      best === undefined ||
-      size < best.size ||
-      (size === best.size && compareBytes(leaf.script, best.script) < 0)
-    ) {
+    if (best === undefined || size < best.size || (size === best.size && compareBytes(leaf.script, best.script) < 0)) {
       best = { stack, script: leaf.script, controlBlock, size }
     }
   }
@@ -4918,10 +4723,7 @@ function isFinalScriptSig(entry: PsbtKeyValue): boolean {
  */
 function assertNoP2mrFinalScriptSig(map: readonly PsbtKeyValue[], inputIndex: number): void {
   if (map.some(entry => isFinalScriptSig(entry) && entry.value.length > 0)) {
-    throw new QbitProtocolError(
-      'INVALID_PSBT',
-      `input ${inputIndex}: a P2MR input cannot carry a final scriptSig`
-    )
+    throw new QbitProtocolError('INVALID_PSBT', `input ${inputIndex}: a P2MR input cannot carry a final scriptSig`)
   }
 }
 
@@ -4935,10 +4737,7 @@ function requireP2mrInputRoot(input: PsbtInputSummary, inputIndex: number): Uint
     scriptPubKey[0] !== OP_2 ||
     scriptPubKey[1] !== P2MR_PROGRAM_BYTES
   ) {
-    throw new QbitProtocolError(
-      'INVALID_PSBT',
-      `input ${inputIndex}: witness UTXO is not an OP_2 PUSH32 P2MR output`
-    )
+    throw new QbitProtocolError('INVALID_PSBT', `input ${inputIndex}: witness UTXO is not an OP_2 PUSH32 P2MR output`)
   }
 
   const root = copyBytes(scriptPubKey, 2)
@@ -5009,9 +4808,7 @@ function isCoreNonFinalInputField(entry: PsbtKeyValue): boolean {
     )
   }
   return (
-    (keyType >= 0x02 && keyType <= 0x06) ||
-    (keyType >= 0x0a && keyType <= 0x0d) ||
-    (keyType >= 0x13 && keyType <= 0x1d)
+    (keyType >= 0x02 && keyType <= 0x06) || (keyType >= 0x0a && keyType <= 0x0d) || (keyType >= 0x13 && keyType <= 0x1d)
   )
 }
 

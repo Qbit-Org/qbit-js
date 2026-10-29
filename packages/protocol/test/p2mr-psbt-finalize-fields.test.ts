@@ -101,9 +101,7 @@ describe('finalizeP2mrPsbt keeps the input fields Core keeps', () => {
       keys,
       sign: () => Uint8Array.from({ length: PQC_SIGNATURE_BYTES }, (_, i) => (i * 5) & 0xff),
     })
-    expect(keyHexes(signed.inputs[0]!).map(key => key.slice(0, 2))).toEqual(
-      ['00', '01', '1d', 'fc', 'fc', 'f0', '19']
-    )
+    expect(keyHexes(signed.inputs[0]!).map(key => key.slice(0, 2))).toEqual(['00', '01', '1d', 'fc', 'fc', 'f0', '19'])
 
     const finalized = finalizeP2mrPsbt(signed)
     const [utxo, witnessUtxo, proprietary, unknown, finalWitness] = finalized.inputs[0]!
@@ -139,9 +137,12 @@ describe('finalizeP2mrPsbt keeps the input fields Core keeps', () => {
       qbitEntry(encodeQbitProprietaryP2mrLeafScriptField(controlBlock, leafScript)),
       qbitEntry(encodeQbitProprietaryP2mrScriptSigField(pubkey, leafHash, signature)),
     ]
-    expect(keyHexes(psbt.inputs[0]!).map(key => key.slice(0, 14))).toEqual(
-      ['01', 'fc047162697401', 'fc047162697402', 'fc047162697403']
-    )
+    expect(keyHexes(psbt.inputs[0]!).map(key => key.slice(0, 14))).toEqual([
+      '01',
+      'fc047162697401',
+      'fc047162697402',
+      'fc047162697403',
+    ])
 
     const finalized = finalizeP2mrPsbt(psbt)
     expect(keyHexes(finalized.inputs[0]!)).toEqual(['01', '08'])
@@ -153,7 +154,9 @@ describe('finalizeP2mrPsbt keeps the input fields Core keeps', () => {
   it('drops exactly the key types Core omits from a finalized input', () => {
     // 0x19 and 0x1d (and qbit subtypes 01-03) are covered by the tests above. 0x07 is an empty
     // final scriptSig, which Core omits (psbt.h:503-507); a non-empty one throws (tested below).
-    const dropped = [0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x0a, 0x0b, 0x0c, 0x0d, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x1a, 0x1b, 0x1c]
+    const dropped = [
+      0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x0a, 0x0b, 0x0c, 0x0d, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x1a, 0x1b, 0x1c,
+    ]
     const kept = [0x09, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x1e, 0x1f, 0x20, 0xfb]
     // Core requires a bare type byte for these keys; the others carry key data.
     const singleByteKeyTypes = new Set([0x03, 0x04, 0x05, 0x07, 0x13, 0x17, 0x18])

@@ -22,7 +22,16 @@
 // Works offline: TypeScript, `@types/node` and `@noble/hashes` come from this
 // workspace's install, at the versions the lockfile pins.
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -153,7 +162,14 @@ try {
   for (const dir of PACKAGE_DIRS) {
     const packDir = join(stage, `pack-${dir}`)
     mkdirSync(packDir)
-    run('npm', ['pack', join(repoRoot, 'packages', dir), '--pack-destination', packDir, '--silent', '--ignore-scripts=false'])
+    run('npm', [
+      'pack',
+      join(repoRoot, 'packages', dir),
+      '--pack-destination',
+      packDir,
+      '--silent',
+      '--ignore-scripts=false',
+    ])
     const tarball = readdirSync(packDir).find(file => file.endsWith('.tgz'))
     if (!tarball) throw new Error(`npm pack produced no tarball for packages/${dir}`)
     const target = join(modules, ...names[dir].split('/'))

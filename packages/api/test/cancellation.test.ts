@@ -77,9 +77,10 @@ const STATS = {
 }
 
 /** A real P2MR transaction whose txid the client derives from the hex (see broadcast.test.ts). */
-const P2MR_TX = JSON.parse(
-  readFileSync(new URL('./fixtures/p2mr-witness-tx.json', import.meta.url), 'utf8')
-) as { rawTxHex: string; txid: string }
+const P2MR_TX = JSON.parse(readFileSync(new URL('./fixtures/p2mr-witness-tx.json', import.meta.url), 'utf8')) as {
+  rawTxHex: string
+  txid: string
+}
 
 function txid(n: number): string {
   return n.toString(16).padStart(64, '0')
@@ -92,7 +93,15 @@ function historyPage(n: number, confirmed = true): string {
       version: 2,
       locktime: 0,
       vin: [],
-      vout: [{ scriptpubkey: '51', scriptpubkey_asm: 'OP_1', scriptpubkey_type: 'unknown', scriptpubkey_address: ADDR, value: 1 }],
+      vout: [
+        {
+          scriptpubkey: '51',
+          scriptpubkey_asm: 'OP_1',
+          scriptpubkey_type: 'unknown',
+          scriptpubkey_address: ADDR,
+          value: 1,
+        },
+      ],
       size: 100,
       weight: 100,
       fee: 10,
@@ -517,7 +526,9 @@ describe('per-call deadline (deadlineMs)', () => {
 
   it('still retries transient failures that fit inside the deadline', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const { fetchFn, calls } = makeFetch(i => (i === 0 ? { status: 503, body: 'busy' } : { body: JSON.stringify(STATS) }))
+    const { fetchFn, calls } = makeFetch(i =>
+      i === 0 ? { status: 503, body: 'busy' } : { body: JSON.stringify(STATS) }
+    )
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, retryBaseDelayMs: 100 })
 
     const outcome = track(client.getAddressStats(ADDR, { deadlineMs: 1_000 }))

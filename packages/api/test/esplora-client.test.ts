@@ -68,7 +68,8 @@ function withStats(handler: Handler, confirmed: number, mempool: number, address
 
 const noSleep = () => Promise.resolve()
 /** A one-input, one-output legacy transaction and its txid (getTxHex checks the reply). */
-const LEGACY_TX_HEX = '020000000111111111111111111111111111111111111111111111111111111111111111110000000000ffffffff0100000000000000000000000000'
+const LEGACY_TX_HEX =
+  '020000000111111111111111111111111111111111111111111111111111111111111111110000000000ffffffff0100000000000000000000000000'
 const LEGACY_TXID = '992393c6db57a325f48e3097a50c45349c3eb27df5160a68cbb7a022f98c2dc2'
 // A node reply to a submission whose hex the client cannot parse into a txid itself.
 const BROADCAST_TXID = 'cd'.repeat(32)
@@ -91,9 +92,7 @@ function historyTx(txid: string, confirmed: boolean) {
     size: 100,
     weight: 100,
     fee: 10,
-    status: confirmed
-      ? { confirmed: true, block_height: 8, block_time: 123 }
-      : { confirmed: false },
+    status: confirmed ? { confirmed: true, block_height: 8, block_time: 123 } : { confirmed: false },
   }
 }
 
@@ -127,11 +126,7 @@ describe('EsploraClient endpoints', () => {
   it('binds the default global fetch receiver for service-worker fetch implementations', async () => {
     const originalFetch = globalThis.fetch
     const calls: string[] = []
-    async function fetchWithReceiver(
-      this: typeof globalThis,
-      input: RequestInfo | URL,
-      _init?: RequestInit
-    ) {
+    async function fetchWithReceiver(this: typeof globalThis, input: RequestInfo | URL, _init?: RequestInit) {
       expect(this).toBe(globalThis)
       calls.push(String(input))
       return new Response(JSON.stringify(STATS), { status: 200 })
@@ -188,26 +183,30 @@ describe('EsploraClient endpoints', () => {
     const confirmedA = historyTx('22'.repeat(32), true)
     const confirmedB = historyTx('33'.repeat(32), true)
     const confirmedC = historyTx('44'.repeat(32), true)
-    const { fetchFn, calls } = makeFetch(withStats((_i, url) => {
-      if (url.endsWith(`/address/${ADDR}/txs/mempool`)) {
-        return { body: JSON.stringify([mempoolTx]) }
-      }
-      if (url.endsWith(`/address/${ADDR}/txs/chain`)) {
-        return { body: JSON.stringify([confirmedA]) }
-      }
-      if (url.endsWith(`/address/${ADDR}/txs/chain/${confirmedA.txid}`)) {
-        return { body: JSON.stringify([confirmedB, confirmedC]) }
-      }
-      if (url.endsWith(`/address/${ADDR}/txs/chain/${confirmedC.txid}`)) {
-        return { body: '[]' }
-      }
-      throw new Error(`unexpected url ${url}`)
-    }, 3, 1))
+    const { fetchFn, calls } = makeFetch(
+      withStats(
+        (_i, url) => {
+          if (url.endsWith(`/address/${ADDR}/txs/mempool`)) {
+            return { body: JSON.stringify([mempoolTx]) }
+          }
+          if (url.endsWith(`/address/${ADDR}/txs/chain`)) {
+            return { body: JSON.stringify([confirmedA]) }
+          }
+          if (url.endsWith(`/address/${ADDR}/txs/chain/${confirmedA.txid}`)) {
+            return { body: JSON.stringify([confirmedB, confirmedC]) }
+          }
+          if (url.endsWith(`/address/${ADDR}/txs/chain/${confirmedC.txid}`)) {
+            return { body: '[]' }
+          }
+          throw new Error(`unexpected url ${url}`)
+        },
+        3,
+        1
+      )
+    )
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
-    await expect(
-      client.getAddressHistory(ADDR, { maxPages: 3, maxTransactions: 4 })
-    ).resolves.toEqual({
+    await expect(client.getAddressHistory(ADDR, { maxPages: 3, maxTransactions: 4 })).resolves.toEqual({
       confirmed: [confirmedA, confirmedB, confirmedC],
       mempool: [mempoolTx],
     })
@@ -224,13 +223,19 @@ describe('EsploraClient endpoints', () => {
   it('requires the terminal empty response within the page-request budget', async () => {
     const confirmedA = historyTx('55'.repeat(32), true)
     const confirmedB = historyTx('66'.repeat(32), true)
-    const { fetchFn, calls } = makeFetch(withStats((_i, url) => {
-      if (url.endsWith(`/address/${ADDR}/txs/mempool`)) return { body: '[]' }
-      if (url.endsWith(`/address/${ADDR}/txs/chain`)) {
-        return { body: JSON.stringify([confirmedA]) }
-      }
-      return { body: JSON.stringify([confirmedB]) }
-    }, 2, 0))
+    const { fetchFn, calls } = makeFetch(
+      withStats(
+        (_i, url) => {
+          if (url.endsWith(`/address/${ADDR}/txs/mempool`)) return { body: '[]' }
+          if (url.endsWith(`/address/${ADDR}/txs/chain`)) {
+            return { body: JSON.stringify([confirmedA]) }
+          }
+          return { body: JSON.stringify([confirmedB]) }
+        },
+        2,
+        0
+      )
+    )
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.getAddressHistory(ADDR, { maxPages: 2 })).rejects.toMatchObject({
@@ -243,11 +248,16 @@ describe('EsploraClient endpoints', () => {
   it('bounds raw history rows independently of page count', async () => {
     const mempoolTx = historyTx('77'.repeat(32), false)
     const confirmedTx = historyTx('88'.repeat(32), true)
-    const { fetchFn, calls } = makeFetch(withStats((_i, url) =>
-      url.endsWith(`/txs/mempool`)
-        ? { body: JSON.stringify([mempoolTx]) }
-        : { body: JSON.stringify([confirmedTx]) }
-    , 1, 1))
+    const { fetchFn, calls } = makeFetch(
+      withStats(
+        (_i, url) =>
+          url.endsWith(`/txs/mempool`)
+            ? { body: JSON.stringify([mempoolTx]) }
+            : { body: JSON.stringify([confirmedTx]) },
+        1,
+        1
+      )
+    )
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.getAddressHistory(ADDR, { maxTransactions: 1 })).rejects.toMatchObject({
@@ -260,11 +270,13 @@ describe('EsploraClient endpoints', () => {
   it('rejects transactions returned from the wrong Esplora history route', async () => {
     const confirmedTx = historyTx('99'.repeat(32), true)
     const unconfirmedTx = historyTx('aa'.repeat(32), false)
-    const confirmedOnMempool = makeFetch(withStats((_i, url) =>
-      url.endsWith(`/txs/mempool`)
-        ? { body: JSON.stringify([confirmedTx]) }
-        : { body: '[]' }
-    , 1, 0))
+    const confirmedOnMempool = makeFetch(
+      withStats(
+        (_i, url) => (url.endsWith(`/txs/mempool`) ? { body: JSON.stringify([confirmedTx]) } : { body: '[]' }),
+        1,
+        0
+      )
+    )
     const mempoolClient = new EsploraClient({
       baseUrl: BASE,
       fetchFn: confirmedOnMempool.fetchFn,
@@ -275,11 +287,13 @@ describe('EsploraClient endpoints', () => {
       message: expect.stringContaining('esplora mempool history returned a confirmed transaction'),
     })
 
-    const unconfirmedOnChain = makeFetch(withStats((_i, url) =>
-      url.endsWith(`/txs/mempool`)
-        ? { body: '[]' }
-        : { body: JSON.stringify([unconfirmedTx]) }
-    , 0, 1))
+    const unconfirmedOnChain = makeFetch(
+      withStats(
+        (_i, url) => (url.endsWith(`/txs/mempool`) ? { body: '[]' } : { body: JSON.stringify([unconfirmedTx]) }),
+        0,
+        1
+      )
+    )
     const chainClient = new EsploraClient({
       baseUrl: BASE,
       fetchFn: unconfirmedOnChain.fetchFn,
@@ -347,23 +361,27 @@ describe('MempoolQbitClient endpoints', () => {
     const confirmedD = historyTx('a6'.repeat(32), true)
     const firstPage = [mempoolA, mempoolB]
     const secondPage = [mempoolC, confirmedB, confirmedC, confirmedD]
-    const { fetchFn, calls } = makeFetch(withStats((_i, url) => {
-      if (url.endsWith(`/address/${ADDR}/txs`)) {
-        return { body: JSON.stringify(firstPage) }
-      }
-      if (url.endsWith(`/address/${ADDR}/txs?after_txid=${mempoolB.txid}`)) {
-        return { body: JSON.stringify(secondPage) }
-      }
-      if (url.endsWith(`/address/${ADDR}/txs?after_txid=${confirmedD.txid}`)) {
-        return { body: '[]' }
-      }
-      throw new Error(`unexpected url ${url}`)
-    }, 3, 3))
+    const { fetchFn, calls } = makeFetch(
+      withStats(
+        (_i, url) => {
+          if (url.endsWith(`/address/${ADDR}/txs`)) {
+            return { body: JSON.stringify(firstPage) }
+          }
+          if (url.endsWith(`/address/${ADDR}/txs?after_txid=${mempoolB.txid}`)) {
+            return { body: JSON.stringify(secondPage) }
+          }
+          if (url.endsWith(`/address/${ADDR}/txs?after_txid=${confirmedD.txid}`)) {
+            return { body: '[]' }
+          }
+          throw new Error(`unexpected url ${url}`)
+        },
+        3,
+        3
+      )
+    )
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
-    await expect(
-      client.getAddressHistory(ADDR, { maxPages: 3, maxTransactions: 6 })
-    ).resolves.toEqual({
+    await expect(client.getAddressHistory(ADDR, { maxPages: 3, maxTransactions: 6 })).resolves.toEqual({
       confirmed: [confirmedB, confirmedC, confirmedD],
       mempool: [mempoolA, mempoolB, mempoolC],
     })
@@ -377,14 +395,14 @@ describe('MempoolQbitClient endpoints', () => {
   })
 
   it('accepts a live-shaped 32-row page followed by explicit exhaustion', async () => {
-    const page = Array.from({ length: 32 }, (_, index) =>
-      historyTx((index + 1).toString(16).padStart(64, '0'), true)
+    const page = Array.from({ length: 32 }, (_, index) => historyTx((index + 1).toString(16).padStart(64, '0'), true))
+    const { fetchFn, calls } = makeFetch(
+      withStats(
+        (_i, url) => (url.endsWith(`/address/${ADDR}/txs`) ? { body: JSON.stringify(page) } : { body: '[]' }),
+        32,
+        0
+      )
     )
-    const { fetchFn, calls } = makeFetch(withStats((_i, url) =>
-      url.endsWith(`/address/${ADDR}/txs`)
-        ? { body: JSON.stringify(page) }
-        : { body: '[]' }
-    , 32, 0))
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.getAddressHistory(ADDR, { maxPages: 2 })).resolves.toEqual({
@@ -392,9 +410,7 @@ describe('MempoolQbitClient endpoints', () => {
       mempool: [],
     })
     expect(calls).toHaveLength(4)
-    expect(calls[2]!.url).toBe(
-      `${BASE}/address/${ADDR}/txs?after_txid=${page[page.length - 1]!.txid}`
-    )
+    expect(calls[2]!.url).toBe(`${BASE}/address/${ADDR}/txs?after_txid=${page[page.length - 1]!.txid}`)
   })
 
   it('accepts spending history through an input prevout address', async () => {
@@ -414,11 +430,13 @@ describe('MempoolQbitClient endpoints', () => {
       ],
       vout: [],
     }
-    const { fetchFn } = makeFetch(withStats((_i, url) =>
-      url.endsWith(`/address/${ADDR}/txs`)
-        ? { body: JSON.stringify([spendingTx]) }
-        : { body: '[]' }
-    , 1, 0))
+    const { fetchFn } = makeFetch(
+      withStats(
+        (_i, url) => (url.endsWith(`/address/${ADDR}/txs`) ? { body: JSON.stringify([spendingTx]) } : { body: '[]' }),
+        1,
+        0
+      )
+    )
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.getAddressHistory(ADDR, { maxPages: 2 })).resolves.toEqual({
@@ -430,11 +448,15 @@ describe('MempoolQbitClient endpoints', () => {
   it('matches uniformly uppercase Bech32m requests to normalized row addresses', async () => {
     const uppercaseAddress = ADDR.toUpperCase()
     const tx = historyTx('b4'.repeat(32), true)
-    const { fetchFn, calls } = makeFetch(withStats((_i, url) =>
-      url.endsWith(`/address/${uppercaseAddress}/txs`)
-        ? { body: JSON.stringify([tx]) }
-        : { body: '[]' }
-    , 1, 0, uppercaseAddress))
+    const { fetchFn, calls } = makeFetch(
+      withStats(
+        (_i, url) =>
+          url.endsWith(`/address/${uppercaseAddress}/txs`) ? { body: JSON.stringify([tx]) } : { body: '[]' },
+        1,
+        0,
+        uppercaseAddress
+      )
+    )
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.getAddressHistory(uppercaseAddress, { maxPages: 2 })).resolves.toEqual({
@@ -455,9 +477,7 @@ describe('MempoolQbitClient endpoints', () => {
         },
       ],
     }
-    const { fetchFn, calls } = makeFetch(
-      withStats(() => ({ body: JSON.stringify([tx]) }), 1, 0, requestedAddress)
-    )
+    const { fetchFn, calls } = makeFetch(withStats(() => ({ body: JSON.stringify([tx]) }), 1, 0, requestedAddress))
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.getAddressHistory(requestedAddress)).rejects.toMatchObject({
@@ -470,11 +490,16 @@ describe('MempoolQbitClient endpoints', () => {
   it('keeps the configured page ceiling as a per-call hard maximum', async () => {
     const confirmedA = historyTx('c1'.repeat(32), true)
     const confirmedB = historyTx('c2'.repeat(32), true)
-    const { fetchFn, calls } = makeFetch(withStats((_i, url) =>
-      url.endsWith(`/address/${ADDR}/txs`)
-        ? { body: JSON.stringify([confirmedA]) }
-        : { body: JSON.stringify([confirmedB]) }
-    , 2, 0))
+    const { fetchFn, calls } = makeFetch(
+      withStats(
+        (_i, url) =>
+          url.endsWith(`/address/${ADDR}/txs`)
+            ? { body: JSON.stringify([confirmedA]) }
+            : { body: JSON.stringify([confirmedB]) },
+        2,
+        0
+      )
+    )
     const client = new MempoolQbitClient({
       baseUrl: BASE,
       fetchFn,
@@ -497,9 +522,7 @@ describe('MempoolQbitClient endpoints', () => {
     const { fetchFn, calls } = makeFetch(withStats(() => ({ body: JSON.stringify(page) }), 1, 1))
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
-    await expect(
-      client.getAddressHistory(ADDR, { maxPages: 2, maxTransactions: 1 })
-    ).rejects.toMatchObject({
+    await expect(client.getAddressHistory(ADDR, { maxPages: 2, maxTransactions: 1 })).rejects.toMatchObject({
       kind: 'pagination_limit',
       message: `mempool-qbit address history exceeded 1 transactions: ${ADDR}`,
     })
@@ -509,9 +532,7 @@ describe('MempoolQbitClient endpoints', () => {
   it('rejects duplicate transaction ids within one combined-history page', async () => {
     const tx = historyTx('e1'.repeat(32), true)
     const duplicate = { ...tx, txid: tx.txid.toUpperCase() }
-    const { fetchFn, calls } = makeFetch(
-      withStats(() => ({ body: JSON.stringify([tx, duplicate]) }), 1, 0)
-    )
+    const { fetchFn, calls } = makeFetch(withStats(() => ({ body: JSON.stringify([tx, duplicate]) }), 1, 0))
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.getAddressHistory(ADDR)).rejects.toMatchObject({
@@ -524,11 +545,16 @@ describe('MempoolQbitClient endpoints', () => {
   it('rejects duplicate transaction ids across advancing pages', async () => {
     const firstTx = historyTx('e2'.repeat(32), true)
     const nextTx = historyTx('e3'.repeat(32), true)
-    const { fetchFn, calls } = makeFetch(withStats((_i, url) =>
-      url.endsWith(`/address/${ADDR}/txs`)
-        ? { body: JSON.stringify([firstTx]) }
-        : { body: JSON.stringify([firstTx, nextTx]) }
-    , 2, 0))
+    const { fetchFn, calls } = makeFetch(
+      withStats(
+        (_i, url) =>
+          url.endsWith(`/address/${ADDR}/txs`)
+            ? { body: JSON.stringify([firstTx]) }
+            : { body: JSON.stringify([firstTx, nextTx]) },
+        2,
+        0
+      )
+    )
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.getAddressHistory(ADDR)).rejects.toMatchObject({
@@ -552,11 +578,16 @@ describe('MempoolQbitClient endpoints', () => {
 
   it('propagates a backend failure while exhausting combined history', async () => {
     const tx = historyTx('e5'.repeat(32), true)
-    const { fetchFn, calls } = makeFetch(withStats((_i, url) =>
-      url.endsWith(`/address/${ADDR}/txs`)
-        ? { body: JSON.stringify([tx]) }
-        : { status: 500, body: 'history unavailable' }
-    , 2, 0))
+    const { fetchFn, calls } = makeFetch(
+      withStats(
+        (_i, url) =>
+          url.endsWith(`/address/${ADDR}/txs`)
+            ? { body: JSON.stringify([tx]) }
+            : { status: 500, body: 'history unavailable' },
+        2,
+        0
+      )
+    )
     const client = new MempoolQbitClient({
       baseUrl: BASE,
       fetchFn,
@@ -619,9 +650,7 @@ describe('MempoolQbitClient endpoints', () => {
     const { fetchFn, calls } = makeFetch(() => ({ body: '[]' }))
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
-    await expect(client.getAddressHistory(ADDR, options)).rejects.toThrow(
-      `${name} must be a positive integer`
-    )
+    await expect(client.getAddressHistory(ADDR, options)).rejects.toThrow(`${name} must be a positive integer`)
     expect(calls).toHaveLength(0)
   })
 
@@ -750,10 +779,7 @@ describe('MempoolQbitClient endpoints', () => {
     })
 
     await expect(client.getAddressTxs(ADDR)).resolves.toEqual([confirmedTx])
-    await expect(client.getAddressMempoolTxs(ADDR)).resolves.toEqual([
-      ...firstPage,
-      ...secondPage.slice(0, 2),
-    ])
+    await expect(client.getAddressMempoolTxs(ADDR)).resolves.toEqual([...firstPage, ...secondPage.slice(0, 2)])
     expect(calls).toHaveLength(4)
   })
 
@@ -869,9 +895,7 @@ describe('MempoolQbitClient endpoints', () => {
     ['unsupported method', 405, 'method not allowed'],
     ['unimplemented endpoint', 501, 'not implemented'],
   ])('falls back to /tx/push for %s', async (_case, status, body) => {
-    const { fetchFn, calls } = makeFetch(i =>
-      i === 0 ? { status, body } : { body: BROADCAST_TXID }
-    )
+    const { fetchFn, calls } = makeFetch(i => (i === 0 ? { status, body } : { body: BROADCAST_TXID }))
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.broadcastTx('0200000000ffff')).resolves.toBe(BROADCAST_TXID)
@@ -883,10 +907,7 @@ describe('MempoolQbitClient endpoints', () => {
 
   it.each([
     ['plain RPC rejection', 'sendrawtransaction RPC error: {"code":-26}'],
-    [
-      'structured RPC rejection',
-      JSON.stringify({ error: 'sendrawtransaction RPC error: {"code":-26}' }),
-    ],
+    ['structured RPC rejection', JSON.stringify({ error: 'sendrawtransaction RPC error: {"code":-26}' })],
     ['transaction validity rejection', 'bad-txns-inputs-missingorspent'],
   ])('does not mask %s with the /tx/push fallback', async (_case, body) => {
     const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
@@ -990,12 +1011,18 @@ describe('EsploraClient resilience', () => {
 
     function rateLimited(retryAfter: string, status = 429) {
       return makeFetch(i =>
-        i === 0 ? { status, body: 'slow down', headers: { 'retry-after': retryAfter } } : { body: JSON.stringify(STATS) }
+        i === 0
+          ? { status, body: 'slow down', headers: { 'retry-after': retryAfter } }
+          : { body: JSON.stringify(STATS) }
       )
     }
 
     it('honours a Retry-After up to and including the 30 s default cap', async () => {
-      for (const [header, ms] of [['0', 0], ['1.5', 1500], ['30', 30_000]] as const) {
+      for (const [header, ms] of [
+        ['0', 0],
+        ['1.5', 1500],
+        ['30', 30_000],
+      ] as const) {
         const sleep = vi.fn(noSleep)
         const { fetchFn, calls } = rateLimited(header)
         const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 1, sleepFn: sleep })
@@ -1053,7 +1080,10 @@ describe('EsploraClient resilience', () => {
         maxRetryAfterMs: 1999,
         sleepFn: overCapSleep,
       })
-      await expect(overCapClient.getAddressStats(ADDR)).rejects.toMatchObject({ kind: 'rate_limit', retryAfterMs: 2000 })
+      await expect(overCapClient.getAddressStats(ADDR)).rejects.toMatchObject({
+        kind: 'rate_limit',
+        retryAfterMs: 2000,
+      })
       expect(overCapSleep).not.toHaveBeenCalled()
       expect(overCap.calls).toHaveLength(1)
     })
@@ -1061,12 +1091,24 @@ describe('EsploraClient resilience', () => {
     it('fails fast on every Retry-After when maxRetryAfterMs is 0, except an immediate retry', async () => {
       const sleep = vi.fn(noSleep)
       const now = rateLimited('0')
-      const nowClient = new EsploraClient({ baseUrl: BASE, fetchFn: now.fetchFn, retries: 1, maxRetryAfterMs: 0, sleepFn: sleep })
+      const nowClient = new EsploraClient({
+        baseUrl: BASE,
+        fetchFn: now.fetchFn,
+        retries: 1,
+        maxRetryAfterMs: 0,
+        sleepFn: sleep,
+      })
       expect((await nowClient.getAddressStats(ADDR)).address).toBe(ADDR)
       expect(sleep.mock.calls).toEqual([[0, expect.any(AbortSignal)]])
 
       const later = rateLimited('1')
-      const laterClient = new EsploraClient({ baseUrl: BASE, fetchFn: later.fetchFn, retries: 1, maxRetryAfterMs: 0, sleepFn: sleep })
+      const laterClient = new EsploraClient({
+        baseUrl: BASE,
+        fetchFn: later.fetchFn,
+        retries: 1,
+        maxRetryAfterMs: 0,
+        sleepFn: sleep,
+      })
       await expect(laterClient.getAddressStats(ADDR)).rejects.toMatchObject({ kind: 'rate_limit', retryAfterMs: 1000 })
       expect(later.calls).toHaveLength(1)
     })
@@ -1143,8 +1185,16 @@ describe('EsploraClient resilience', () => {
 
     it('reports retryAfterMs once retries are exhausted, and falls back to backoff for malformed values', async () => {
       const exhausted = rateLimited('5')
-      const exhaustedClient = new EsploraClient({ baseUrl: BASE, fetchFn: exhausted.fetchFn, retries: 0, sleepFn: noSleep })
-      await expect(exhaustedClient.getAddressStats(ADDR)).rejects.toMatchObject({ kind: 'rate_limit', retryAfterMs: 5000 })
+      const exhaustedClient = new EsploraClient({
+        baseUrl: BASE,
+        fetchFn: exhausted.fetchFn,
+        retries: 0,
+        sleepFn: noSleep,
+      })
+      await expect(exhaustedClient.getAddressStats(ADDR)).rejects.toMatchObject({
+        kind: 'rate_limit',
+        retryAfterMs: 5000,
+      })
 
       const sleep = vi.fn(noSleep)
       const malformed = rateLimited('soon')
@@ -1227,29 +1277,45 @@ describe('EsploraClient constructor options', () => {
       })) as typeof fetch
   }
 
-  it.each([Infinity, -Infinity, NaN, 0, -1, 1.5, MAX_TIMER_DELAY_MS + 1, '1000' as unknown as number, null as unknown as number])(
-    'rejects timeoutMs %s',
-    timeoutMs => {
-      expectInvalidOption({ timeoutMs }, /^timeoutMs must be an integer from 1 to 2147483647$/)
-    }
-  )
+  it.each([
+    Infinity,
+    -Infinity,
+    NaN,
+    0,
+    -1,
+    1.5,
+    MAX_TIMER_DELAY_MS + 1,
+    '1000' as unknown as number,
+    null as unknown as number,
+  ])('rejects timeoutMs %s', timeoutMs => {
+    expectInvalidOption({ timeoutMs }, /^timeoutMs must be an integer from 1 to 2147483647$/)
+  })
 
-  it.each([Infinity, NaN, -1, 0.5, 11, Number.MAX_SAFE_INTEGER + 1, '2' as unknown as number, null as unknown as number])(
-    'rejects retries %s',
-    retries => {
-      expectInvalidOption({ retries }, /^retries must be an integer from 0 to 10$/)
-    }
-  )
+  it.each([
+    Infinity,
+    NaN,
+    -1,
+    0.5,
+    11,
+    Number.MAX_SAFE_INTEGER + 1,
+    '2' as unknown as number,
+    null as unknown as number,
+  ])('rejects retries %s', retries => {
+    expectInvalidOption({ retries }, /^retries must be an integer from 0 to 10$/)
+  })
 
-  it.each([Infinity, -Infinity, NaN, -1, -0.5, MAX_TIMER_DELAY_MS + 1, '300' as unknown as number, null as unknown as number])(
-    'rejects retryBaseDelayMs %s',
-    retryBaseDelayMs => {
-      expectInvalidOption(
-        { retryBaseDelayMs },
-        /^retryBaseDelayMs must be a finite number from 0 to 2147483647$/
-      )
-    }
-  )
+  it.each([
+    Infinity,
+    -Infinity,
+    NaN,
+    -1,
+    -0.5,
+    MAX_TIMER_DELAY_MS + 1,
+    '300' as unknown as number,
+    null as unknown as number,
+  ])('rejects retryBaseDelayMs %s', retryBaseDelayMs => {
+    expectInvalidOption({ retryBaseDelayMs }, /^retryBaseDelayMs must be a finite number from 0 to 2147483647$/)
+  })
 
   it.each([
     'ftp://esplora.example/api',
@@ -1335,7 +1401,10 @@ describe('EsploraClient constructor options', () => {
   it('applies the same validation to MempoolQbitClient', () => {
     expect(
       () =>
-        new MempoolQbitClient({ baseUrl: 'https://mempool.example/api?x=1', fetchFn: vi.fn() as unknown as typeof fetch })
+        new MempoolQbitClient({
+          baseUrl: 'https://mempool.example/api?x=1',
+          fetchFn: vi.fn() as unknown as typeof fetch,
+        })
     ).toThrow(/baseUrl must be an absolute http\(s\) URL/)
     expect(
       () => new MempoolQbitClient({ baseUrl: BASE, fetchFn: vi.fn() as unknown as typeof fetch, timeoutMs: Infinity })
@@ -1350,7 +1419,10 @@ describe('EsploraClient constructor options', () => {
     ['https://b\u00fccher.example/api', 'https://b\u00fccher.example/api/blocks/tip/height'],
     ['https://exa\u0301mple.example/api', 'https://exa\u0301mple.example/api/blocks/tip/height'],
     ['https://esplora.example/\u00e9t\u00e9', 'https://esplora.example/\u00e9t\u00e9/blocks/tip/height'],
-    ['https://\u0645\u06cc\u200c\u0631\u0648\u062f.example/api', 'https://\u0645\u06cc\u200c\u0631\u0648\u062f.example/api/blocks/tip/height'],
+    [
+      'https://\u0645\u06cc\u200c\u0631\u0648\u062f.example/api',
+      'https://\u0645\u06cc\u200c\u0631\u0648\u062f.example/api/blocks/tip/height',
+    ],
   ])('accepts baseUrl %s', async (baseUrl, expectedUrl) => {
     const { fetchFn, calls } = makeFetch(() => ({ body: '7' }))
     const client = new EsploraClient({ baseUrl, fetchFn })

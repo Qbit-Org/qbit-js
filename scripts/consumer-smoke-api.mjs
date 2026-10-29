@@ -14,7 +14,10 @@ const log = (...a) => console.log('[api-consumer]', ...a)
 const BASE = 'https://esplora.example/regtest/api'
 
 // (1) EsploraClient from each entry point, reading through a stub fetch
-for (const [entry, { EsploraClient }] of [['ESM', m], ['CJS', cjs]]) {
+for (const [entry, { EsploraClient }] of [
+  ['ESM', m],
+  ['CJS', cjs],
+]) {
   const urls = []
   const fetchFn = async url => {
     urls.push(String(url))

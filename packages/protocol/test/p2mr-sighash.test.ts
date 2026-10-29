@@ -65,19 +65,16 @@ describe('schnorrSignatureHash vs Core bip341_wallet_vectors (shared machinery)'
     expect(bytesToHex(m.outputs)).toBe(kp.midstates.outputs)
   })
 
-  it.each(kp.cases)(
-    'TapSighash key-path input $inputIndex hashType $hashType matches Core',
-    testCase => {
-      const digest = schnorrSignatureHash({
-        tx,
-        inputIndex: testCase.inputIndex,
-        spentOutputs: spent,
-        hashType: testCase.hashType,
-        sigVersion: 'taproot',
-      })
-      expect(bytesToHex(digest)).toBe(testCase.sigHash)
-    }
-  )
+  it.each(kp.cases)('TapSighash key-path input $inputIndex hashType $hashType matches Core', testCase => {
+    const digest = schnorrSignatureHash({
+      tx,
+      inputIndex: testCase.inputIndex,
+      spentOutputs: spent,
+      hashType: testCase.hashType,
+      sigVersion: 'taproot',
+    })
+    expect(bytesToHex(digest)).toBe(testCase.sigHash)
+  })
 })
 
 describe('p2mrSighash vs P2MR-tag vectors', () => {
@@ -123,8 +120,21 @@ describe('p2mrSighash vs P2MR-tag vectors', () => {
     const leafHash = hexToBytes(vector.leaf.leafHash)
     const midstates = precomputeSighashMidstates(tx, spent)
 
-    const direct = p2mrSighash({ tx, inputIndex: vector.inputIndex, spentOutputs: spent, leafHash, hashType: vector.hashType })
-    const cached = p2mrSighash({ tx, inputIndex: vector.inputIndex, spentOutputs: spent, leafHash, hashType: vector.hashType, midstates })
+    const direct = p2mrSighash({
+      tx,
+      inputIndex: vector.inputIndex,
+      spentOutputs: spent,
+      leafHash,
+      hashType: vector.hashType,
+    })
+    const cached = p2mrSighash({
+      tx,
+      inputIndex: vector.inputIndex,
+      spentOutputs: spent,
+      leafHash,
+      hashType: vector.hashType,
+      midstates,
+    })
     expect(bytesToHex(cached)).toBe(bytesToHex(direct))
     expect(bytesToHex(direct)).toBe(vector.sigHash)
   })
@@ -137,8 +147,12 @@ describe('p2mrSighash edge cases', () => {
   const leafHash = hexToBytes(base.leaf.leafHash)
 
   it('rejects invalid sighash types', () => {
-    expect(() => p2mrSighash({ tx, inputIndex: 0, spentOutputs: spent, leafHash, hashType: 0x04 })).toThrow(QbitProtocolError)
-    expect(() => p2mrSighash({ tx, inputIndex: 0, spentOutputs: spent, leafHash, hashType: 0x80 })).toThrow(/invalid sighash type/)
+    expect(() => p2mrSighash({ tx, inputIndex: 0, spentOutputs: spent, leafHash, hashType: 0x04 })).toThrow(
+      QbitProtocolError
+    )
+    expect(() => p2mrSighash({ tx, inputIndex: 0, spentOutputs: spent, leafHash, hashType: 0x80 })).toThrow(
+      /invalid sighash type/
+    )
   })
 
   it('rejects inputIndex out of range', () => {
@@ -150,7 +164,9 @@ describe('p2mrSighash edge cases', () => {
   })
 
   it('requires a 32-byte leafHash', () => {
-    expect(() => p2mrSighash({ tx, inputIndex: 0, spentOutputs: spent, leafHash: new Uint8Array(31) })).toThrow(/leafHash/)
+    expect(() => p2mrSighash({ tx, inputIndex: 0, spentOutputs: spent, leafHash: new Uint8Array(31) })).toThrow(
+      /leafHash/
+    )
   })
 
   it('rejects SIGHASH_SINGLE without a matching output', () => {

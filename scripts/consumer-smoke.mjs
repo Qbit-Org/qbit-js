@@ -112,13 +112,22 @@ const sighash = p2mrSighash({
       },
     ],
     outputs: [
-      { value: 50000n, scriptPubKey: hexToBytes('52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445') },
-      { value: 49000n, scriptPubKey: hexToBytes('522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c') },
+      {
+        value: 50000n,
+        scriptPubKey: hexToBytes('52205a5b58595e5f5c5d52535051565754554a4b48494e4f4c4d4243404146474445'),
+      },
+      {
+        value: 49000n,
+        scriptPubKey: hexToBytes('522033323130373635343b3a39383f3e3d3c23222120272625242b2a29282f2e2d2c'),
+      },
     ],
   },
   inputIndex: 0,
   spentOutputs: [
-    { value: 100000n, scriptPubKey: hexToBytes('5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38') },
+    {
+      value: 100000n,
+      scriptPubKey: hexToBytes('5220afb1c56c80c30a5fab4723194d55cd51dc3671aab200356de84d4deefa3d7e38'),
+    },
   ],
   leafHash: sighashLeafHash,
   hashType: 0,

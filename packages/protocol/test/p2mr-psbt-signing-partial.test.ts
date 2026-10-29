@@ -2,12 +2,7 @@ import { runInNewContext } from 'node:vm'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import type {
-  P2mrPsbtOnSignedFn,
-  P2mrPsbtSignFn,
-  P2mrSigningKey,
-  P2mrSigningPlanRef,
-} from '../src/index'
+import type { P2mrPsbtOnSignedFn, P2mrPsbtSignFn, P2mrSigningKey, P2mrSigningPlanRef } from '../src/index'
 import {
   P2MR_LEAF_VERSION_V1,
   PQC_SIGNATURE_BYTES,
@@ -53,8 +48,7 @@ const plans: P2mrSigningKey[] = keys.map((key, inputIndex) => ({
   leafHash: key.leafHash,
 }))
 const hex = bytesToHex
-const signatureFor = (inputIndex: number): Uint8Array =>
-  new Uint8Array(PQC_SIGNATURE_BYTES).fill(0x10 + inputIndex)
+const signatureFor = (inputIndex: number): Uint8Array => new Uint8Array(PQC_SIGNATURE_BYTES).fill(0x10 + inputIndex)
 /** Builds a value in a separate realm, so it fails this realm's `instanceof`. */
 const inAnotherRealm = <T>(expression: string): T => runInNewContext(expression) as T
 const samePlan = (a: P2mrSigningPlanRef, b: P2mrSigningPlanRef): boolean =>
@@ -306,11 +300,7 @@ describe('signP2mrPsbt retry with a partially signed PSBT', () => {
     expect(signer).toHaveBeenCalledTimes(1)
     expect(signer.mock.calls[0]![1].inputIndex).toBe(2)
     expect(resumed.signed).toEqual([plans[2]])
-    expect(storedSignatures(resumed.psbt)).toEqual([
-      hex(signatureFor(0)),
-      hex(signatureFor(1)),
-      hex(signatureFor(2)),
-    ])
+    expect(storedSignatures(resumed.psbt)).toEqual([hex(signatureFor(0)), hex(signatureFor(1)), hex(signatureFor(2))])
 
     const rawTx = hex(extractP2mrTransaction(finalizeP2mrPsbt(resumed.psbt)))
     for (const inputIndex of [0, 1, 2]) {

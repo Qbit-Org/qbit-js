@@ -191,9 +191,7 @@ describe('P2MR PSBT create → sign → finalize → extract (single-key)', () =
   it('rejects duplicate plans before invoking the signer', () => {
     const signer = vi.fn(() => new Uint8Array(PQC_SIGNATURE_BYTES))
     const plan = { inputIndex: 0, pubkey, leafHash }
-    expect(() => signP2mrPsbt({ psbt, keys: [plan, plan], sign: signer })).toThrow(
-      /duplicate P2MR signing plan/
-    )
+    expect(() => signP2mrPsbt({ psbt, keys: [plan, plan], sign: signer })).toThrow(/duplicate P2MR signing plan/)
     expect(signer).not.toHaveBeenCalled()
   })
 
@@ -254,26 +252,14 @@ describe('P2MR PSBT create → sign → finalize → extract (single-key)', () =
     expect(signer).not.toHaveBeenCalled()
 
     const forged = parsePsbt(serializePsbt(mismatched))
-    forged.inputs[0]!.push(
-      encodeP2mrPsbtScriptSigField(
-        pubkey,
-        leafHash,
-        new Uint8Array(PQC_SIGNATURE_BYTES)
-      )
-    )
+    forged.inputs[0]!.push(encodeP2mrPsbtScriptSigField(pubkey, leafHash, new Uint8Array(PQC_SIGNATURE_BYTES)))
     expect(() => finalizeP2mrPsbt(forged)).toThrow(/control block.*witness UTXO/)
   })
 
   it('refuses to pair a leaf script with an unrelated signature pubkey', () => {
     const unrelatedPubkey = new Uint8Array(32).fill(0xa5)
     const forged = parsePsbt(serializePsbt(psbt))
-    forged.inputs[0]!.push(
-      encodeP2mrPsbtScriptSigField(
-        unrelatedPubkey,
-        leafHash,
-        new Uint8Array(PQC_SIGNATURE_BYTES)
-      )
-    )
+    forged.inputs[0]!.push(encodeP2mrPsbtScriptSigField(unrelatedPubkey, leafHash, new Uint8Array(PQC_SIGNATURE_BYTES)))
 
     expect(() => finalizeP2mrPsbt(forged)).toThrow(/no P2MR script signature is for a key of a v1 pk or multi_a leaf/)
   })
@@ -281,13 +267,7 @@ describe('P2MR PSBT create → sign → finalize → extract (single-key)', () =
   it('refuses to pair a leaf script with an unrelated signature leaf hash', () => {
     const unrelatedLeafHash = new Uint8Array(32).fill(0x5a)
     const forged = parsePsbt(serializePsbt(psbt))
-    forged.inputs[0]!.push(
-      encodeP2mrPsbtScriptSigField(
-        pubkey,
-        unrelatedLeafHash,
-        new Uint8Array(PQC_SIGNATURE_BYTES)
-      )
-    )
+    forged.inputs[0]!.push(encodeP2mrPsbtScriptSigField(pubkey, unrelatedLeafHash, new Uint8Array(PQC_SIGNATURE_BYTES)))
 
     expect(() => finalizeP2mrPsbt(forged)).toThrow(/no P2MR script signature is for a key of a v1 pk or multi_a leaf/)
   })

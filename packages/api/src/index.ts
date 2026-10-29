@@ -208,7 +208,9 @@ export class QbitApiError extends Error {
    * version does not list, so keep a default branch when switching on it.
    */
   static is(value: unknown): value is QbitApiError {
-    return typeof value === 'object' && value !== null && (value as Record<symbol, unknown>)[QBIT_API_ERROR_BRAND] === true
+    return (
+      typeof value === 'object' && value !== null && (value as Record<symbol, unknown>)[QBIT_API_ERROR_BRAND] === true
+    )
   }
 
   constructor(kind: QbitApiErrorKind, message: string, options: QbitApiErrorOptions = {}) {
@@ -321,8 +323,7 @@ const DEFAULT_MAX_RETRY_AFTER_MS = 30_000
 const MAX_TIMER_DELAY_MS = 2_147_483_647
 const MAX_RETRIES = 10
 
-const UNSAFE_BASE_URL_CHAR =
-  /[\s\p{Cc}\\?#]|(?![\u200c\u200d])[\p{Cf}\p{Default_Ignorable_Code_Point}]/u
+const UNSAFE_BASE_URL_CHAR = /[\s\p{Cc}\\?#]|(?![\u200c\u200d])[\p{Cf}\p{Default_Ignorable_Code_Point}]/u
 
 function validBaseUrl(value: unknown, allowInsecureHttp: boolean | undefined): string {
   // Paths are appended to the raw string, so a query or fragment would swallow
@@ -387,10 +388,7 @@ function integerOption(
 function retryBaseDelayOption(value: number | undefined): number {
   const delay = value === undefined ? 300 : value
   if (typeof delay !== 'number' || !Number.isFinite(delay) || delay < 0 || delay > MAX_TIMER_DELAY_MS) {
-    throw new QbitApiError(
-      'http',
-      `retryBaseDelayMs must be a finite number from 0 to ${MAX_TIMER_DELAY_MS}`
-    )
+    throw new QbitApiError('http', `retryBaseDelayMs must be a finite number from 0 to ${MAX_TIMER_DELAY_MS}`)
   }
   return delay
 }
@@ -447,18 +445,12 @@ interface OperationScope {
   dispose(): void
 }
 
-function openOperationScope(
-  sources: (AbortSignal | undefined)[],
-  deadlineMs: number | undefined
-): OperationScope {
+function openOperationScope(sources: (AbortSignal | undefined)[], deadlineMs: number | undefined): OperationScope {
   if (
     deadlineMs !== undefined &&
     !(Number.isFinite(deadlineMs) && deadlineMs > 0 && deadlineMs <= MAX_TIMER_DELAY_MS)
   ) {
-    throw new QbitApiError(
-      'http',
-      `deadlineMs must be a positive number no greater than ${MAX_TIMER_DELAY_MS}`
-    )
+    throw new QbitApiError('http', `deadlineMs must be a positive number no greater than ${MAX_TIMER_DELAY_MS}`)
   }
 
   const controller = internalAbortController()
@@ -485,8 +477,7 @@ function openOperationScope(
   }
   if (deadlineMs !== undefined && !controller.signal.aborted) {
     const timer = setTimeout(
-      () =>
-        abort(new QbitApiError('timeout', `operation exceeded its ${deadlineMs}ms deadline`)),
+      () => abort(new QbitApiError('timeout', `operation exceeded its ${deadlineMs}ms deadline`)),
       deadlineMs
     )
     cleanups.push(() => clearTimeout(timer))
@@ -585,16 +576,9 @@ export class EsploraClient {
    * Confirmed transaction history for an address, newest first, 25 per page.
    * Pass the last txid of the previous page as `afterTxid` to paginate.
    */
-  getAddressTxs(
-    address: string,
-    afterTxid?: string,
-    options?: RequestOptions
-  ): Promise<EsploraTx[]> {
+  getAddressTxs(address: string, afterTxid?: string, options?: RequestOptions): Promise<EsploraTx[]> {
     const suffix = afterTxid ? `/${encodeURIComponent(afterTxid)}` : ''
-    return this.getJson<EsploraTx[]>(
-      `/address/${encodeURIComponent(address)}/txs/chain${suffix}`,
-      options
-    )
+    return this.getJson<EsploraTx[]>(`/address/${encodeURIComponent(address)}/txs/chain${suffix}`, options)
   }
 
   /**
@@ -603,10 +587,7 @@ export class EsploraClient {
    * page further; `getAddressHistory` detects that cap.
    */
   getAddressMempoolTxs(address: string, options?: RequestOptions): Promise<EsploraTx[]> {
-    return this.getJson<EsploraTx[]>(
-      `/address/${encodeURIComponent(address)}/txs/mempool`,
-      options
-    )
+    return this.getJson<EsploraTx[]>(`/address/${encodeURIComponent(address)}/txs/mempool`, options)
   }
 
   /**
@@ -626,10 +607,7 @@ export class EsploraClient {
    * `tx_count` reject with `parse`. `maxPages` and `maxTransactions` cover
    * both scans.
    */
-  getAddressHistory(
-    address: string,
-    options: AddressHistoryOptions = {}
-  ): Promise<AddressHistory> {
+  getAddressHistory(address: string, options: AddressHistoryOptions = {}): Promise<AddressHistory> {
     return this.runOperation(options, signal => this.scanAddressHistory(address, options, signal))
   }
 
@@ -638,11 +616,7 @@ export class EsploraClient {
     options: AddressHistoryOptions,
     signal: AbortSignal
   ): Promise<AddressHistory> {
-    const maxPages = positiveAddressHistoryLimit(
-      options.maxPages,
-      DEFAULT_MAX_ADDRESS_HISTORY_PAGES,
-      'maxPages'
-    )
+    const maxPages = positiveAddressHistoryLimit(options.maxPages, DEFAULT_MAX_ADDRESS_HISTORY_PAGES, 'maxPages')
     const maxTransactions = positiveAddressHistoryLimit(
       options.maxTransactions,
       DEFAULT_MAX_ADDRESS_HISTORY_TRANSACTIONS,
@@ -885,12 +859,7 @@ export class EsploraClient {
    * the reply body is read, is an `unknown_outcome` too, unless the reply is
    * a 429.
    */
-  protected submitTx(
-    path: string,
-    body: string,
-    txid: string | undefined,
-    options?: RequestOptions
-  ): Promise<string> {
+  protected submitTx(path: string, body: string, txid: string | undefined, options?: RequestOptions): Promise<string> {
     return this.runOperation(options, async signal => {
       const url = `${this.baseUrl}${path}`
       const errorUrl = this.errorUrl(path)
@@ -930,7 +899,8 @@ export class EsploraClient {
           responseBody: detail,
         })
       }
-      if (UNPROCESSED_SERVER_ERROR_STATUSES.has(response.status)) throw httpError(response, text, errorUrl, this.baseUrl)
+      if (UNPROCESSED_SERVER_ERROR_STATUSES.has(response.status))
+        throw httpError(response, text, errorUrl, this.baseUrl)
       // The body is read before the status is judged: qbit Core's JSON-RPC server
       // answers HTTP 500 for every RPC error (src/httprpc.cpp, JSONErrorReply),
       // so a relayed envelope carrying the node's verdict can arrive as a 5xx.
@@ -965,9 +935,7 @@ export class EsploraClient {
   ): Promise<Response> {
     return this.runOperation(options, signal => {
       const url = `${this.baseUrl}${path}`
-      return init.dedup
-        ? this.requestShared(url, init, signal)
-        : this.requestWithRetry(url, init, signal)
+      return init.dedup ? this.requestShared(url, init, signal) : this.requestWithRetry(url, init, signal)
     })
   }
 
@@ -1047,13 +1015,12 @@ export class EsploraClient {
         response = await this.fetchOnce(url, init, signal, reply)
       } catch (error) {
         // Another copy's QbitApiError (from a custom fetchFn) passes through too.
-        lastError =
-          QbitApiError.is(error)
-            ? error
-            : new QbitApiError('network', redactBaseUrl(String(error), this.baseUrl), {
-                url: errorUrl,
-                ...causeOptions(error, this.baseUrl),
-              })
+        lastError = QbitApiError.is(error)
+          ? error
+          : new QbitApiError('network', redactBaseUrl(String(error), this.baseUrl), {
+              url: errorUrl,
+              ...causeOptions(error, this.baseUrl),
+            })
         // A refused redirect is never followed or retried. A submission's POST
         // still reached the origin, which may have accepted it before
         // redirecting (303), and a runtime that followed the redirect itself
@@ -1210,10 +1177,14 @@ export class EsploraClient {
         if (isAbortError(cause)) throw this.timeoutError(url, cause)
         // fetch implementations may quote the request URL in their own messages.
         const errorUrl = redactBaseUrl(url, this.baseUrl)
-        throw new QbitApiError('network', `network error: ${errorUrl}${redactBaseUrl(formatErrorCause(cause), this.baseUrl)}`, {
-          url: errorUrl,
-          ...causeOptions(cause, this.baseUrl),
-        })
+        throw new QbitApiError(
+          'network',
+          `network error: ${errorUrl}${redactBaseUrl(formatErrorCause(cause), this.baseUrl)}`,
+          {
+            url: errorUrl,
+            ...causeOptions(cause, this.baseUrl),
+          }
+        )
       }
       // Checked on the raw reply, since a buffered copy loses `type` and
       // `redirected`, and before `reply.status` is set, so the retry loop
@@ -1277,8 +1248,7 @@ export class MempoolQbitClient extends EsploraClient {
 
   constructor(options: MempoolQbitClientOptions) {
     super(options)
-    const maxAddressHistoryPages =
-      options.maxAddressHistoryPages ?? DEFAULT_MAX_ADDRESS_HISTORY_PAGES
+    const maxAddressHistoryPages = options.maxAddressHistoryPages ?? DEFAULT_MAX_ADDRESS_HISTORY_PAGES
     if (!Number.isSafeInteger(maxAddressHistoryPages) || maxAddressHistoryPages < 1) {
       throw new QbitApiError('http', 'maxAddressHistoryPages must be a positive integer')
     }
@@ -1297,13 +1267,8 @@ export class MempoolQbitClient extends EsploraClient {
    * pages (50 each by default) rejects with `invalid_cursor` while it has
    * confirmed history, rather than returning none.
    */
-  override getAddressHistory(
-    address: string,
-    options: AddressHistoryOptions = {}
-  ): Promise<AddressHistory> {
-    return this.runOperation(options, signal =>
-      this.scanCombinedAddressHistory(address, options, signal)
-    )
+  override getAddressHistory(address: string, options: AddressHistoryOptions = {}): Promise<AddressHistory> {
+    return this.runOperation(options, signal => this.scanCombinedAddressHistory(address, options, signal))
   }
 
   private async scanCombinedAddressHistory(
@@ -1311,11 +1276,7 @@ export class MempoolQbitClient extends EsploraClient {
     options: AddressHistoryOptions,
     signal: AbortSignal
   ): Promise<AddressHistory> {
-    const requestedMaxPages = positiveAddressHistoryLimit(
-      options.maxPages,
-      this.maxAddressHistoryPages,
-      'maxPages'
-    )
+    const requestedMaxPages = positiveAddressHistoryLimit(options.maxPages, this.maxAddressHistoryPages, 'maxPages')
     const maxPages = Math.min(requestedMaxPages, this.maxAddressHistoryPages)
     const maxTransactions = positiveAddressHistoryLimit(
       options.maxTransactions,
@@ -1382,11 +1343,7 @@ export class MempoolQbitClient extends EsploraClient {
    * `invalid_cursor` if the stats count more confirmed transactions than it
    * found.
    */
-  override getAddressTxs(
-    address: string,
-    afterTxid?: string,
-    options?: RequestOptions
-  ): Promise<EsploraTx[]> {
+  override getAddressTxs(address: string, afterTxid?: string, options?: RequestOptions): Promise<EsploraTx[]> {
     return this.runOperation(options, signal => this.scanAddressTxs(address, afterTxid, signal))
   }
 
@@ -1409,10 +1366,7 @@ export class MempoolQbitClient extends EsploraClient {
       }
       pageCount += 1
       const suffix = cursor ? `?after_txid=${encodeURIComponent(cursor)}` : ''
-      const txs = await this.getJson<EsploraTx[]>(
-        `/address/${encodeURIComponent(address)}/txs${suffix}`,
-        { signal }
-      )
+      const txs = await this.getJson<EsploraTx[]>(`/address/${encodeURIComponent(address)}/txs${suffix}`, { signal })
       if (txs.length === 0) {
         if (!continuationFound) throw this.invalidAddressHistoryCursorError(address, afterTxid!)
         if (afterTxid === undefined && cursorIsMempoolTx) {
@@ -1503,10 +1457,7 @@ export class MempoolQbitClient extends EsploraClient {
       }
       pageCount += 1
       const suffix = cursor ? `?after_txid=${encodeURIComponent(cursor)}` : ''
-      const txs = await this.getJson<EsploraTx[]>(
-        `/address/${encodeURIComponent(address)}/txs${suffix}`,
-        { signal }
-      )
+      const txs = await this.getJson<EsploraTx[]>(`/address/${encodeURIComponent(address)}/txs${suffix}`, { signal })
       if (txs.length === 0) break
 
       for (const tx of txs) {
@@ -1563,14 +1514,8 @@ export class MempoolQbitClient extends EsploraClient {
     })
   }
 
-  private addressHistoryPaginationLimitError(
-    address: string,
-    maxPages = this.maxAddressHistoryPages
-  ): QbitApiError {
-    return new QbitApiError(
-      'pagination_limit',
-      `mempool-qbit address history exceeded ${maxPages} pages: ${address}`
-    )
+  private addressHistoryPaginationLimitError(address: string, maxPages = this.maxAddressHistoryPages): QbitApiError {
+    return new QbitApiError('pagination_limit', `mempool-qbit address history exceeded ${maxPages} pages: ${address}`)
   }
 
   private invalidAddressHistoryCursorError(address: string, afterTxid: string): QbitApiError {
@@ -1633,7 +1578,10 @@ export function addressBalanceFromStats(stats: EsploraAddressStats): AddressBala
     !hasSafeTxoSums(stats.chain_stats) ||
     !hasSafeTxoSums(stats.mempool_stats)
   ) {
-    throw new QbitApiError('parse', 'address stats lacked a string address or non-negative safe-integer funded/spent sums')
+    throw new QbitApiError(
+      'parse',
+      'address stats lacked a string address or non-negative safe-integer funded/spent sums'
+    )
   }
   const confirmedSats = stats.chain_stats.funded_txo_sum - stats.chain_stats.spent_txo_sum
   const mempoolSats = stats.mempool_stats.funded_txo_sum - stats.mempool_stats.spent_txo_sum
@@ -1674,11 +1622,7 @@ function isSafeSatAmount(value: unknown): value is number {
 }
 
 function hasSafeTxoSums(value: unknown): boolean {
-  return (
-    isRecord(value) &&
-    isSafeSatAmount(value['funded_txo_sum']) &&
-    isSafeSatAmount(value['spent_txo_sum'])
-  )
+  return isRecord(value) && isSafeSatAmount(value['funded_txo_sum']) && isSafeSatAmount(value['spent_txo_sum'])
 }
 
 export interface FeeRateTier {
@@ -1806,10 +1750,7 @@ function tryTxidFromRawTx(rawTxHex: string): string | undefined {
  * undefined when the hex is not a parseable transaction. Argument errors are
  * `TypeError`s thrown before any request is made.
  */
-function resolveBroadcastTxid(
-  rawTxHex: string,
-  options: BroadcastTxOptions | null | undefined
-): string | undefined {
+function resolveBroadcastTxid(rawTxHex: string, options: BroadcastTxOptions | null | undefined): string | undefined {
   if (typeof rawTxHex !== 'string') {
     throw new TypeError('broadcastTx: rawTxHex must be a hex string')
   }
@@ -1821,9 +1762,7 @@ function resolveBroadcastTxid(
     throw new TypeError('broadcastTx: options.txid must be a 64-character hex transaction id')
   }
   if (derived !== undefined && derived !== provided) {
-    throw new TypeError(
-      `broadcastTx: options.txid ${provided} does not match the transaction hex (${derived})`
-    )
+    throw new TypeError(`broadcastTx: options.txid ${provided} does not match the transaction hex (${derived})`)
   }
   return provided
 }
@@ -2033,11 +1972,7 @@ async function verifiedAddressHistory(
   }
 }
 
-function addressHistoryStats(
-  value: unknown,
-  address: string,
-  backend: AddressHistoryBackend
-): AddressHistoryStats {
+function addressHistoryStats(value: unknown, address: string, backend: AddressHistoryBackend): AddressHistoryStats {
   if (!isRecord(value) || !hasTxCount(value['chain_stats']) || !hasTxCount(value['mempool_stats'])) {
     throw new QbitApiError(
       'parse',
@@ -2053,9 +1988,7 @@ function hasTxCount(value: unknown): boolean {
 
 function sameAddressHistoryStats(a: AddressHistoryStats, b: AddressHistoryStats): boolean {
   return ADDRESS_STATS_FIELDS.every(
-    field =>
-      a.chain_stats[field] === b.chain_stats[field] &&
-      a.mempool_stats[field] === b.mempool_stats[field]
+    field => a.chain_stats[field] === b.chain_stats[field] && a.mempool_stats[field] === b.mempool_stats[field]
   )
 }
 
@@ -2071,11 +2004,7 @@ function positiveAddressHistoryLimit(
   return limit
 }
 
-function assertAddressHistoryPage(
-  value: unknown[],
-  address: string,
-  source: string
-): EsploraTx[] {
+function assertAddressHistoryPage(value: unknown[], address: string, source: string): EsploraTx[] {
   value.forEach((tx, index) => {
     const status = isRecord(tx) ? tx['status'] : undefined
     const vin = isRecord(tx) ? tx['vin'] : undefined
@@ -2103,14 +2032,10 @@ function assertAddressHistoryPage(
         addressHistoryAddressMatches(input['prevout']['scriptpubkey_address'], address)
     )
     const paysToAddress = vout.some(
-      output =>
-        isRecord(output) && addressHistoryAddressMatches(output['scriptpubkey_address'], address)
+      output => isRecord(output) && addressHistoryAddressMatches(output['scriptpubkey_address'], address)
     )
     if (!spendsFromAddress && !paysToAddress) {
-      throw new QbitApiError(
-        'parse',
-        `${source} address history transaction ${index} did not touch ${address}`
-      )
+      throw new QbitApiError('parse', `${source} address history transaction ${index} did not touch ${address}`)
     }
   })
   return value as EsploraTx[]
@@ -2196,10 +2121,7 @@ function appendAddressHistoryTransactions(
   for (const tx of txs) {
     const normalizedTxid = tx.txid.toLowerCase()
     if (state.seenTxids.has(normalizedTxid)) {
-      throw new QbitApiError(
-        'invalid_cursor',
-        `${backend} address history repeated transaction ${tx.txid}: ${address}`
-      )
+      throw new QbitApiError('invalid_cursor', `${backend} address history repeated transaction ${tx.txid}: ${address}`)
     }
     state.seenTxids.add(normalizedTxid)
 
@@ -2211,10 +2133,7 @@ function appendAddressHistoryTransactions(
       )
     }
     if (source === 'mempool' && confirmed) {
-      throw new QbitApiError(
-        'parse',
-        `esplora mempool history returned a confirmed transaction ${tx.txid}: ${address}`
-      )
+      throw new QbitApiError('parse', `esplora mempool history returned a confirmed transaction ${tx.txid}: ${address}`)
     }
 
     if (confirmed) state.confirmed.push(tx)
@@ -2222,11 +2141,7 @@ function appendAddressHistoryTransactions(
   }
 }
 
-function addressHistoryPageLimitError(
-  address: string,
-  maxPages: number,
-  backend: AddressHistoryBackend
-): QbitApiError {
+function addressHistoryPageLimitError(address: string, maxPages: number, backend: AddressHistoryBackend): QbitApiError {
   return new QbitApiError(
     'pagination_limit',
     `${backend} address history exceeded ${maxPages} page fetches: ${address}`
@@ -2478,7 +2393,10 @@ function embeddedErrorCode(text: string): number | string | undefined {
 }
 
 function normalizeReplyText(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -2726,7 +2644,10 @@ function baseUrlParts(url: string): string[] {
   const parts = [
     ...(colon === -1 ? [userinfo] : [userinfo.slice(0, colon), userinfo.slice(colon + 1)]),
     ...beforeQuery.split(/[/\\]/).slice(1),
-    ...beforeQuery.slice(at + 1).split(/[/\\]/).slice(1),
+    ...beforeQuery
+      .slice(at + 1)
+      .split(/[/\\]/)
+      .slice(1),
     ...(match[2] ?? '').split('&').map(pair => pair.slice(pair.indexOf('=') + 1)),
   ]
   return parts.flatMap(part => [part, percentDecoded(part)]).filter(part => part.length >= 8)
@@ -2815,7 +2736,8 @@ function redactedCause(value: unknown, baseUrl: string, depth: number): unknown 
       if (error.name !== value.name) {
         Object.defineProperty(error, 'name', { value: String(value.name), writable: true, configurable: true })
       }
-      error.stack = typeof value.stack === 'string' ? redactBaseUrl(value.stack, baseUrl) : `${error.name}: ${error.message}`
+      error.stack =
+        typeof value.stack === 'string' ? redactBaseUrl(value.stack, baseUrl) : `${error.name}: ${error.message}`
       copy = error
     } else if (prototype === Object.prototype || prototype === null) {
       copy = {}

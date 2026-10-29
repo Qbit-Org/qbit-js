@@ -150,7 +150,11 @@ describe('EsploraClient response body timeout', () => {
 
   // A submission reply that stalls or cannot be read may follow an accepted POST.
   it.each([
-    { name: 'a 200 whose body stalls', reply: () => ({ body: controlledBody([TXID.slice(0, 10)]).stream }), cause: 'timeout' },
+    {
+      name: 'a 200 whose body stalls',
+      reply: () => ({ body: controlledBody([TXID.slice(0, 10)]).stream }),
+      cause: 'timeout',
+    },
     { name: 'a 400 whose body errors', reply: () => ({ status: 400, body: erroringBody() }), cause: 'parse' },
   ])('never re-sends a broadcastTx after $name', async ({ reply, cause }) => {
     const sleep = vi.fn(noSleep)
@@ -193,21 +197,18 @@ describe('EsploraClient response body timeout', () => {
     expect(sleep).toHaveBeenCalledWith(7, expect.any(AbortSignal))
   })
 
-  it.each(lost429Bodies)(
-    'rejects a broadcastTx as rate_limit once every 429 body $name',
-    async ({ body, cause }) => {
-      const { fetchFn, signals } = makeFetch(() => ({ status: 429, body: body() }))
-      const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs: 20, retries: 1, sleepFn: noSleep })
+  it.each(lost429Bodies)('rejects a broadcastTx as rate_limit once every 429 body $name', async ({ body, cause }) => {
+    const { fetchFn, signals } = makeFetch(() => ({ status: 429, body: body() }))
+    const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs: 20, retries: 1, sleepFn: noSleep })
 
-      const outcome = await settleWithin(client.broadcastTx('00'), 2_000)
+    const outcome = await settleWithin(client.broadcastTx('00'), 2_000)
 
-      expect(outcome).toMatchObject({
-        state: 'rejected',
-        error: { kind: 'rate_limit', status: 429, url: `${SAFE_BASE}/tx`, cause: { kind: cause, status: 429 } },
-      })
-      expect(signals).toHaveLength(2)
-    }
-  )
+    expect(outcome).toMatchObject({
+      state: 'rejected',
+      error: { kind: 'rate_limit', status: 429, url: `${SAFE_BASE}/tx`, cause: { kind: cause, status: 429 } },
+    })
+    expect(signals).toHaveLength(2)
+  })
 
   it('times out a stalled error body on the final attempt instead of hanging', async () => {
     const body = controlledBody(['bus'])
@@ -223,9 +224,7 @@ describe('EsploraClient response body timeout', () => {
   it('retries a GET whose body timed out, then succeeds', async () => {
     const stalled = controlledBody(['{"addr'])
     const sleep = vi.fn(noSleep)
-    const { fetchFn, signals } = makeFetch(i =>
-      i === 0 ? { body: stalled.stream } : { body: JSON.stringify(STATS) }
-    )
+    const { fetchFn, signals } = makeFetch(i => (i === 0 ? { body: stalled.stream } : { body: JSON.stringify(STATS) }))
     const client = new EsploraClient({
       baseUrl: BASE,
       fetchFn,
@@ -262,9 +261,7 @@ describe('EsploraClient response body timeout', () => {
 
   it('shares one bounded attempt across de-duplicated GETs', async () => {
     const stalled = controlledBody()
-    const { fetchFn, signals } = makeFetch(i =>
-      i === 0 ? { body: stalled.stream } : { body: JSON.stringify(STATS) }
-    )
+    const { fetchFn, signals } = makeFetch(i => (i === 0 ? { body: stalled.stream } : { body: JSON.stringify(STATS) }))
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs: 20, retries: 0, sleepFn: noSleep })
 
     const outcomes = await settleWithin(
@@ -332,9 +329,7 @@ describe('EsploraClient response body timeout', () => {
     const stalled = controlledBody(['busy'])
     const sleep = vi.fn(noSleep)
     const { fetchFn, signals } = makeFetch(i =>
-      i === 0
-        ? { status: 503, headers: { 'retry-after': '3' }, body: stalled.stream }
-        : { body: JSON.stringify(STATS) }
+      i === 0 ? { status: 503, headers: { 'retry-after': '3' }, body: stalled.stream } : { body: JSON.stringify(STATS) }
     )
     const client = new EsploraClient({
       baseUrl: BASE,
@@ -369,29 +364,26 @@ describe('EsploraClient response body timeout', () => {
     expect(sleep).toHaveBeenCalledWith(3000, expect.any(AbortSignal))
   })
 
-  it.each([429, 503])(
-    'ends a stalled %i with a huge Retry-After as a timeout within the budget',
-    async status => {
-      const bodies: ControlledBody[] = []
-      const { fetchFn, signals } = makeFetch(() => {
-        const body = controlledBody(['slow down'])
-        bodies.push(body)
-        return { status, headers: { 'retry-after': '99999' }, body: body.stream }
-      })
-      // The real sleep: honouring the Retry-After of an unread response would park the call for a day.
-      const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs: 50, retries: 1, retryBaseDelayMs: 1 })
+  it.each([429, 503])('ends a stalled %i with a huge Retry-After as a timeout within the budget', async status => {
+    const bodies: ControlledBody[] = []
+    const { fetchFn, signals } = makeFetch(() => {
+      const body = controlledBody(['slow down'])
+      bodies.push(body)
+      return { status, headers: { 'retry-after': '99999' }, body: body.stream }
+    })
+    // The real sleep: honouring the Retry-After of an unread response would park the call for a day.
+    const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs: 50, retries: 1, retryBaseDelayMs: 1 })
 
-      const started = Date.now()
-      const outcome = await settleWithin(client.getAddressStats(ADDR), 2_000)
+    const started = Date.now()
+    const outcome = await settleWithin(client.getAddressStats(ADDR), 2_000)
 
-      expect(outcome).toMatchObject({ state: 'rejected', error: { kind: 'timeout' } })
-      // Two attempts of 50 ms plus a 1 ms backoff, with slack for a loaded runner.
-      expect(Date.now() - started).toBeLessThan(1_000)
-      expect(signals).toHaveLength(2)
-      expect(signals.every(signal => signal.aborted)).toBe(true)
-      expect(bodies.every(body => body.cancelled)).toBe(true)
-    }
-  )
+    expect(outcome).toMatchObject({ state: 'rejected', error: { kind: 'timeout' } })
+    // Two attempts of 50 ms plus a 1 ms backoff, with slack for a loaded runner.
+    expect(Date.now() - started).toBeLessThan(1_000)
+    expect(signals).toHaveLength(2)
+    expect(signals.every(signal => signal.aborted)).toBe(true)
+    expect(bodies.every(body => body.cancelled)).toBe(true)
+  })
 
   it('keeps status, headers, and the fetched URL on the buffered response', async () => {
     const fetched = `${BASE}/tx`
@@ -598,7 +590,8 @@ describe('EsploraClient without a global Response', () => {
 
   it('shares one fetch across de-duplicated GETs', async () => {
     // A legacy transaction and its txid: getTxHex checks the reply.
-    const hex = '020000000111111111111111111111111111111111111111111111111111111111111111110000000000ffffffff0100000000000000000000000000'
+    const hex =
+      '020000000111111111111111111111111111111111111111111111111111111111111111110000000000ffffffff0100000000000000000000000000'
     const id = '992393c6db57a325f48e3097a50c45349c3eb27df5160a68cbb7a022f98c2dc2'
     const fetched = `${BASE}/tx/${id}/hex`
     const { fetchFn, calls } = makePlainFetch(i =>
@@ -749,9 +742,7 @@ describe('EsploraClient releasing a stalled body read through text()', () => {
 
   it('destroys a Node-style body without an error when nothing listens for one', async () => {
     const withoutListeners = vi.fn()
-    await expectTimeoutWithinBudget(
-      makeStalledTextFetch({ destroy: withoutListeners, listenerCount: () => 0 }).fetchFn
-    )
+    await expectTimeoutWithinBudget(makeStalledTextFetch({ destroy: withoutListeners, listenerCount: () => 0 }).fetchFn)
     expect(withoutListeners).toHaveBeenCalledTimes(1)
     expect(withoutListeners).toHaveBeenCalledWith()
 

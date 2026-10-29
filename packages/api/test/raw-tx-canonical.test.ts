@@ -16,9 +16,11 @@ const BASE = 'https://esplora.example/api'
 /** qbit Core `serialize.h` MAX_SIZE. */
 const MAX_SIZE = 0x02000000
 
-const P2MR_TX = JSON.parse(
-  readFileSync(new URL('./fixtures/p2mr-witness-tx.json', import.meta.url), 'utf8')
-) as { unsignedTxHex: string; rawTxHex: string; txid: string }
+const P2MR_TX = JSON.parse(readFileSync(new URL('./fixtures/p2mr-witness-tx.json', import.meta.url), 'utf8')) as {
+  unsignedTxHex: string
+  rawTxHex: string
+  txid: string
+}
 
 const CLIENTS = [
   ['EsploraClient', EsploraClient],

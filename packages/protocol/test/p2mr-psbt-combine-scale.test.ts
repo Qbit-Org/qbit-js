@@ -57,7 +57,7 @@ describe('combinePsbts on large maps', () => {
       expect(combined.inputs.slice(1)).toEqual(honest.inputs.slice(1))
       expect(combined.outputs).toEqual(honest.outputs)
     },
-    SCALE_TIMEOUT_MS,
+    SCALE_TIMEOUT_MS
   )
 
   it(
@@ -80,7 +80,7 @@ describe('combinePsbts on large maps', () => {
       expect((thrown as QbitProtocolError).code).toBe('INVALID_PSBT')
       expect((thrown as QbitProtocolError).message).toBe('conflicting values for the same PSBT key')
     },
-    SCALE_TIMEOUT_MS,
+    SCALE_TIMEOUT_MS
   )
 })
 
@@ -90,7 +90,9 @@ describe('combinePsbts merge semantics (regression guard)', () => {
     const b = parsePsbt(PSBT_BYTES)
     a.inputs[0]!.push(unknownEntry(7, Uint8Array.of(1)))
     b.inputs[0]!.push(unknownEntry(7, Uint8Array.of(2)))
-    expect(() => combinePsbts([a, b])).toThrow(new QbitProtocolError('INVALID_PSBT', 'conflicting values for the same PSBT key'))
+    expect(() => combinePsbts([a, b])).toThrow(
+      new QbitProtocolError('INVALID_PSBT', 'conflicting values for the same PSBT key')
+    )
   })
 
   it('dedupes identical entries across PSBTs and within one PSBT', () => {
@@ -173,9 +175,11 @@ describe('combinePsbts with many PSBTs', () => {
       const combined = combinePsbts([honest, ...later])
       expect(performance.now() - start).toBeLessThan(SCALE_TIMEOUT_MS)
       expect(combined.inputs[0]!.length).toBe(honest.inputs[0]!.length + SCALE_ENTRIES)
-      expect(bytesToHex(combined.inputs[0]![combined.inputs[0]!.length - 1]!.key)).toBe(bytesToHex(unknownEntry(SCALE_ENTRIES - 1).key))
+      expect(bytesToHex(combined.inputs[0]![combined.inputs[0]!.length - 1]!.key)).toBe(
+        bytesToHex(unknownEntry(SCALE_ENTRIES - 1).key)
+      )
     },
-    SCALE_TIMEOUT_MS,
+    SCALE_TIMEOUT_MS
   )
 })
 
@@ -222,6 +226,6 @@ describe('combinePsbts with long keys', () => {
       conflicting.inputs[0]!.push({ key: longKey(7), value: Uint8Array.of(2) })
       expect(() => combinePsbts([hostileA, conflicting])).toThrow(QbitProtocolError)
     },
-    SCALE_TIMEOUT_MS * 3,
+    SCALE_TIMEOUT_MS * 3
   )
 })

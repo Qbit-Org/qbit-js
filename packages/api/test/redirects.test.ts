@@ -9,7 +9,13 @@ const BASE = 'https://esplora.example/regtest/api'
 const ADDR = 'qbrt1zqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc0s8kqqny'
 const FORGED_STATS = {
   address: ADDR,
-  chain_stats: { funded_txo_count: 1, funded_txo_sum: 5_000_000_000, spent_txo_count: 0, spent_txo_sum: 0, tx_count: 1 },
+  chain_stats: {
+    funded_txo_count: 1,
+    funded_txo_sum: 5_000_000_000,
+    spent_txo_count: 0,
+    spent_txo_sum: 0,
+    tx_count: 1,
+  },
   mempool_stats: { funded_txo_count: 0, funded_txo_sum: 0, spent_txo_count: 0, spent_txo_sum: 0, tx_count: 0 },
 }
 const TXID = 'ab'.repeat(32)
@@ -109,7 +115,9 @@ describe('redirects', () => {
 
   it.each([300, 301, 302, 303, 307, 308])('refuses a same-origin HTTP %i on GET', async status => {
     const { fetchFn, calls } = redirectingFetch(url =>
-      url.endsWith('/blocks/tip/height') ? { status, headers: { location: `${BASE}/blocks/tip/height/` } } : { body: '7' }
+      url.endsWith('/blocks/tip/height')
+        ? { status, headers: { location: `${BASE}/blocks/tip/height/` } }
+        : { body: '7' }
     )
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
@@ -216,29 +224,32 @@ describe('redirects', () => {
     ).flatMap(([shape, reply, status]) =>
       [EsploraClient, MempoolQbitClient].map(Client => [Client.name, shape, reply, status, Client] as const)
     )
-  )('%s rejects a broadcast answered by %s as unknown_outcome, without a re-send', async (_name, _shape, reply, status, Client) => {
-    const calls: string[] = []
-    const responses: Response[] = []
-    const fetchFn = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
-      calls.push(`${init.method ?? 'GET'} ${String(input)}`)
-      const response = reply()
-      responses.push(response)
-      return response
-    }) as typeof fetch
-    const client = new Client({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
+  )(
+    '%s rejects a broadcast answered by %s as unknown_outcome, without a re-send',
+    async (_name, _shape, reply, status, Client) => {
+      const calls: string[] = []
+      const responses: Response[] = []
+      const fetchFn = (async (input: RequestInfo | URL, init: RequestInit = {}) => {
+        calls.push(`${init.method ?? 'GET'} ${String(input)}`)
+        const response = reply()
+        responses.push(response)
+        return response
+      }) as typeof fetch
+      const client = new Client({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
-    const error = await rejection(client.broadcastTx('0200000000ffff', { txid: TXID }))
+      const error = await rejection(client.broadcastTx('0200000000ffff', { txid: TXID }))
 
-    expect(error).toMatchObject({ kind: 'unknown_outcome', txid: TXID, url: 'https://esplora.example/.../tx' })
-    expect(error.status).toBe(status)
-    expect(error.message).toContain(`txid ${TXID} may have been accepted`)
-    expect(error.cause).toBeInstanceOf(QbitApiError)
-    expect((error.cause as QbitApiError).kind).toBe('http')
-    expect((error.cause as QbitApiError).status).toBe(status)
-    // Not followed, retried, re-sent or sent to /tx/push, and the body is discarded unread.
-    expect(calls).toEqual([`POST ${BASE}/tx`])
-    expect(responses[0]!.body === null || responses[0]!.bodyUsed).toBe(true)
-  })
+      expect(error).toMatchObject({ kind: 'unknown_outcome', txid: TXID, url: 'https://esplora.example/.../tx' })
+      expect(error.status).toBe(status)
+      expect(error.message).toContain(`txid ${TXID} may have been accepted`)
+      expect(error.cause).toBeInstanceOf(QbitApiError)
+      expect((error.cause as QbitApiError).kind).toBe('http')
+      expect((error.cause as QbitApiError).status).toBe(status)
+      // Not followed, retried, re-sent or sent to /tx/push, and the body is discarded unread.
+      expect(calls).toEqual([`POST ${BASE}/tx`])
+      expect(responses[0]!.body === null || responses[0]!.bodyUsed).toBe(true)
+    }
+  )
 
   it('refuses a browser opaque redirect', async () => {
     const opaque = Object.defineProperties(new Response(null), {

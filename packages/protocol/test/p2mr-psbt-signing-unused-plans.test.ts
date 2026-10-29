@@ -286,12 +286,7 @@ describe('(c) more plans in one call than the witness places', () => {
     const script = multiALeafScript(1, [key1, key2])
     const leafHash = leafHashOf(script)
     const psbt = psbtFor({ root: leafHash, leaves: [{ script, controlBlock: controlBlock([]) }] })
-    expectRefused(
-      psbt,
-      [plan(key1, leafHash), plan(key2, leafHash)],
-      unusedPlanMessage(0, key1, leafHash),
-      SIGHASH_ALL
-    )
+    expectRefused(psbt, [plan(key1, leafHash), plan(key2, leafHash)], unusedPlanMessage(0, key1, leafHash), SIGHASH_ALL)
     const witness = finalWitness(finalizeP2mrPsbt(sign(psbt, [plan(key2, leafHash)], SIGHASH_ALL)))
     expect(witness[0]).toBe(hex(signatureOf(key2, leafHash)) + '01')
   })
@@ -439,7 +434,7 @@ describe('the preflight agrees with finalize on random PSBTs', () => {
     return seed / 0x100000000
   }
   const below = (n: number): number => Math.floor(random() * n)
-  const shuffled = <T,>(items: readonly T[]): T[] => {
+  const shuffled = <T>(items: readonly T[]): T[] => {
     const out = [...items]
     for (let i = out.length - 1; i > 0; i -= 1) {
       const j = below(i + 1)
