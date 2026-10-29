@@ -201,8 +201,12 @@ const EXTENDED_KEY_VERSION_PREFIXES = new Map<number, string>([
   [0x03f7d7b5, 'qrpb'],
   [0x03f7d83a, 'qrpv'],
 ])
+// Grouped in 32-character lines, as Core's INPUT_CHARSET is.
+// prettier-ignore
 const DESCRIPTOR_INPUT_CHARSET =
-  "0123456789()[],'/*abcdefgh@:$%{}" + 'IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~' + 'ijklmnopqrstuvwxyzABCDEFGH`#"\\ '
+  "0123456789()[],'/*abcdefgh@:$%{}" +
+  'IJKLMNOPQRSTUVWXYZ&+-.;<=>?!^_|~' +
+  'ijklmnopqrstuvwxyzABCDEFGH`#"\\ '
 const DESCRIPTOR_CHECKSUM_CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l'
 const textEncoder = new TextEncoder()
 
