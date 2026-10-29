@@ -1,191 +1,143 @@
 # @qbit-oss/protocol
 
 qbit protocol primitives for wallet integration across Qbit mainnet, Testnet4,
-signet, and regtest:
-
-- network parameters for qbit mainnet, testnet4, signet, and regtest
-- strict P2MR bech32m address encode/decode (printable ASCII only, 90-character
-  limit, and no mixed case, matching qbit Core's `bech32::Decode`)
-- P2MR single-key leaf scripts, merkle roots, control blocks, and scriptPubKeys
-- structured P2MR wallet message proofs (`createP2mrMessageProof`,
-  `verifyP2mrMessageProof`). `verifyP2mrMessageProof(message, proof, verifyPqc,
-  options)` requires `options` with `{ expectedAddress }` and/or
-  `{ expectedNetwork }`; the three-argument form was removed, and missing,
-  non-object or empty `options` throws `TypeError`. `proof.address` is
-  attacker-controlled and the same Merkle root encodes to a different string on
-  each network except signet and Testnet4, which share the `tq` prefix (so
-  `expectedNetwork` cannot tell those two apart; pass `expectedAddress` to pin
-  an exact address). Never trust `proof.address` on its own. Only the canonical
-  lowercase spelling verifies: an uppercase `proof.address` returns `false`, so
-  re-create such a proof with `createP2mrMessageProof`.
-- `qbit:` payment URI parse/format helpers
-- qbit Core descriptor checksum helpers
-- P2MR descriptor parse/serialize helpers for `rawmr(...)`, literal `mr(pk(...))`,
-  `mr(multi_a(...))`, `mr(sortedmulti_a(...))`, Core-style binary script trees,
-  and parse-only `mr(pk(pqc(...)))`
-- qbit Core `importdescriptors` JSON entry formatting for receive/change P2MR descriptors
-- P2MR witness signature item and PSBT input-field codecs for qbit's `0x19`,
-  `0x1d`, and `qbit` proprietary P2MR fields
-- qbit-aware PSBT creation, inspection, combination, signing, finalization, and
-  transaction extraction, including side-effect-free `validateP2mrSigningPlans`
-  preflight for stateful signers
-- consensus range checks: amounts must satisfy qbit Core `MoneyRange`
-  (`0 ≤ value ≤ QBIT_MAX_MONEY`), `version`/`locktime`/`vout`/`sequence`/
-  `codeSeparatorPos` must be uint32 (`version` included: qbit Core's
-  `CTransaction::version` is `uint32_t`, so a legacy int32 `-1` is
-  `0xffffffff`) and `keyVersion` must be uint8; out-of-range values throw
-  `QbitProtocolError` (`INVALID_AMOUNT` / `INVALID_INTEGER`) instead of being
-  serialized and signed modulo 2^64 / 2^32 / 2^8 (`assertMoneyRange`,
-  `assertUint32`)
-- crash-safe P2MR signing for stateful signers: `signP2mrPsbt` reports each
-  signature through the synchronous `onSigned` callback as soon as it is
-  stored, and a failed signer call or callback throws `P2mrPsbtSigningError`
-  carrying the partially signed PSBT, the plans signed so far, and the `phase`
-  (`'sign'`: nothing stored for the failed plan; `'onSigned'`: its signature is
-  already stored), so a retry passes that PSBT back in with only the unsigned
-  plans; `sign` and `onSigned` must both be synchronous, and one that returns
-  a promise fails its plan the same way (the promise is never left unhandled);
-  a signature `Uint8Array` from another realm (vm, iframe, worker) is accepted
-- error classification across builds: `QbitProtocolError.is(error)` and
-  `P2mrPsbtSigningError.is(error)` recognize those errors from any copy of this
-  package. Use them instead of `instanceof` where the app can load both the
-  CommonJS and the ESM build, or two versions: each copy has its own classes,
-  and `instanceof` is false for an error from the other one. They check the
-  `Symbol.for('qbit-js.QbitProtocolError')` and
-  `Symbol.for('qbit-js.P2mrPsbtSigningError')` brands on the class prototypes.
-  Any code can set a brand, so they classify errors, they do not authenticate
-  them. An error from another version can carry a `code` this one does not
-  list, so keep a default branch
-- qbit Core's restricted-output consensus rule
-  (`src/consensus/restricted_outputs.h` @ v1.0.0), on for every network
-  including default regtest: `isRestrictedOutputModeOutput(scriptPubKey,
-  { reservedWitnessActive })` mirrors it, and `createP2mrPsbt`,
-  `validateP2mrSigningPlans` and `signP2mrPsbt` throw `INVALID_SCRIPT` before
-  any signer call for an output that is not P2MR, `OP_RETURN` or P2A, which
-  Core rejects with `tx-output-not-p2mr`. They refuse witness v3..v16 outputs
-  too, which Core's consensus allows on mainnet, testnet4 and signet but no
-  default node relays. Pass `restrictedOutputMode: false` only for a regtest
-  node run with `-p2mronly=0`. Relay policy (`OP_RETURN` push-only data,
-  `-datacarriersize`, dust) is not checked
-- sighash-type guardrails on the signing path: `signP2mrPsbt` /
-  `validateP2mrSigningPlans` accept only `SIGHASH_DEFAULT` unless the caller
-  passes `allowNonDefaultSighash: true`, enforce the input's
-  `PSBT_IN_SIGHASH_TYPE` field and existing-signature agreement the way qbit
-  Core's `SIGHASH_MISMATCH` does, and hand the `sign` callback the `hashType`,
-  unsigned `tx` and `spentOutputs` it is committing to
-- sighash-type enforcement at finalization: `finalizeP2mrPsbt` throws
-  `INVALID_SIGHASH` for a signature whose type differs from the input's
-  `PSBT_IN_SIGHASH_TYPE`, or is not `SIGHASH_DEFAULT` when that field is
-  absent, exactly as qbit Core's `FinalizePSBT` → `SignPSBTInput` does
-  (`src/psbt.cpp:530,548-568,589-596,697` @ v1.0.0)
-- signing and finalization agree as they do in qbit Core: `finalizeP2mrPsbt`
-  builds Core's witness for a committed v1 `pk` or `multi_a` leaf that has
-  enough signatures (the smallest witness when several do), and ignores
-  unrelated leaves and signatures (`src/script/sign.cpp:503-631,699-741`). A
-  leaf or signature carried as both a standard and a `qbit` proprietary field
-  counts once, as `decodePsbt` reports it; two different signatures for one
-  (pubkey, leaf hash) throw `INVALID_PSBT`. `validateP2mrSigningPlans` and
-  `signP2mrPsbt` refuse the whole call with `INVALID_PSBT`, before any signer
-  call, when a plan's leaf is not one finalize can use, when the call plans
-  signatures on two or more leaves of one input (a witness reveals one leaf,
-  so at least one of them could never be used, even when none completes), or
-  when finalize, run over the input's signatures plus this call's, would
-  complete a witness that leaves a plan's signature out: another leaf it
-  prefers is already complete, or the plan's `multi_a` leaf reaches its
-  threshold on keys finalize places first. Finalize places from the last key,
-  so for a 1-of-2 `[K1, K2]` leaf with K2 signed a K1 plan is refused, but
-  with K1 signed a K2 plan is accepted and finalize uses K2. Core likewise
-  signs only the leaf it finalizes, up to its threshold, and with no leaf
-  complete only its best partial leaf
-  (`src/script/sign.cpp:592-613,729-756`). Plans on one leaf that do not
-  complete it pass, so co-signers can sign a `multi_a` leaf in turn; hedging
-  across leaves in separate calls is not refused. So once every plan is
-  signed, finalize uses each of the call's signatures or still waits for more;
-  signatures added later can make it choose another leaf. Neither the
-  preflight nor finalize verifies signatures: an invalid signature already on
-  the PSBT counts as a valid one. On a leaf finalize prefers it gets the plan refused before a key use is
-  spent, but on the leaf finalize uses, including the plan's own `multi_a`
-  leaf, it makes finalize produce a transaction that does not verify
-
-PSBT and field-decoding results do not alias caller memory. Parsed PSBTs,
-decoded fields, PSBTs returned by sign/combine/finalize, and signing-plan keys
-are fresh plain `Uint8Array` copies, including when the input is a Node
-`Buffer` (whose `slice` returns a view). Callers may wipe or reuse input
-buffers after a call returns.
-
-Byte inputs must be `Uint8Array`s: every fixed-length one (pubkeys,
-signatures, leaf hashes, merkle roots and siblings, outpoint txids, address
-programs, the five cached sighash `midstates`), the leaf scripts and control
-blocks given to the builders and encoders, output, witness-UTXO and
-spent-output scripts, the sighash annex, the map keys and values
-`serializePsbt` writes (so a hand-built `Psbt` holding `number[]`s no longer
-serializes), the `keyData` of `decodeQbitProprietaryP2mrInputField`, and the
-arguments of `outputScriptToAddress`, `decodeP2mrWitnessSignature` and
-`decodeP2mrPsbtScriptSigField`. A Node `Buffer`, a subarray, a subclass or a
-`Uint8Array` from another realm (vm, iframe, worker) is accepted; a string, a
-plain array, another typed array (even one whose `Symbol.toStringTag` claims
-`'Uint8Array'`) or a `DataView` throws `QbitProtocolError` `INVALID_BYTES`
-even when its `length` is right. The sighash `leafHash` of `p2mrSighash` and
-`schnorrSignatureHash` is the exception: it throws `INVALID_SIGHASH`. Wrap a
-`number[]` or another typed array with `Uint8Array.from(...)`.
-
-Non-default sighash types (`NONE`, `SINGLE`, and the `ANYONECANPAY` variants)
-do not commit to every input and output, so a signature made with one can be
-lifted into a transaction the user never saw. Applications must surface the
-type (`decodePsbt(...).inputs[i].sighashType` and the signing key's `hashType`)
-in their approval flow before opting in with `allowNonDefaultSighash: true`.
+signet, and regtest.
 
 This package does not derive seed phrases or private keys. Wallet code should
-combine these helpers with a PQC signer and its own key management.
+combine these helpers with a PQC signer and its own key management. Low-level
+PQC signing is in a separate package, `@qbit-oss/pqc`, published from
+[Qbit-Org/qbit-pqc](https://github.com/Qbit-Org/qbit-pqc). To read chain data
+and broadcast, use
+[`@qbit-oss/api`](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/README.md).
 
-## Untrusted PSBT input
+## Install
 
-`parsePsbt(bytes, { maxBytes, maxObjects })` and
-`extractP2mrTransaction(psbt, { maxBytes, maxObjects })` bound what a hostile
-PSBT can make them allocate. The two limits are independent:
+```sh
+npm install @qbit-oss/protocol
+pnpm add @qbit-oss/protocol
+yarn add @qbit-oss/protocol
+```
 
-- `maxBytes` (default `PSBT_DEFAULT_MAX_BYTES`, 16 MiB, 8x a block-sized qbit
-  transaction): `parsePsbt` rejects larger input before parsing it, and
-  `extractP2mrTransaction` refuses to build a larger transaction.
-- `maxObjects` (default `PSBT_DEFAULT_MAX_OBJECTS`, 131,072): the most PSBT
-  map entries, unsigned-transaction inputs and outputs, and final-witness items
-  one call decodes, counted together. Each costs about 0.5 KB of heap however
-  few bytes encode it (a map entry can take 3 bytes), and key and value bytes
-  add to that (see below), so this, not `maxBytes`, bounds the heap a small,
-  dense PSBT can claim. A PSBT within `maxBytes` with
-  at most `maxObjects` objects is accepted however dense it is: a 9,000-output
-  P2MR batch payout (a 396,152-byte unsigned PSBT, 390,777-byte transaction)
-  passes with `maxBytes` set to its exact size. A standard transaction (at
-  most 400,000 bytes) has fewer than 44,500 inputs and outputs. Raise
-  `maxObjects` for a non-standard transaction with more objects than that
-  allows, and lower both limits to tighten the memory bound.
-- Counts and lengths are checked against the bytes that remain before the
-  parser allocates or loops.
-- `finalizeP2mrPsbt` and `extractP2mrTransaction` decode final scriptwitness
-  (`0x08`) values with qbit Core v1.0.0's P2MR limits, including on `Psbt`
-  objects built without `parsePsbt`: at most 1,003 items (a 1,000-item stack,
-  leaf script, control block and annex), and for leaf version `0xc0` a stack
-  of at most 1,000 items, 16 KiB each and 128 KiB in total
-  (`src/script/script.h:43-49`, `src/script/interpreter.cpp:37-47`).
+A plain install gets the latest final release. Release candidates are published
+under the npm dist-tag `candidate`, never `latest`: when one is published,
+`@qbit-oss/protocol@candidate` installs the most recently published candidate.
+To pin a version, install `@qbit-oss/protocol@<version>`. `pnpm add` and
+`yarn add` take the same suffixes. Versions and dist-tags are described in
+[RELEASING.md](https://github.com/Qbit-Org/qbit-js/blob/main/RELEASING.md).
 
-At the defaults, the densest hostile PSBTs measured on Node 24 needed at most
-96 MB of V8 heap in `parsePsbt` (131,069 distinct 64-byte keys with 61-byte
-values) and 144 MB in `parsePsbt` and then `decodePsbt` (131,069 P2MR leaf
-scripts of 63 bytes), as the smallest passing `--max-old-space-size`. The
-parsed PSBT retained at most about 70 MB of that, and the `decodePsbt` summary
-about 70 MB more. `extractP2mrTransaction` of 130 inputs with 1,003 empty
-witness items each completed with `--max-old-space-size=36`. What drives the
-heap is `maxObjects` times the cost of each object: about 0.5 KB, plus up to
-about 0.25 KB for a map entry's key and value, because V8 keeps byte arrays of
-up to 64 bytes on its heap and the duplicate-key check holds the hex of keys of
-up to 64 bytes, plus about 0.4 KB for each leaf script `decodePsbt` decodes.
-Longer keys are checked by their SHA-256, and longer keys and values live
-outside the V8 heap. Parsed fields are copies of the input, so a parsed PSBT
-also holds about its encoded size (at most `maxBytes`) in byte buffers outside
-the heap.
+## Runtime support
 
-Unlike qbit Core, `parsePsbt` does not decode `0x08` values yet, so a
-malformed final witness is reported by `finalizeP2mrPsbt` or
-`extractP2mrTransaction`, not at parse time. All of these failures throw
-`QbitProtocolError` with code `INVALID_PSBT`; a `maxBytes` or `maxObjects`
-that is not a positive safe integer throws `RangeError`.
+The package ships a CommonJS and an ESM build, each with type declarations, and
+its `package.json` declares no `engines` range. What the repository checks:
+
+- CI builds, tests and type-checks it, and runs the checks below, on Node.js 22.
+- `consumer:check`
+  ([`scripts/check-packed-consumer.mjs`](https://github.com/Qbit-Org/qbit-js/blob/main/scripts/check-packed-consumer.mjs))
+  type-checks a consumer against the packed declarations, through both the
+  `import` and the `require` condition, as a Node-only project
+  (`lib: ["ES2022"]`, `types: ["node"]`, no DOM lib) and as a browser project
+  (`lib: ["ES2022", "DOM"]`, no `@types/node`). It then loads the CommonJS and
+  the ESM build side by side in Node.js and checks that each build's
+  `QbitProtocolError.is` and `P2mrPsbtSigningError.is` recognize the other
+  build's errors. The browser project is only type-checked; no test runs in a
+  browser.
+- `smoke:consumer` installs the packed package into a fresh project with npm,
+  imports it by name through both builds in Node.js, and checks it against
+  qbit Core vectors.
+
+Byte inputs must be `Uint8Array`s. A Node `Buffer` or a `Uint8Array` from
+another realm (vm, iframe, worker) is accepted; see
+[Byte inputs and outputs](docs/byte-inputs.md).
+
+## Quick start
+
+```ts
+import { addressToScriptPubKey, buildControlBlock, createP2mrPsbt, hexToBytes, p2mrAddressFromPubkey,
+  p2mrLeafHash, P2MR_LEAF_VERSION_V1, singleKeyLeafScript, validateP2mrSigningPlans } from '@qbit-oss/protocol'
+
+const fundingTxid = '0123456789abcdef'.repeat(4) // placeholder: the txid of the output you spend
+const pubkey = hexToBytes('02'.repeat(32)) // placeholder: 32-byte public key from your PQC signer
+const address = p2mrAddressFromPubkey(pubkey, 'regtest') // 'qbrt1zzasx2u2z7v9kn4q8e66r57mfw08xvrvdcqfcq6xfte0eau9dgdgqz42zd5'
+const scriptPubKey = addressToScriptPubKey(address, 'regtest')
+const leafScript = singleKeyLeafScript(pubkey)
+const txid = hexToBytes(fundingTxid).reverse() // fundingTxid as an explorer shows it, reversed to internal order
+const psbt = createP2mrPsbt({
+  inputs: [{ prevout: { txid, vout: 0 }, witnessUtxo: { value: 100_000n, scriptPubKey }, leafScript, controlBlock: buildControlBlock() }],
+  outputs: [{ value: 99_000n, scriptPubKey }], // pays back to the same address
+})
+const keys = [{ inputIndex: 0, pubkey, leafHash: p2mrLeafHash(P2MR_LEAF_VERSION_V1, leafScript) }]
+validateP2mrSigningPlans({ psbt, keys }) // the plan checks signP2mrPsbt runs before its first signer call
+```
+
+Then sign with `signP2mrPsbt({ psbt, keys, sign })`, where `sign` is a
+synchronous callback that returns your PQC signer's 3680-byte signature for the
+sighash it is given. Pass the `psbt` it returns to `finalizeP2mrPsbt`, then
+`extractP2mrTransaction` returns the transaction as bytes. `@qbit-oss/api`'s
+`broadcastTx` takes hex, so send `bytesToHex(tx)`.
+See [Signing and finalization](docs/signing-and-finalization.md).
+
+## Common tasks
+
+| Task | Function(s) | Details |
+| --- | --- | --- |
+| Derive a single-key P2MR address | `p2mrAddressFromPubkey` | [Features](docs/features.md) |
+| Encode or decode a P2MR address | `encodeP2mrAddress`, `decodeP2mrAddress` | [Features](docs/features.md) |
+| Convert between address and output script | `addressToScriptPubKey`, `outputScriptToAddress` | [Features](docs/features.md) |
+| Build leaf scripts and control blocks | `singleKeyLeafScript`, `multiALeafScript`, `p2mrLeafHash`, `buildControlBlock` | [Features](docs/features.md) |
+| Look up network parameters | `getQbitNetwork`, `qbitNetworks` | [Features](docs/features.md) |
+| Know when a coinbase output can be spent | `QBIT_COINBASE_MATURITY` | [Features](docs/features.md) |
+| Parse or format a `qbit:` payment URI | `parseQbitUri`, `formatQbitUri` | [qbit Payment URIs](docs/qbit-uri.md) |
+| Parse a descriptor or derive its address | `parseP2mrDescriptor`, `p2mrAddressFromDescriptor` | [P2MR descriptor support](docs/p2mr-descriptor-support.md) |
+| Export descriptors to qbit Core | `formatP2mrImportDescriptors` | [`formatP2mrImportDescriptors`](docs/p2mr-descriptor-support.md#formatp2mrimportdescriptors) |
+| Create an unsigned PSBT | `createP2mrPsbt` | [Consensus checks](docs/consensus-checks.md) |
+| Parse, inspect or combine PSBTs | `parsePsbt`, `decodePsbt`, `combinePsbts`, `serializePsbt` | [Untrusted PSBT input](docs/untrusted-psbt.md) |
+| Check signing plans before using a key | `validateP2mrSigningPlans` | [Signing and finalization](docs/signing-and-finalization.md) |
+| Sign, finalize and extract a transaction | `signP2mrPsbt`, `finalizeP2mrPsbt`, `extractP2mrTransaction` | [Signing and finalization](docs/signing-and-finalization.md) |
+| Compute a sighash | `p2mrSighash`, `precomputeSighashMidstates` | [P2MR Signature Hash](docs/p2mr-sighash.md) |
+| Create or verify a message proof | `createP2mrMessageProof`, `verifyP2mrMessageProof` | [Message proofs](docs/message-proofs.md) |
+| Check amounts and integer fields | `assertMoneyRange`, `assertUint32` | [Consensus checks](docs/consensus-checks.md) |
+| Check an output against restricted-output mode | `isRestrictedOutputModeOutput` | [Consensus checks](docs/consensus-checks.md) |
+| Classify an error | `QbitProtocolError.is`, `P2mrPsbtSigningError.is` | [Error classification](docs/error-classification.md) |
+
+## Errors you must handle
+
+- **`QbitProtocolError.is(error)` and `P2mrPsbtSigningError.is(error)`, not
+  `instanceof`**: they recognize errors from any copy of this package, where an
+  app that loads both the CommonJS and the ESM build, or two versions, has two
+  of each class. Keep a default branch when switching on `code`, since another
+  version can carry a code this one does not list.
+  [Error classification](docs/error-classification.md)
+- **`P2mrPsbtSigningError`** from `signP2mrPsbt`: a `sign` call or the
+  `onSigned` callback failed. `error.psbt` holds every signature made so far,
+  `error.signed` lists them, and `error.failed` is the plan that failed. In
+  phase `'sign'` the signer was invoked for `failed` but no signature was
+  stored, so `failed` is not in `signed`; a stateful signer must still treat
+  that key use as consumed and never sign again from the same one-time state.
+  In phase `'onSigned'` the signature for `failed` is stored and is the last
+  entry of `signed`; only the callback failed. Retry by calling `signP2mrPsbt`
+  with `error.psbt` and only the keys not listed in `error.signed`; a key whose
+  signature is already present is refused before any signer call.
+  [Signing and finalization](docs/signing-and-finalization.md)
+
+## Topic pages
+
+- [Features](docs/features.md): everything the package provides, one entry per
+  area.
+- [Signing and finalization](docs/signing-and-finalization.md): crash-safe
+  signing, sighash-type rules, and which leaf finalize uses.
+- [Byte inputs and outputs](docs/byte-inputs.md): accepted byte types and
+  copy-on-return results.
+- [Untrusted PSBT input](docs/untrusted-psbt.md): parser limits and their
+  measured memory cost.
+- [Consensus checks](docs/consensus-checks.md): amount and integer ranges, and
+  the restricted-output rule.
+- [Message proofs](docs/message-proofs.md): creating and verifying P2MR wallet
+  message proofs.
+- [Error classification](docs/error-classification.md): `QbitProtocolError.is`
+  and `P2mrPsbtSigningError.is`.
+- [P2MR Signature Hash](docs/p2mr-sighash.md): the byte-exact message a P2MR
+  signature commits to.
+- [P2MR descriptors](docs/p2mr-descriptors.md) and
+  [P2MR descriptor support](docs/p2mr-descriptor-support.md): the `mr(...)` and
+  `rawmr(...)` helpers and where they differ from qbit Core.
+- [qbit Payment URIs](docs/qbit-uri.md): parsing and formatting `qbit:` URIs.

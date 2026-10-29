@@ -3,8 +3,29 @@
 TypeScript SDK packages for qbit wallets and applications.
 
 This repo is intentionally a workspace. Each package publishes separately while
-sharing one toolchain, CI and release line. The `@qbit-oss/api` README includes
-usage examples.
+sharing one toolchain, CI and release line. Each package README starts with
+install lines, a quick start and a table of common tasks.
+
+## Which package do I need?
+
+- [`@qbit-oss/protocol`](packages/protocol/README.md) to derive addresses, build,
+  sign and finalize PSBTs, and handle descriptors, `qbit:` URIs and message
+  proofs. It makes no network requests.
+- [`@qbit-oss/api`](packages/api/README.md) to read balances, UTXOs, history and
+  fee estimates from a qbit block explorer and to broadcast a signed
+  transaction.
+- A wallet usually needs both, plus a PQC signer for the signatures
+  `@qbit-oss/protocol` asks for (see the PQC note below).
+
+```sh
+npm install @qbit-oss/protocol @qbit-oss/api
+pnpm add @qbit-oss/protocol @qbit-oss/api
+yarn add @qbit-oss/protocol @qbit-oss/api
+```
+
+Both packages are released together at one version, which names one tested
+combination; see [RELEASING.md](RELEASING.md) for versions and the `candidate`
+dist-tag.
 
 ## Packages
 
@@ -14,7 +35,7 @@ usage examples.
 - [`@qbit-oss/api`](packages/api/README.md): typed REST clients for qbit block
   explorers. `EsploraClient` talks to an electrs/esplora endpoint, and
   `MempoolQbitClient` to a mempool-qbit backend (qbit's port of the mempool
-  explorer) such as `mempool.qbit.org/api`. Both cover address balance, UTXOs
+  explorer) such as `mempool.qbit.org/api/v1`. Both cover address balance, UTXOs
   and history, transaction lookup, fee estimates and broadcast.
 
 Planned packages:
