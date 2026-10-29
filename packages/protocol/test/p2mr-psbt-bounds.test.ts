@@ -291,6 +291,38 @@ describe('PSBT map and transaction bounds', () => {
     expectInvalidPsbt(() => parsePsbt(psbtWithInputMap(repeated)), /duplicate key/)
   })
 
+  it('checks the same keys for duplicates in linear time in decodePsbt', () => {
+    // decodePsbt, which finalizeP2mrPsbt, validateP2mrSigningPlans and
+    // signP2mrPsbt run first, checked keys again by their full hex: about 2.6 s
+    // here before, and twice the key bytes in strings on the heap.
+    const encoded = psbtWithInputMap(concat(Array.from({ length: 2000 }, (_, i) => longKeyEntry(i))))
+    let psbt: ReturnType<typeof parsePsbt> | undefined
+    const parseMs = elapsedMs(() => {
+      psbt = parsePsbt(encoded)
+    })
+    let inputs: number | undefined
+    const ms = elapsedMs(() => {
+      inputs = decodePsbt(psbt!).inputs.length
+    })
+    expect(inputs).toBe(1)
+    // Relative to parsePsbt on the same PSBT, so a loaded runner slows both:
+    // about 1x when linear, about 40x with the old check.
+    expect(ms).toBeLessThan(10 * parseMs + 250)
+
+    // A repeated key is still a duplicate, on either side of the 64-byte switch
+    // to SHA-256. parsePsbt rejects one first, so these maps are built in memory.
+    for (const length of [1, 64, 65, 8192]) {
+      const key = new Uint8Array(length).fill(0xab)
+      key[0] = 0x77
+      const repeated = parsePsbt(psbtWithInputMap(new Uint8Array()))
+      repeated.inputs[0] = [
+        { key, value: new Uint8Array() },
+        { key: key.slice(), value: Uint8Array.of(1) },
+      ]
+      expectInvalidPsbt(() => decodePsbt(repeated), /duplicate key in PSBT map/)
+    }
+  })
+
   it('rejects input and output counts larger than the transaction data before looping', () => {
     const huge = (count: Uint8Array, outputs: boolean) => {
       // version, then either the count or one minimal input followed by the count

@@ -796,7 +796,7 @@ function buildMultiALeafScript(threshold: number, pubkeys: readonly Uint8Array[]
     chunks.push(Uint8Array.of(index === 0 ? OP_CHECKSIGPQC : OP_CHECKSIGADD))
   }
   chunks.push(scriptNumber(threshold), Uint8Array.of(OP_NUMEQUAL))
-  return concatBytes(...chunks)
+  return concatByteList(chunks)
 }
 
 export function p2mrLeafHash(leafVersion: number, script: Uint8Array = new Uint8Array()): Uint8Array {
@@ -838,7 +838,7 @@ export function buildControlBlock(
     assertByteLength(sibling, P2MR_CONTROL_NODE_BYTES, `P2MR sibling ${index}`)
     chunks.push(sibling)
   }
-  return concatBytes(...chunks)
+  return concatByteList(chunks)
 }
 
 export function verifyControlBlock(
@@ -1241,17 +1241,17 @@ export function precomputeSighashMidstates(
     throw new QbitProtocolError('INVALID_SIGHASH', 'spentOutputs length must equal inputs length')
   }
   return {
-    prevouts: sha256(concatBytes(...tx.inputs.map(input => serializeOutpoint(input.prevout)))),
+    prevouts: sha256(concatByteList(tx.inputs.map(input => serializeOutpoint(input.prevout)))),
     amounts: sha256(
-      concatBytes(...spentOutputs.map((output, i) => serializeAmount(output.value, `spent output ${i} value`)))
+      concatByteList(spentOutputs.map((output, i) => serializeAmount(output.value, `spent output ${i} value`)))
     ),
     scriptPubKeys: sha256(
-      concatBytes(
-        ...spentOutputs.map((output, i) => serializeVarBytes(output.scriptPubKey, `spent output ${i} scriptPubKey`))
+      concatByteList(
+        spentOutputs.map((output, i) => serializeVarBytes(output.scriptPubKey, `spent output ${i} scriptPubKey`))
       )
     ),
-    sequences: sha256(concatBytes(...tx.inputs.map(input => uint32LE(input.sequence, 'sequence')))),
-    outputs: sha256(concatBytes(...tx.outputs.map((output, i) => serializeTxOut(output, `output ${i}`)))),
+    sequences: sha256(concatByteList(tx.inputs.map(input => uint32LE(input.sequence, 'sequence')))),
+    outputs: sha256(concatByteList(tx.outputs.map((output, i) => serializeTxOut(output, `output ${i}`)))),
   }
 }
 
@@ -1330,7 +1330,7 @@ export function schnorrSignatureHash(params: SchnorrSighashParams): Uint8Array {
   if (scriptPath) {
     parts.push(params.leafHash!, Uint8Array.of(keyVersion), uint32LE(codeSeparatorPos, 'codeSeparatorPos'))
   }
-  return taggedHash(tag, concatBytes(...parts))
+  return taggedHash(tag, concatByteList(parts))
 }
 
 export interface P2mrSighashParams {
@@ -1653,8 +1653,10 @@ export function serializePsbt(psbt: Psbt): Uint8Array {
 
 /**
  * Concatenate a list of chunks without spreading it into call arguments.
- * `concatBytes(...parts)` passes one argument per chunk, so a PSBT map with
- * about 63k entries overflows the call stack with a bare `RangeError`.
+ * `concatBytes(...parts)` passes one argument per chunk, so a list as long as a
+ * large PSBT map, or a transaction's inputs, outputs or witness items,
+ * overflows the call stack with a bare `RangeError` (at about 120k chunks on
+ * Node's default stack).
  */
 function concatByteList(chunks: readonly Uint8Array[]): Uint8Array {
   let length = 0
@@ -1854,11 +1856,12 @@ function assertPsbtMapShape(psbt: Psbt, tx: P2mrTransaction): void {
       if (key.length === 0) {
         throw new QbitProtocolError('INVALID_PSBT', 'empty key in PSBT map')
       }
-      const keyHex = bytesToHex(key)
-      if (seen.has(keyHex)) {
+      // The parser's key id, so a long key costs a SHA-256 rather than its hex.
+      const keyId = psbtKeyIndexId(key)
+      if (seen.has(keyId)) {
         throw new QbitProtocolError('INVALID_PSBT', 'duplicate key in PSBT map')
       }
-      seen.add(keyHex)
+      seen.add(keyId)
     }
   }
 }
@@ -3628,7 +3631,7 @@ function networkNameForHrp(hrp: string): QbitNetworkName | undefined {
 
 function taggedHash(tag: string, ...messages: readonly Uint8Array[]): Uint8Array {
   const tagHash = sha256(asciiBytes(tag))
-  return sha256(concatBytes(tagHash, tagHash, ...messages))
+  return sha256(concatByteList([tagHash, tagHash, ...messages]))
 }
 
 function compactSize(value: number): Uint8Array {
@@ -3685,15 +3688,9 @@ function copyBytes(bytes: Uint8Array, start = 0, end = bytes.length): Uint8Array
   return new Uint8Array(bytes.subarray(start, end))
 }
 
+/** Concatenate a fixed argument list. Pass an array of chunks to `concatByteList` instead of spreading it here. */
 function concatBytes(...chunks: readonly Uint8Array[]): Uint8Array {
-  const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
-  const out = new Uint8Array(length)
-  let offset = 0
-  for (const chunk of chunks) {
-    out.set(chunk, offset)
-    offset += chunk.length
-  }
-  return out
+  return concatByteList(chunks)
 }
 
 /** uint32 LE. Only a genuine uint32 is serializable; nothing is wrapped or truncated. */
@@ -3994,7 +3991,11 @@ function mergeMap(target: PsbtKeyValue[], source: readonly PsbtKeyValue[]): void
  * hex.
  */
 function psbtKeyIndexId(key: Uint8Array): string {
-  return key.length <= 64 ? bytesToHex(key) : `#${bytesToHex(sha256(key))}`
+  // A hand-built map can hold a key that is not a Uint8Array; it keeps its hex id.
+  if (key.length <= 64 || !isUint8Array(key)) return bytesToHex(key)
+  // @noble/hashes rejects a Uint8Array subclass from another realm (and, before
+  // 1.3.3, any Uint8Array from another realm), so hash a copy of such a key.
+  return `#${bytesToHex(sha256(key instanceof Uint8Array ? key : copyBytes(key)))}`
 }
 
 /** Index a map by key. A repeated key maps to its first entry, as `mergeMap`'s `find` does. */
@@ -4050,7 +4051,7 @@ function serializeUnsignedTransaction(tx: P2mrTransaction): Uint8Array {
   parts.push(compactSize(tx.outputs.length))
   tx.outputs.forEach((output, i) => parts.push(serializeTxOut(output, `output ${i}`)))
   parts.push(uint32LE(tx.locktime, 'locktime'))
-  return concatBytes(...parts)
+  return concatByteList(parts)
 }
 
 function serializeWitnessTransaction(tx: P2mrTransaction, witnesses: readonly (readonly Uint8Array[])[]): Uint8Array {
@@ -4066,13 +4067,13 @@ function serializeWitnessTransaction(tx: P2mrTransaction, witnesses: readonly (r
   tx.outputs.forEach((output, i) => parts.push(serializeTxOut(output, `output ${i}`)))
   for (const stack of witnesses) parts.push(serializeWitnessStack(stack))
   parts.push(uint32LE(tx.locktime, 'locktime'))
-  return concatBytes(...parts)
+  return concatByteList(parts)
 }
 
 function serializeWitnessStack(stack: readonly Uint8Array[]): Uint8Array {
   const parts: Uint8Array[] = [compactSize(stack.length)]
   stack.forEach((item, i) => parts.push(serializeVarBytes(item, `witness item ${i}`)))
-  return concatBytes(...parts)
+  return concatByteList(parts)
 }
 
 /**

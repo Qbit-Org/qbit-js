@@ -11,7 +11,9 @@ import {
   SIGHASH_ALL,
   SIGHASH_ANYONECANPAY,
   buildControlBlock,
+  combinePsbts,
   createP2mrPsbt,
+  decodePsbt,
   decodeQbitProprietaryP2mrInputField,
   encodeP2mrWitnessSignature,
   outputScriptToAddress,
@@ -232,6 +234,20 @@ describe('byte inputs: cached midstates, proprietary key data, PSBT maps', () =>
     it.each(genuineCopies(psbt.inputs[0]![0]!.value))('serializes a %s value to the same bytes', (_, value) => {
       expect(serializePsbt(withInputEntry(0, { value }))).toEqual(bytes)
       expect(parsePsbt(bytes)).toEqual(psbt)
+    })
+
+    // Keys over 64 bytes are compared by SHA-256, which must also accept them.
+    const longKey = Uint8Array.from({ length: 70 }, (_, i) => (i === 0 ? 0x7f : i))
+    const withLongKey = (key: Uint8Array): Psbt => ({
+      ...psbt,
+      inputs: [[...psbt.inputs[0]!, { key, value: new Uint8Array([1]) }]],
+    })
+    it.each(genuineCopies(longKey))('decodes and combines a map with a %s key over 64 bytes', (_, key) => {
+      const expected = decodePsbt(withLongKey(longKey))
+      expect(decodePsbt(withLongKey(key))).toEqual(expected)
+      expect(serializePsbt(combinePsbts([withLongKey(key), withLongKey(longKey)]))).toEqual(
+        serializePsbt(withLongKey(longKey))
+      )
     })
   })
 })
