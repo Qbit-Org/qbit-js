@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { EsploraClient, MempoolQbitClient, QbitApiError, type QbitApiErrorKind, type QbitApiErrorOptions } from '../src/index'
+import {
+  EsploraClient,
+  MempoolQbitClient,
+  QbitApiError,
+  type QbitApiErrorKind,
+  type QbitApiErrorOptions,
+} from '../src/index'
 
 // The client used to recognize a `QbitApiError` thrown by a custom
 // fetchFn with `instanceof`, so one from the other build (an ESM-loaded fetch
@@ -61,7 +67,9 @@ async function settle(promise: Promise<unknown>): Promise<unknown> {
 
 const CONNECT_REFUSED = { code: 'ECONNREFUSED', syscall: 'connect', message: 'connect ECONNREFUSED' }
 /** Happy eyeballs: one address refused, the other reset after the request was written. */
-const REFUSED_THEN_RESET = { errors: [CONNECT_REFUSED, { code: 'ECONNRESET', syscall: 'read', message: 'read ECONNRESET' }] }
+const REFUSED_THEN_RESET = {
+  errors: [CONNECT_REFUSED, { code: 'ECONNRESET', syscall: 'read', message: 'read ECONNRESET' }],
+}
 
 describe('a QbitApiError from another copy, thrown by a custom fetchFn, on a read', () => {
   it.each<[QbitApiErrorKind, QbitApiErrorOptions]>([
@@ -83,15 +91,18 @@ describe('a QbitApiError from another copy, thrown by a custom fetchFn, on a rea
     expect(calls).toEqual([`GET /tx/${LEGACY_TXID}`])
   })
 
-  it.each<QbitApiErrorKind>(['network', 'timeout'])('retries %s as for this copy, then passes it through', async kind => {
-    for (const [, ErrorCopy] of await copies()) {
-      const thrown = new ErrorCopy(kind, `from a fetch wrapper: ${kind}`)
-      const { client, calls } = throwing(EsploraClient, thrown)
+  it.each<QbitApiErrorKind>(['network', 'timeout'])(
+    'retries %s as for this copy, then passes it through',
+    async kind => {
+      for (const [, ErrorCopy] of await copies()) {
+        const thrown = new ErrorCopy(kind, `from a fetch wrapper: ${kind}`)
+        const { client, calls } = throwing(EsploraClient, thrown)
 
-      expect(await settle(client.getTxStatus(LEGACY_TXID))).toBe(thrown)
-      expect(calls).toHaveLength(RETRIES + 1)
+        expect(await settle(client.getTxStatus(LEGACY_TXID))).toBe(thrown)
+        expect(calls).toHaveLength(RETRIES + 1)
+      }
     }
-  })
+  )
 
   it('passes a brand-carrying object through with its kind', async () => {
     const thrown = { [BRAND]: true, name: 'QbitApiError', kind: 'rate_limit', message: 'slow down', retryAfterMs: 10 }
@@ -126,7 +137,10 @@ describe.each([
     // copy; only the creating copy can read the original behind it.
     const outcomes = []
     for (const [, ErrorCopy] of await copies()) {
-      const thrown = new ErrorCopy('network', 'fetch failed', { cause: CONNECT_REFUSED, unredactedCause: REFUSED_THEN_RESET })
+      const thrown = new ErrorCopy('network', 'fetch failed', {
+        cause: CONNECT_REFUSED,
+        unredactedCause: REFUSED_THEN_RESET,
+      })
       const { client, calls } = throwing(Client, thrown)
       const error = await settle(client.broadcastTx(LEGACY_TX_HEX))
       outcomes.push({ kind: (error as QbitApiError).kind, cause: (error as QbitApiError).cause === thrown, calls })
@@ -164,7 +178,10 @@ describe.each([
 
   it.each([
     ['without a message', { [BRAND]: true, kind: 'network', cause: CONNECT_REFUSED }],
-    ['with pre-connection codes', { [BRAND]: true, kind: 'network', message: 'connect ECONNREFUSED', cause: CONNECT_REFUSED }],
+    [
+      'with pre-connection codes',
+      { [BRAND]: true, kind: 'network', message: 'connect ECONNREFUSED', cause: CONNECT_REFUSED },
+    ],
   ])('turns a brand-carrying network object %s into unknown_outcome without a re-send', async (_label, thrown) => {
     const { client, calls } = throwing(Client, thrown)
 

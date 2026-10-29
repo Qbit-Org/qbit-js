@@ -1,0 +1,18 @@
+# Build output and coverage reports.
+packages/*/lib
+coverage
+
+# Core-derived and vendored fixtures keep their exact bytes.
+packages/protocol/fixtures/**
+packages/api/test/fixtures/**
+
+# Markdown is formatted by hand.
+*.md
+
+# npm and pnpm own the formatting of these.
+pnpm-lock.yaml
+package.json
+
+# YAML, including the workflows, is formatted by hand.
+*.yml
+*.yaml

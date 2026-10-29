@@ -24,7 +24,8 @@ const CLIENTS = [
 const LINEAR_BUDGET_MS = 1000
 
 function serving(Client: typeof EsploraClient, body: string): EsploraClient {
-  const fetchFn = (async () => new Response(body, { status: 200, headers: { 'content-type': 'text/plain' } })) as typeof fetch
+  const fetchFn = (async () =>
+    new Response(body, { status: 200, headers: { 'content-type': 'text/plain' } })) as typeof fetch
   return new Client({ baseUrl: BASE, fetchFn, retries: 0 })
 }
 

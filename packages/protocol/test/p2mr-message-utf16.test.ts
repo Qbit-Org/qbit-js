@@ -41,17 +41,9 @@ describe('P2MR message hash UTF-16 well-formedness', () => {
   })
 
   it.each([
-    [
-      'a surrogate pair',
-      '\u{1F600}',
-      '220d20e8cb7a5965d4f23f44e32c806fa45fa48d9697fc4e3f9288aa1a47fc58',
-    ],
+    ['a surrogate pair', '\u{1F600}', '220d20e8cb7a5965d4f23f44e32c806fa45fa48d9697fc4e3f9288aa1a47fc58'],
     ['U+FFFD', '�', 'ccb5d2a228c2d17a8cd14c810b0650e279e8d8ffd736fb4c8c736ebfea1d2b85'],
-    [
-      'U+FFFD mid-string',
-      'pay � to bob',
-      'e19e8eec2f1cb4ce66c1070e00176620fbc389d6558468e9ecfa4161e89d20ff',
-    ],
+    ['U+FFFD mid-string', 'pay � to bob', 'e19e8eec2f1cb4ce66c1070e00176620fbc389d6558468e9ecfa4161e89d20ff'],
   ])('still hashes %s to its UTF-8 digest', (_case, message, digest) => {
     expect(bytesToHex(qbitWalletMessageHash(message))).toBe(digest)
   })
@@ -67,7 +59,9 @@ describe('P2MR message hash UTF-16 well-formedness', () => {
 
     expect(verifyP2mrMessageProof('pay � to bob', proofForFffd, verifyPqc, { expectedAddress: ADDRESS })).toBe(true)
     verifyPqc.mockClear()
-    expect(verifyP2mrMessageProof('pay \uD800 to bob', proofForFffd, verifyPqc, { expectedAddress: ADDRESS })).toBe(false)
+    expect(verifyP2mrMessageProof('pay \uD800 to bob', proofForFffd, verifyPqc, { expectedAddress: ADDRESS })).toBe(
+      false
+    )
     expect(verifyPqc).not.toHaveBeenCalled()
   })
 

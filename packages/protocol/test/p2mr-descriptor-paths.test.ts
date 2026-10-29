@@ -61,8 +61,7 @@ describe('P2MR descriptor key-path grammar', () => {
 
   it('rejects an origin with an `H` marker and an out-of-range index', () => {
     expect(
-      descriptorError(() => parseP2mrDescriptor(`mr(pk(pqc([deadbeef/87H/4294967296]${QRPV}/0/*)))`))
-        .message
+      descriptorError(() => parseP2mrDescriptor(`mr(pk(pqc([deadbeef/87H/4294967296]${QRPV}/0/*)))`)).message
     ).toBe("Key path value '87H' is not a valid uint32")
   })
 
@@ -96,9 +95,9 @@ describe('P2MR descriptor key-path grammar', () => {
   })
 
   it('reports multipath and hardened wildcards as unsupported', () => {
-    expect(
-      descriptorError(() => parseP2mrDescriptor(`mr(pk(pqc(${QRPV}/87h/<0;1>/*)))`)).message
-    ).toBe('multipath descriptor key paths are not supported')
+    expect(descriptorError(() => parseP2mrDescriptor(`mr(pk(pqc(${QRPV}/87h/<0;1>/*)))`)).message).toBe(
+      'multipath descriptor key paths are not supported'
+    )
     expect(descriptorError(() => parseP2mrDescriptor(`mr(pk(pqc(${QRPV}/0/*')))`)).message).toBe(
       'hardened descriptor wildcards are not supported'
     )
@@ -115,15 +114,11 @@ describe('P2MR descriptor key-path grammar', () => {
       'descriptor wildcard must be the final path segment'
     )
     // Core treats a hardened wildcard outside the final key position as a bad number.
-    expect(() => parseP2mrDescriptor(originDescriptor("*'"))).toThrow(
-      "Key path value '*' is not a valid uint32"
-    )
+    expect(() => parseP2mrDescriptor(originDescriptor("*'"))).toThrow("Key path value '*' is not a valid uint32")
   })
 
   it('caps and sanitizes the echoed segment in error messages', () => {
-    const message = descriptorError(() =>
-      parseP2mrDescriptor(keyPathDescriptor(`${'9'.repeat(10_000)}\n`))
-    ).message
+    const message = descriptorError(() => parseP2mrDescriptor(keyPathDescriptor(`${'9'.repeat(10_000)}\n`))).message
     expect(message).toBe(`Key path value '${'9'.repeat(32)}...' is not a valid uint32`)
 
     expect(descriptorError(() => parseP2mrDescriptor(keyPathDescriptor('1\n2'))).message).toBe(

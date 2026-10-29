@@ -23,7 +23,13 @@ function thrownBy(fn: () => unknown): unknown {
 
 function signingError(SigningError: typeof P2mrPsbtSigningError): P2mrPsbtSigningError {
   const failed = { inputIndex: 0, pubkey: new Uint8Array(32), leafHash: new Uint8Array(32) }
-  return new SigningError({ psbt: {} as Psbt, signed: [], failed, phase: 'sign', cause: new TypeError('signer failed') })
+  return new SigningError({
+    psbt: {} as Psbt,
+    signed: [],
+    failed,
+    phase: 'sign',
+    cause: new TypeError('signer failed'),
+  })
 }
 
 describe('QbitProtocolError.is and P2mrPsbtSigningError.is', () => {
@@ -65,7 +71,10 @@ describe('QbitProtocolError.is and P2mrPsbtSigningError.is', () => {
     ['undefined', undefined],
     ['null', null],
     ['a plain Error', new Error('x')],
-    ['an Error named QbitProtocolError with a code', Object.assign(new Error('x'), { name: 'QbitProtocolError', code: 'INVALID_PSBT' })],
+    [
+      'an Error named QbitProtocolError with a code',
+      Object.assign(new Error('x'), { name: 'QbitProtocolError', code: 'INVALID_PSBT' }),
+    ],
     ['a plain object with a code', { name: 'QbitProtocolError', code: 'INVALID_PSBT' }],
     ['the class itself', QbitProtocolError],
   ])('reject %s', (_label, value) => {
@@ -74,7 +83,11 @@ describe('QbitProtocolError.is and P2mrPsbtSigningError.is', () => {
   })
 
   it('work detached from the class', () => {
-    const errors: unknown[] = [new QbitProtocolError('INVALID_PSBT', 'x'), signingError(P2mrPsbtSigningError), new Error('y')]
+    const errors: unknown[] = [
+      new QbitProtocolError('INVALID_PSBT', 'x'),
+      signingError(P2mrPsbtSigningError),
+      new Error('y'),
+    ]
     expect(errors.filter(QbitProtocolError.is)).toHaveLength(2)
     expect(errors.filter(P2mrPsbtSigningError.is)).toHaveLength(1)
   })

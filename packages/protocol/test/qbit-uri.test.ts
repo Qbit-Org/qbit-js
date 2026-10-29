@@ -289,24 +289,12 @@ describe('formatQbitUri -> parseQbitUri round trip', () => {
     }
   }
 
-  const ALPHABET = [
-    ...'aZ09+ &=%?#/:;,!\'()*~-._@$',
-    '%20',
-    '%ZZ',
-    'req-',
-    'é',
-    '中',
-    '₿',
-    '😀',
-    '\u0000',
-    '\n',
-  ]
+  const ALPHABET = [..."aZ09+ &=%?#/:;,!'()*~-._@$", '%20', '%ZZ', 'req-', 'é', '中', '₿', '😀', '\u0000', '\n']
 
   it('round-trips random label/message/amount values exactly', () => {
     const random = mulberry32(0x9b1f2c)
     const pick = <T>(items: readonly T[]): T => items[Math.floor(random() * items.length)]!
-    const text = (): string =>
-      Array.from({ length: Math.floor(random() * 12) }, () => pick(ALPHABET)).join('')
+    const text = (): string => Array.from({ length: Math.floor(random() * 12) }, () => pick(ALPHABET)).join('')
     const amount = (): string => {
       // Up to qbit's MAX_MONEY of 210,000,000 QBT, not Bitcoin's 21,000,000.
       const whole = String(Math.floor(random() * 210_000_000))

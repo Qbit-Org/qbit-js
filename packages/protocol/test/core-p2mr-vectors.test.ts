@@ -230,12 +230,8 @@ const VENDORED_VECTOR_FILES = [
 
 const manifestBytes = readCoreFixture('p2mr_v1_manifest.json')
 const manifest = JSON.parse(manifestBytes.toString('utf8')) as Manifest
-const commitmentVectors = JSON.parse(
-  readCoreFixture('p2mr_vectors.json').toString('utf8')
-) as CommitmentVectors
-const witnessVectors = JSON.parse(
-  readCoreFixture('p2mr_pqc_witness_vectors.json').toString('utf8')
-) as WitnessVectors
+const commitmentVectors = JSON.parse(readCoreFixture('p2mr_vectors.json').toString('utf8')) as CommitmentVectors
+const witnessVectors = JSON.parse(readCoreFixture('p2mr_pqc_witness_vectors.json').toString('utf8')) as WitnessVectors
 const boundaryVectors = JSON.parse(
   readCoreFixture('p2mr_script_boundary_vectors.json').toString('utf8')
 ) as BoundaryVectors
@@ -261,11 +257,7 @@ function expectedCommitmentStage(coreStage: string): CommitmentStage {
   throw new Error(`unknown Core consensus stage ${JSON.stringify(coreStage)}`)
 }
 
-function evaluateCommitment(
-  control: Uint8Array,
-  leafScript: Uint8Array,
-  program: Uint8Array
-): CommitmentStage {
+function evaluateCommitment(control: Uint8Array, leafScript: Uint8Array, program: Uint8Array): CommitmentStage {
   const leafHash = p2mrLeafHash((control[0] ?? 0) & P2MR_LEAF_VERSION_MASK, leafScript)
   let root: Uint8Array
   try {
@@ -453,9 +445,7 @@ describe('Core p2mr_vectors.json: valid commitments', () => {
     expect(bytesToHex(merkleRootFromPath(leafHash, siblings))).toBe(vector.merkle_root)
     const root = verifyControlBlock(hexToBytes(vector.control_block), leafHash, vector.leaf_version)
     expect(bytesToHex(root)).toBe(vector.merkle_root)
-    expect(
-      evaluateCommitment(hexToBytes(vector.control_block), leafScript, hexToBytes(vector.merkle_root))
-    ).toBe('ok')
+    expect(evaluateCommitment(hexToBytes(vector.control_block), leafScript, hexToBytes(vector.merkle_root))).toBe('ok')
 
     expect(bytesToHex(p2mrScriptPubKey(root))).toBe(vector.scriptPubKey)
     expect(p2mrAddressFromRoot(root, 'mainnet')).toBe(vector.mainnet_address)
@@ -555,9 +545,7 @@ describe('Core p2mr_pqc_witness_vectors.json', () => {
     expect(bytesToHex(p2mrSighash(params))).toBe(vector.p2mrSighash)
     // Same message under the TapSighash tag: proves the domain separation and
     // that P2MR reuses the tapscript message unchanged.
-    expect(bytesToHex(schnorrSignatureHash({ ...params, sigVersion: 'tapscript' }))).toBe(
-      vector.wrongDomainSighash
-    )
+    expect(bytesToHex(schnorrSignatureHash({ ...params, sigVersion: 'tapscript' }))).toBe(vector.wrongDomainSighash)
   })
 
   it.each(defined.filter(vector => vector.noAnnexSighash !== undefined))(
@@ -576,9 +564,7 @@ describe('Core p2mr_pqc_witness_vectors.json', () => {
       const params = sighashParams(vector, vector.parsed)
       const wrongPos = uint32FromLEHex(vector.wrongCodeSeparatorPosition!)
       expect(wrongPos).not.toBe(params.codeSeparatorPos)
-      expect(bytesToHex(p2mrSighash({ ...params, codeSeparatorPos: wrongPos }))).toBe(
-        vector.wrongCodeseparatorSighash
-      )
+      expect(bytesToHex(p2mrSighash({ ...params, codeSeparatorPos: wrongPos }))).toBe(vector.wrongCodeseparatorSighash)
     }
   )
 
@@ -697,9 +683,7 @@ describe('Core p2mr_script_boundary_vectors.json', () => {
       expect(mutation).toBe('none')
     }
 
-    expect(evaluateCommitment(spendControl, leafScript, root)).toBe(
-      expectedCommitmentStage(testCase.consensus.stage)
-    )
+    expect(evaluateCommitment(spendControl, leafScript, root)).toBe(expectedCommitmentStage(testCase.consensus.stage))
   })
 
   it('control path depth 128 verifies and depth 129 is rejected', () => {
@@ -810,8 +794,7 @@ describe('multi_a leaf scripts vs Core CScript() << k', () => {
   /** Core's leaf for a threshold push over keys 0..n-1, written out by hand. */
   const coreLeafScript = (n: number, push: string): Uint8Array =>
     hexToBytes(
-      Array.from({ length: n }, (_, i) => `20${bytesToHex(key(i))}${i === 0 ? 'b3' : 'ba'}`).join('') +
-        `${push}9c`
+      Array.from({ length: n }, (_, i) => `20${bytesToHex(key(i))}${i === 0 ? 'b3' : 'ba'}`).join('') + `${push}9c`
     )
   const cases = Object.entries(CORE_THRESHOLD_PUSH).flatMap(([k, push]) =>
     [Number(k), Number(k) + 1].map(n => ({ k: Number(k), n, push }))

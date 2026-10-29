@@ -184,7 +184,9 @@ describe('EsploraClient.getAddressHistory against the address stats', () => {
     const state = node(30, 60)
     const { fetchFn } = makeFetch((_i, url) => electrs(state, url))
 
-    const error = await esplora(fetchFn).getAddressHistory(ADDR).catch((e: unknown) => e)
+    const error = await esplora(fetchFn)
+      .getAddressHistory(ADDR)
+      .catch((e: unknown) => e)
     expect(error).toBeInstanceOf(QbitApiError)
     expect(error).toMatchObject({
       kind: 'invalid_cursor',
@@ -300,9 +302,7 @@ describe('EsploraClient.getAddressHistory against the address stats', () => {
 
     // 30 rows in the first scan, 31 in the rescan.
     const fewRows = scenario()
-    await expect(
-      esplora(fewRows.fetchFn).getAddressHistory(ADDR, { maxTransactions: 60 })
-    ).rejects.toMatchObject({
+    await expect(esplora(fewRows.fetchFn).getAddressHistory(ADDR, { maxTransactions: 60 })).rejects.toMatchObject({
       kind: 'pagination_limit',
       message: `esplora address history exceeded 60 transactions: ${ADDR}`,
     })
@@ -382,9 +382,9 @@ describe('EsploraClient.getAddressHistory against the address stats', () => {
       return electrs(state, url)
     })
 
-    await expect(
-      esplora(fetchFn).getAddressHistory(ADDR, { signal: controller.signal })
-    ).rejects.toMatchObject({ kind: 'aborted' })
+    await expect(esplora(fetchFn).getAddressHistory(ADDR, { signal: controller.signal })).rejects.toMatchObject({
+      kind: 'aborted',
+    })
     expect(calls).toHaveLength(5)
   })
 })
@@ -402,22 +402,17 @@ describe('MempoolQbitClient.getAddressHistory against the address stats', () => 
     expect(statsReads(calls)).toBe(2)
   })
 
-  it.each([50, 100])(
-    'rejects losing all confirmed history after %i mempool transactions',
-    async mempool => {
-      const state = node(30, mempool)
-      const { fetchFn, calls } = makeFetch((_i, url) => electrs(state, url))
+  it.each([50, 100])('rejects losing all confirmed history after %i mempool transactions', async mempool => {
+    const state = node(30, mempool)
+    const { fetchFn, calls } = makeFetch((_i, url) => electrs(state, url))
 
-      await expect(mempoolQbit(fetchFn).getAddressHistory(ADDR)).rejects.toMatchObject({
-        kind: 'invalid_cursor',
-        message: `mempool-qbit address history returned 0 confirmed and ${mempool} mempool transactions, but the address stats count 30 and ${mempool}: ${ADDR}`,
-      })
-      // The page after the last mempool row came back empty.
-      expect(calls[calls.length - 2]).toBe(
-        `${BASE}/address/${ADDR}/txs?after_txid=${state.mempool[mempool - 1]}`
-      )
-    }
-  )
+    await expect(mempoolQbit(fetchFn).getAddressHistory(ADDR)).rejects.toMatchObject({
+      kind: 'invalid_cursor',
+      message: `mempool-qbit address history returned 0 confirmed and ${mempool} mempool transactions, but the address stats count 30 and ${mempool}: ${ADDR}`,
+    })
+    // The page after the last mempool row came back empty.
+    expect(calls[calls.length - 2]).toBe(`${BASE}/address/${ADDR}/txs?after_txid=${state.mempool[mempool - 1]}`)
+  })
 
   it('rejects history cut short by a failover node that still has the cursor in its mempool', async () => {
     // Page 1 comes from a node that has mined the cursor; page 2 from one a
@@ -477,9 +472,9 @@ describe('MempoolQbitClient.getAddressHistory against the address stats', () => 
     expect(capped.pages()).toBe(5)
 
     const lowered = scenario()
-    await expect(
-      mempoolQbit(lowered.fetchFn).getAddressHistory(ADDR, { maxPages: 5 })
-    ).rejects.toMatchObject({ kind: 'pagination_limit' })
+    await expect(mempoolQbit(lowered.fetchFn).getAddressHistory(ADDR, { maxPages: 5 })).rejects.toMatchObject({
+      kind: 'pagination_limit',
+    })
     expect(lowered.pages()).toBe(5)
 
     const enough = scenario()
@@ -518,9 +513,7 @@ describe('MempoolQbitClient.getAddressTxs after a page of mempool rows', () => {
     const state = node(30, 49)
     const { fetchFn, calls } = makeFetch((_i, url) => electrs(state, url))
 
-    await expect(mempoolQbit(fetchFn).getAddressTxs(ADDR)).resolves.toEqual(
-      render(state, state.chain.slice(0, 25))
-    )
+    await expect(mempoolQbit(fetchFn).getAddressTxs(ADDR)).resolves.toEqual(render(state, state.chain.slice(0, 25)))
     expect(statsReads(calls)).toBe(0)
   })
 

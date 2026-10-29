@@ -232,9 +232,7 @@ describe('CompactSize canonical encoding (qbit Core ReadCompactSize)', () => {
 
       expect(extractP2mrTransaction(build(canonical))).toBeInstanceOf(Uint8Array)
       expectNonCanonical(() => extractP2mrTransaction(build(nonCanonical)))
-      expectNonCanonical(() =>
-        extractP2mrTransaction(build(concat(compactSize(1), varBytes(item, 5))))
-      )
+      expectNonCanonical(() => extractP2mrTransaction(build(concat(compactSize(1), varBytes(item, 5)))))
     })
   })
 
@@ -330,8 +328,7 @@ describe('CompactSize canonical encoding (qbit Core ReadCompactSize)', () => {
   })
 
   describe('key types (Core reads the type as a CompactSize)', () => {
-    const rootKey = (typeWidth?: CompactSizeWidth) =>
-      qbitProprietaryKey(PSBT_QBIT_IN_P2MR_MERKLE_ROOT, { typeWidth })
+    const rootKey = (typeWidth?: CompactSizeWidth) => qbitProprietaryKey(PSBT_QBIT_IN_P2MR_MERKLE_ROOT, { typeWidth })
 
     it('rejects a proprietary key whose type is encoded as fd fc 00', () => {
       expectNonCanonical(() => parsePsbt(psbtBytes(undefined, map(entry(rootKey(3), MERKLE_ROOT_A)))))
@@ -375,8 +372,7 @@ describe('CompactSize canonical encoding (qbit Core ReadCompactSize)', () => {
   })
 
   describe('qbit proprietary key data (validated at parse time like Core)', () => {
-    const rootKeyWith = (keyData: Uint8Array) =>
-      qbitProprietaryKey(PSBT_QBIT_IN_P2MR_MERKLE_ROOT, { keyData })
+    const rootKeyWith = (keyData: Uint8Array) => qbitProprietaryKey(PSBT_QBIT_IN_P2MR_MERKLE_ROOT, { keyData })
 
     it('rejects a merkle-root key with trailing key data (fc 04 qbit 01 00)', () => {
       const parse = () => parsePsbt(psbtBytes(undefined, map(entry(rootKeyWith(Uint8Array.of(0x00)), MERKLE_ROOT_A))))
@@ -391,9 +387,7 @@ describe('CompactSize canonical encoding (qbit Core ReadCompactSize)', () => {
 
     it('rejects a script-sig key whose key data is not pubkey32||leafhash32', () => {
       const key = qbitProprietaryKey(PSBT_QBIT_IN_P2MR_SCRIPT_SIG, { keyData: fill(63, 0x01) })
-      expect(() => parsePsbt(psbtBytes(undefined, map(entry(key, fill(4, 0x51)))))).toThrow(
-        /pubkey32\|\|leafhash32/
-      )
+      expect(() => parsePsbt(psbtBytes(undefined, map(entry(key, fill(4, 0x51)))))).toThrow(/pubkey32\|\|leafhash32/)
     })
 
     it('leaves proprietary keys of other identifiers opaque', () => {
@@ -470,7 +464,10 @@ describe('CompactSize canonical encoding (qbit Core ReadCompactSize)', () => {
     it('combinePsbts merges such global and output records and shape-checks only input ones', () => {
       const key = qbitProprietaryKey(PSBT_QBIT_IN_P2MR_MERKLE_ROOT, { keyData: Uint8Array.of(0x00) })
       const withGlobalAndOutput = (value: Uint8Array): Psbt => ({
-        global: [{ key: Uint8Array.of(PSBT_GLOBAL_UNSIGNED_TX), value: unsignedTx() }, { key, value }],
+        global: [
+          { key: Uint8Array.of(PSBT_GLOBAL_UNSIGNED_TX), value: unsignedTx() },
+          { key, value },
+        ],
         inputs: [[]],
         outputs: [[{ key, value }]],
       })

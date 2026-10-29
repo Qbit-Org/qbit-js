@@ -35,7 +35,14 @@ import {
 const NONE_ANYONECANPAY = SIGHASH_NONE | SIGHASH_ANYONECANPAY // 0x82
 const ALL_ANYONECANPAY = SIGHASH_ALL | SIGHASH_ANYONECANPAY // 0x81
 const SINGLE_ANYONECANPAY = SIGHASH_SINGLE | SIGHASH_ANYONECANPAY // 0x83
-const NON_DEFAULT_TYPES = [SIGHASH_ALL, SIGHASH_NONE, SIGHASH_SINGLE, ALL_ANYONECANPAY, NONE_ANYONECANPAY, SINGLE_ANYONECANPAY]
+const NON_DEFAULT_TYPES = [
+  SIGHASH_ALL,
+  SIGHASH_NONE,
+  SIGHASH_SINGLE,
+  ALL_ANYONECANPAY,
+  NONE_ANYONECANPAY,
+  SINGLE_ANYONECANPAY,
+]
 
 const pubkey = Uint8Array.from({ length: 32 }, (_, i) => (i * 7 + 1) & 0xff)
 const leafScript = singleKeyLeafScript(pubkey)
@@ -109,7 +116,11 @@ describe('decodePsbt reports PSBT_IN_SIGHASH_TYPE', () => {
     ['3 bytes', Uint8Array.of(NONE_ANYONECANPAY, 0, 0)],
     ['5 bytes', Uint8Array.of(NONE_ANYONECANPAY, 0, 0, 0, 0)],
   ])('rejects a sighash field whose value is %s', (_label, value) => {
-    expectProtocolError(() => decodePsbt(withSighashField(honestPsbt(), value)), 'INVALID_PSBT', /4-byte little-endian uint32/)
+    expectProtocolError(
+      () => decodePsbt(withSighashField(honestPsbt(), value)),
+      'INVALID_PSBT',
+      /4-byte little-endian uint32/
+    )
   })
 
   it.each([0x04, 0x1f, 0x7f, 0x80, 0x84, 0xff, 0x100, 0x1_0082, 0xffff_ffff])(
@@ -125,7 +136,10 @@ describe('decodePsbt reports PSBT_IN_SIGHASH_TYPE', () => {
 
   it('rejects a sighash key that carries extra key data (Core: key must be the type byte alone)', () => {
     expectProtocolError(
-      () => decodePsbt(withSighashField(honestPsbt(), uint32le(SIGHASH_DEFAULT), Uint8Array.of(PSBT_IN_SIGHASH_TYPE, 0x01))),
+      () =>
+        decodePsbt(
+          withSighashField(honestPsbt(), uint32le(SIGHASH_DEFAULT), Uint8Array.of(PSBT_IN_SIGHASH_TYPE, 0x01))
+        ),
       'INVALID_PSBT',
       /single type byte/
     )
@@ -161,8 +175,7 @@ describe('non-default sighash types require an explicit opt-in', () => {
     const keys = [{ inputIndex: 0, pubkey, leafHash, hashType: NONE_ANYONECANPAY }]
     for (const truthy of [1, 'true', {}, []] as unknown[]) {
       expectProtocolError(
-        () =>
-          signP2mrPsbt({ psbt: honestPsbt(), keys, sign: signer, allowNonDefaultSighash: truthy as boolean }),
+        () => signP2mrPsbt({ psbt: honestPsbt(), keys, sign: signer, allowNonDefaultSighash: truthy as boolean }),
         'INVALID_SIGHASH',
         /requires allowNonDefaultSighash: true/
       )
@@ -172,7 +185,8 @@ describe('non-default sighash types require an explicit opt-in', () => {
 
   it.each([undefined, SIGHASH_DEFAULT])('signs SIGHASH_DEFAULT (hashType %s) without an opt-in', hashType => {
     const psbt = honestPsbt()
-    const keys = hashType === undefined ? [{ inputIndex: 0, pubkey, leafHash }] : [{ inputIndex: 0, pubkey, leafHash, hashType }]
+    const keys =
+      hashType === undefined ? [{ inputIndex: 0, pubkey, leafHash }] : [{ inputIndex: 0, pubkey, leafHash, hashType }]
     const { psbt: signed, signed: signers } = signP2mrPsbt({ psbt, keys, sign: () => dummySignature(2) })
     expect(signers).toHaveLength(1)
     const input = decodePsbt(signed).inputs[0]!
@@ -424,7 +438,15 @@ describe('the sign callback can see what it commits to', () => {
     expect(context.spentOutputs).toEqual([spentOutput])
     // the digest is the one computed for exactly that tx / spent outputs / hashType
     expect(bytesToHex(digests[0]!)).toBe(
-      bytesToHex(p2mrSighash({ tx: context.tx, inputIndex: 0, spentOutputs: context.spentOutputs, leafHash, hashType: context.hashType }))
+      bytesToHex(
+        p2mrSighash({
+          tx: context.tx,
+          inputIndex: 0,
+          spentOutputs: context.spentOutputs,
+          leafHash,
+          hashType: context.hashType,
+        })
+      )
     )
   })
 
@@ -447,11 +469,21 @@ describe('NONE|ANYONECANPAY digests are output-independent (reproduction)', () =
   it('blocks the lifted-signature attack by default', () => {
     const honest = honestPsbt()
     const attacker = createP2mrPsbt({
-      inputs: [{ prevout: { txid, vout: 0 }, witnessUtxo: spentOutput, leafScript, controlBlock, merkleRoot: leafHash }],
+      inputs: [
+        { prevout: { txid, vout: 0 }, witnessUtxo: spentOutput, leafScript, controlBlock, merkleRoot: leafHash },
+      ],
       outputs: [{ value: 100_000n, scriptPubKey: attackerScriptPubKey }],
     })
     const digest = (psbt: Psbt, hashType: number) =>
-      bytesToHex(p2mrSighash({ tx: psbtUnsignedTransaction(psbt), inputIndex: 0, spentOutputs: [spentOutput], leafHash, hashType }))
+      bytesToHex(
+        p2mrSighash({
+          tx: psbtUnsignedTransaction(psbt),
+          inputIndex: 0,
+          spentOutputs: [spentOutput],
+          leafHash,
+          hashType,
+        })
+      )
     // under 0x82 the honest and attacker transactions hash identically ...
     expect(digest(honest, NONE_ANYONECANPAY)).toBe(digest(attacker, NONE_ANYONECANPAY))
     // ... while the default type commits to the outputs the user approved
@@ -460,7 +492,12 @@ describe('NONE|ANYONECANPAY digests are output-independent (reproduction)', () =
     // A wallet that forwards a dApp-requested 0x82 without opting in never reaches the device.
     const device = vi.fn(() => dummySignature(9))
     expectProtocolError(
-      () => signP2mrPsbt({ psbt: honest, keys: [{ inputIndex: 0, pubkey, leafHash, hashType: NONE_ANYONECANPAY }], sign: device }),
+      () =>
+        signP2mrPsbt({
+          psbt: honest,
+          keys: [{ inputIndex: 0, pubkey, leafHash, hashType: NONE_ANYONECANPAY }],
+          sign: device,
+        }),
       'INVALID_SIGHASH',
       /requires allowNonDefaultSighash: true/
     )
@@ -473,7 +510,8 @@ describe('finalizeP2mrPsbt enforces the input sighash type like Core FinalizePSB
   function signedPsbt(signatureType: number, fieldType?: number): Psbt {
     const psbt = parsePsbt(serializePsbt(honestPsbt()))
     psbt.inputs[0]!.push(encodeP2mrPsbtScriptSigField(pubkey, leafHash, dummySignature(0x21), signatureType))
-    if (fieldType !== undefined) psbt.inputs[0]!.push({ key: Uint8Array.of(PSBT_IN_SIGHASH_TYPE), value: uint32le(fieldType) })
+    if (fieldType !== undefined)
+      psbt.inputs[0]!.push({ key: Uint8Array.of(PSBT_IN_SIGHASH_TYPE), value: uint32le(fieldType) })
     return psbt
   }
 
@@ -535,7 +573,8 @@ describe('finalizeP2mrPsbt enforces the input sighash type like Core FinalizePSB
       const finalized = finalizeP2mrPsbt(signedPsbt(hashType, hashType))
       expect(decodePsbt(finalized).inputs[0]!.finalized).toBe(true)
       const rawTx = bytesToHex(extractP2mrTransaction(finalized))
-      const witnessItem = bytesToHex(dummySignature(0x21)) + (hashType === SIGHASH_DEFAULT ? '' : hashType.toString(16).padStart(2, '0'))
+      const witnessItem =
+        bytesToHex(dummySignature(0x21)) + (hashType === SIGHASH_DEFAULT ? '' : hashType.toString(16).padStart(2, '0'))
       expect(rawTx).toContain(witnessItem)
     }
   )
@@ -564,12 +603,26 @@ describe('each sign callback receives its own copy of tx and spentOutputs', () =
     const multiLeafHash = p2mrLeafHash(P2MR_LEAF_VERSION_V1, multiLeafScript)
     const multiSpent = { value: 100_000n, scriptPubKey: p2mrScriptPubKey(multiLeafHash) }
     const psbt = createP2mrPsbt({
-      inputs: [{ prevout: { txid, vout: 1 }, witnessUtxo: multiSpent, leafScript: multiLeafScript, controlBlock, merkleRoot: multiLeafHash }],
+      inputs: [
+        {
+          prevout: { txid, vout: 1 },
+          witnessUtxo: multiSpent,
+          leafScript: multiLeafScript,
+          controlBlock,
+          merkleRoot: multiLeafHash,
+        },
+      ],
       outputs: [{ value: 90_000n, scriptPubKey: merchantScriptPubKey }],
     })
     const expectedTx = psbtUnsignedTransaction(psbt)
     const expectedDigest = bytesToHex(
-      p2mrSighash({ tx: expectedTx, inputIndex: 0, spentOutputs: [multiSpent], leafHash: multiLeafHash, hashType: SIGHASH_DEFAULT })
+      p2mrSighash({
+        tx: expectedTx,
+        inputIndex: 0,
+        spentOutputs: [multiSpent],
+        leafHash: multiLeafHash,
+        hashType: SIGHASH_DEFAULT,
+      })
     )
     const seen: P2mrPsbtSignContext[] = []
     const digests: string[] = []

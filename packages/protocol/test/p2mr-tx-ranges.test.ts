@@ -146,14 +146,13 @@ function rawUnsignedTx(outputValues: readonly bigint[], inputCount = 1, version 
   )
 }
 
-function rawPsbt(
-  outputValues: readonly bigint[],
-  witnessValues: readonly (bigint | undefined)[],
-  version = 2
-): Psbt {
+function rawPsbt(outputValues: readonly bigint[], witnessValues: readonly (bigint | undefined)[], version = 2): Psbt {
   return {
     global: [
-      { key: Uint8Array.of(PSBT_GLOBAL_UNSIGNED_TX), value: rawUnsignedTx(outputValues, witnessValues.length, version) },
+      {
+        key: Uint8Array.of(PSBT_GLOBAL_UNSIGNED_TX),
+        value: rawUnsignedTx(outputValues, witnessValues.length, version),
+      },
     ],
     inputs: witnessValues.map(value =>
       value === undefined ? [] : [{ key: Uint8Array.of(PSBT_IN_WITNESS_UTXO), value: rawTxOut(value) }]
@@ -174,7 +173,11 @@ describe('assertMoneyRange', () => {
   })
 
   it.each(NOT_A_BIGINT)('rejects the non-bigint %s', value => {
-    expectProtocolError(() => assertMoneyRange(value, 'output value'), 'INVALID_AMOUNT', /output value must be a bigint/)
+    expectProtocolError(
+      () => assertMoneyRange(value, 'output value'),
+      'INVALID_AMOUNT',
+      /output value must be a bigint/
+    )
   })
 })
 
@@ -185,7 +188,11 @@ describe('assertUint32', () => {
   })
 
   it.each(BAD_UINT32)('rejects %s', value => {
-    expectProtocolError(() => assertUint32(value, 'locktime'), 'INVALID_INTEGER', /locktime .* integer in \[0, 4294967295\]/)
+    expectProtocolError(
+      () => assertUint32(value, 'locktime'),
+      'INVALID_INTEGER',
+      /locktime .* integer in \[0, 4294967295\]/
+    )
   })
 
   it.each(NOT_A_NUMBER)('rejects the non-number %s', value => {
@@ -229,7 +236,9 @@ describe('createP2mrPsbt rejects out-of-range transaction fields', () => {
   })
 
   it('still applies the defaults when a field is undefined', () => {
-    const parsed = psbtUnsignedTransaction(createP2mrPsbt(psbtParams({ version: undefined, locktime: undefined, sequence: undefined })))
+    const parsed = psbtUnsignedTransaction(
+      createP2mrPsbt(psbtParams({ version: undefined, locktime: undefined, sequence: undefined }))
+    )
     expect(parsed.version).toBe(2)
     expect(parsed.locktime).toBe(0)
     expect(parsed.inputs[0]!.sequence).toBe(0xfffffffd)
@@ -240,7 +249,11 @@ describe('createP2mrPsbt rejects out-of-range transaction fields', () => {
   })
 
   it.each(BAD_AMOUNTS)('rejects witness UTXO value %s', value => {
-    expectProtocolError(() => createP2mrPsbt(psbtParams({ utxoValue: value })), 'INVALID_AMOUNT', /input 0 witness UTXO value/)
+    expectProtocolError(
+      () => createP2mrPsbt(psbtParams({ utxoValue: value })),
+      'INVALID_AMOUNT',
+      /input 0 witness UTXO value/
+    )
   })
 
   it.each(NOT_A_BIGINT)('rejects the non-bigint output value %s', value => {
@@ -268,7 +281,8 @@ describe('sighash rejects out-of-range transaction fields', () => {
   const leafHash = LEAF_HASH
 
   it('refuses to sign locktime 2^32 + 5 as if it were locktime 5', () => {
-    const wrapped = () => p2mrSighash({ tx: tx({ locktime: 2 ** 32 + 5 }), inputIndex: 0, spentOutputs: spent(), leafHash })
+    const wrapped = () =>
+      p2mrSighash({ tx: tx({ locktime: 2 ** 32 + 5 }), inputIndex: 0, spentOutputs: spent(), leafHash })
     expectProtocolError(wrapped, 'INVALID_INTEGER', /locktime 4294967301/)
     // The honest digest for locktime 5 is still produced.
     expect(p2mrSighash({ tx: tx({ locktime: 5 }), inputIndex: 0, spentOutputs: spent(), leafHash })).toHaveLength(32)
@@ -296,7 +310,11 @@ describe('sighash rejects out-of-range transaction fields', () => {
       'INVALID_INTEGER',
       /vout/
     )
-    expectProtocolError(() => precomputeSighashMidstates(withInput({ vout: value }), spent()), 'INVALID_INTEGER', /vout/)
+    expectProtocolError(
+      () => precomputeSighashMidstates(withInput({ vout: value }), spent()),
+      'INVALID_INTEGER',
+      /vout/
+    )
   })
 
   it.each(BAD_UINT32)('rejects sequence %s', value => {
@@ -305,7 +323,11 @@ describe('sighash rejects out-of-range transaction fields', () => {
       'INVALID_INTEGER',
       /sequence/
     )
-    expectProtocolError(() => precomputeSighashMidstates(withInput({ sequence: value }), spent()), 'INVALID_INTEGER', /sequence/)
+    expectProtocolError(
+      () => precomputeSighashMidstates(withInput({ sequence: value }), spent()),
+      'INVALID_INTEGER',
+      /sequence/
+    )
   })
 
   it.each(BAD_UINT32)('rejects codeSeparatorPos %s', value => {
@@ -316,7 +338,14 @@ describe('sighash rejects out-of-range transaction fields', () => {
     )
     // Validated at the entry point even when the sig version does not commit to it.
     expectProtocolError(
-      () => schnorrSignatureHash({ tx: tx(), inputIndex: 0, spentOutputs: spent(), sigVersion: 'taproot', codeSeparatorPos: value }),
+      () =>
+        schnorrSignatureHash({
+          tx: tx(),
+          inputIndex: 0,
+          spentOutputs: spent(),
+          sigVersion: 'taproot',
+          codeSeparatorPos: value,
+        }),
       'INVALID_INTEGER',
       /codeSeparatorPos/
     )
@@ -352,11 +381,16 @@ describe('sighash rejects out-of-range transaction fields', () => {
   it.each(BAD_AMOUNTS)('rejects transaction output value %s', value => {
     const bad = tx({ outputs: [{ value, scriptPubKey: SCRIPT }] })
     expectProtocolError(() => precomputeSighashMidstates(bad, spent()), 'INVALID_AMOUNT', /^output 0 value/)
-    expectProtocolError(() => p2mrSighash({ tx: bad, inputIndex: 0, spentOutputs: spent(), leafHash }), 'INVALID_AMOUNT', /^output 0 value/)
+    expectProtocolError(
+      () => p2mrSighash({ tx: bad, inputIndex: 0, spentOutputs: spent(), leafHash }),
+      'INVALID_AMOUNT',
+      /^output 0 value/
+    )
     // SIGHASH_SINGLE hashes the matching output directly, bypassing the midstates.
     const midstates = precomputeSighashMidstates(tx(), spent())
     expectProtocolError(
-      () => p2mrSighash({ tx: bad, inputIndex: 0, spentOutputs: spent(), leafHash, hashType: SIGHASH_SINGLE, midstates }),
+      () =>
+        p2mrSighash({ tx: bad, inputIndex: 0, spentOutputs: spent(), leafHash, hashType: SIGHASH_SINGLE, midstates }),
       'INVALID_AMOUNT',
       /^output 0 value/
     )
@@ -365,8 +399,10 @@ describe('sighash rejects out-of-range transaction fields', () => {
   describe('with caller-supplied cached midstates (SIGHASH_DEFAULT, no ANYONECANPAY)', () => {
     // The midstates come from a valid transaction; the bad field must still be caught.
     const midstates = precomputeSighashMidstates(tx(), spent())
-    const hash = (bad: P2mrTransaction, spentOutputs: P2mrSpentOutput[] = spent()) => () =>
-      p2mrSighash({ tx: bad, inputIndex: 0, spentOutputs, leafHash, midstates })
+    const hash =
+      (bad: P2mrTransaction, spentOutputs: P2mrSpentOutput[] = spent()) =>
+      () =>
+        p2mrSighash({ tx: bad, inputIndex: 0, spentOutputs, leafHash, midstates })
 
     it.each(BAD_UINT32)('rejects vout %s', value => {
       expectProtocolError(hash(withInput({ vout: value })), 'INVALID_INTEGER', /input 0 vout/)
@@ -385,7 +421,9 @@ describe('sighash rejects out-of-range transaction fields', () => {
     })
 
     it('rejects a prevout txid that is not 32 bytes', () => {
-      const short: P2mrTransaction = tx({ inputs: [{ prevout: { txid: TXID.subarray(1), vout: 0 }, sequence: 0xfffffffd }] })
+      const short: P2mrTransaction = tx({
+        inputs: [{ prevout: { txid: TXID.subarray(1), vout: 0 }, sequence: 0xfffffffd }],
+      })
       let caught: unknown
       try {
         p2mrSighash({ tx: short, inputIndex: 0, spentOutputs: spent(), leafHash, midstates })
@@ -416,12 +454,26 @@ describe('sighash rejects out-of-range transaction fields', () => {
       })
       const twoSpent = [...spent(), ...spent()]
       expectProtocolError(
-        () => p2mrSighash({ tx: twoIn, inputIndex: 0, spentOutputs: twoSpent, leafHash, midstates: precomputeSighashMidstates(tx({ inputs: [twoIn.inputs[0]!, twoIn.inputs[0]!] }), twoSpent) }),
+        () =>
+          p2mrSighash({
+            tx: twoIn,
+            inputIndex: 0,
+            spentOutputs: twoSpent,
+            leafHash,
+            midstates: precomputeSighashMidstates(tx({ inputs: [twoIn.inputs[0]!, twoIn.inputs[0]!] }), twoSpent),
+          }),
         'INVALID_INTEGER',
         /input 1 vout/
       )
       expectProtocolError(
-        hash(tx({ outputs: [{ value: 1n, scriptPubKey: SCRIPT }, { value: QBIT_MAX_MONEY + 1n, scriptPubKey: SCRIPT }] })),
+        hash(
+          tx({
+            outputs: [
+              { value: 1n, scriptPubKey: SCRIPT },
+              { value: QBIT_MAX_MONEY + 1n, scriptPubKey: SCRIPT },
+            ],
+          })
+        ),
         'INVALID_AMOUNT',
         /^output 1 value/
       )
@@ -432,9 +484,12 @@ describe('sighash rejects out-of-range transaction fields', () => {
     const hash = (keyVersion: number) =>
       schnorrSignatureHash({ tx: tx(), inputIndex: 0, spentOutputs: spent(), sigVersion: 'p2mr', leafHash, keyVersion })
 
-    it.each([-1, 1.5, 256, 2 ** 32, NaN, Infinity, -Infinity])('rejects %s instead of masking it with & 0xff', value => {
-      expectProtocolError(() => hash(value), 'INVALID_INTEGER', /keyVersion .* integer in \[0, 255\]/)
-    })
+    it.each([-1, 1.5, 256, 2 ** 32, NaN, Infinity, -Infinity])(
+      'rejects %s instead of masking it with & 0xff',
+      value => {
+        expectProtocolError(() => hash(value), 'INVALID_INTEGER', /keyVersion .* integer in \[0, 255\]/)
+      }
+    )
 
     it.each(NOT_A_NUMBER_NOR_DEFAULT)('rejects the non-number %s', value => {
       expectProtocolError(() => hash(value), 'INVALID_INTEGER', /keyVersion/)
@@ -443,7 +498,9 @@ describe('sighash rejects out-of-range transaction fields', () => {
     it('accepts the uint8 boundaries and commits to them', () => {
       expect(hash(0)).toHaveLength(32)
       expect(hash(255)).toHaveLength(32)
-      expect(bytesToHex(hash(0))).toBe(bytesToHex(p2mrSighash({ tx: tx(), inputIndex: 0, spentOutputs: spent(), leafHash })))
+      expect(bytesToHex(hash(0))).toBe(
+        bytesToHex(p2mrSighash({ tx: tx(), inputIndex: 0, spentOutputs: spent(), leafHash }))
+      )
       expect(bytesToHex(hash(255))).not.toBe(bytesToHex(hash(0)))
     })
   })
@@ -471,25 +528,50 @@ describe('sighash rejects out-of-range transaction fields', () => {
     expect(direct).toHaveLength(32)
     expect(bytesToHex(cached)).toBe(bytesToHex(direct))
     expect(
-      p2mrSighash({ tx: boundary, inputIndex: 0, spentOutputs: spent(0n), leafHash, hashType: SIGHASH_ANYONECANPAY | SIGHASH_SINGLE })
+      p2mrSighash({
+        tx: boundary,
+        inputIndex: 0,
+        spentOutputs: spent(0n),
+        leafHash,
+        hashType: SIGHASH_ANYONECANPAY | SIGHASH_SINGLE,
+      })
     ).toHaveLength(32)
   })
 })
 
 describe('PSBT parsing and decoding reject out-of-range amounts', () => {
   it.each([-1n, QBIT_MAX_MONEY + 1n, 2n ** 63n])('rejects an unsigned transaction output of %s', value => {
-    expectProtocolError(() => parsePsbt(serializePsbt(rawPsbt([value], [undefined]))), 'INVALID_AMOUNT', /output 0 value/)
-    expectProtocolError(() => psbtUnsignedTransaction(rawPsbt([value], [undefined])), 'INVALID_AMOUNT', /output 0 value/)
+    expectProtocolError(
+      () => parsePsbt(serializePsbt(rawPsbt([value], [undefined]))),
+      'INVALID_AMOUNT',
+      /output 0 value/
+    )
+    expectProtocolError(
+      () => psbtUnsignedTransaction(rawPsbt([value], [undefined])),
+      'INVALID_AMOUNT',
+      /output 0 value/
+    )
   })
 
-  it.each([-1n, QBIT_MAX_MONEY + 1n, 2n ** 63n])('rejects a witness UTXO of %s instead of reporting a bogus fee', value => {
-    const psbt = rawPsbt([90_000n], [value])
-    expectProtocolError(() => decodePsbt(psbt), 'INVALID_AMOUNT', /input 0 witness UTXO value/)
-    expectProtocolError(() => validateP2mrSigningPlans({ psbt, keys: [] }), 'INVALID_AMOUNT', /input 0 witness UTXO value/)
-  })
+  it.each([-1n, QBIT_MAX_MONEY + 1n, 2n ** 63n])(
+    'rejects a witness UTXO of %s instead of reporting a bogus fee',
+    value => {
+      const psbt = rawPsbt([90_000n], [value])
+      expectProtocolError(() => decodePsbt(psbt), 'INVALID_AMOUNT', /input 0 witness UTXO value/)
+      expectProtocolError(
+        () => validateP2mrSigningPlans({ psbt, keys: [] }),
+        'INVALID_AMOUNT',
+        /input 0 witness UTXO value/
+      )
+    }
+  )
 
   it('rejects outputs that exceed the inputs (negative fee)', () => {
-    expectProtocolError(() => decodePsbt(rawPsbt([100_001n], [100_000n])), 'INVALID_AMOUNT', /exceeds total input value/)
+    expectProtocolError(
+      () => decodePsbt(rawPsbt([100_001n], [100_000n])),
+      'INVALID_AMOUNT',
+      /exceeds total input value/
+    )
   })
 
   it('rejects totals outside MoneyRange even when each amount is in range', () => {
@@ -606,7 +688,13 @@ describe('transaction version is uint32, as in qbit Core', () => {
     // And the same digest whether or not cached midstates are supplied.
     expect(
       bytesToHex(
-        p2mrSighash({ tx: t, inputIndex: 0, spentOutputs, leafHash, midstates: precomputeSighashMidstates(t, spentOutputs) })
+        p2mrSighash({
+          tx: t,
+          inputIndex: 0,
+          spentOutputs,
+          leafHash,
+          midstates: precomputeSighashMidstates(t, spentOutputs),
+        })
       )
     ).toBe(bytesToHex(expected))
   })

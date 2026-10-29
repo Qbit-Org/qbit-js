@@ -188,10 +188,14 @@ describe('shape 1: extra leaf records', () => {
 
 describe('shape 2: signatures for other (pubkey, leaf hash) pairs', () => {
   it('ignores and drops them, whether 0x19 or qbit 0x03', () => {
-    const psbt = psbtFor(hashA, [{ script: leafA, controlBlock: rootControlBlock }], [
-      encodeP2mrPsbtScriptSigField(keyB, hashB, signatureOf(keyB)),
-      qbitEntry(encodeQbitProprietaryP2mrScriptSigField(keyC, hashA, signatureOf(keyC))),
-    ])
+    const psbt = psbtFor(
+      hashA,
+      [{ script: leafA, controlBlock: rootControlBlock }],
+      [
+        encodeP2mrPsbtScriptSigField(keyB, hashB, signatureOf(keyB)),
+        qbitEntry(encodeQbitProprietaryP2mrScriptSigField(keyC, hashA, signatureOf(keyC))),
+      ]
+    )
     const finalized = finalizeP2mrPsbt(sign(psbt, [{ pubkey: keyA, leafHash: hashA }]))
     expect(finalWitness(finalized)).toEqual([hex(signatureOf(keyA)), hex(leafA), hex(rootControlBlock)])
     expect(finalized.inputs[0]!.some(entry => entry.key[0] === PSBT_IN_P2MR_SCRIPT_SIG)).toBe(false)
@@ -199,10 +203,14 @@ describe('shape 2: signatures for other (pubkey, leaf hash) pairs', () => {
   })
 
   it('still requires every signature on the input to carry its sighash type, as Core does', () => {
-    const psbt = psbtFor(hashA, [{ script: leafA, controlBlock: rootControlBlock }], [
-      encodeP2mrPsbtScriptSigField(keyA, hashA, signatureOf(keyA)),
-      encodeP2mrPsbtScriptSigField(keyB, hashB, signatureOf(keyB), SIGHASH_ALL),
-    ])
+    const psbt = psbtFor(
+      hashA,
+      [{ script: leafA, controlBlock: rootControlBlock }],
+      [
+        encodeP2mrPsbtScriptSigField(keyA, hashA, signatureOf(keyA)),
+        encodeP2mrPsbtScriptSigField(keyB, hashB, signatureOf(keyB), SIGHASH_ALL),
+      ]
+    )
     expectProtocolError(() => finalizeP2mrPsbt(psbt), 'INVALID_SIGHASH', /sighash type 0x01 does not match/)
   })
 })
@@ -242,10 +250,14 @@ describe('shape 3: one leaf or signature carried in both namespaces', () => {
   })
 
   it('counts a signature carried as both 0x19 and qbit 0x03 once', () => {
-    const psbt = psbtFor(hashA, [{ script: leafA, controlBlock: rootControlBlock }], [
-      encodeP2mrPsbtScriptSigField(keyA, hashA, signatureOf(keyA)),
-      qbitEntry(encodeQbitProprietaryP2mrScriptSigField(keyA, hashA, signatureOf(keyA))),
-    ])
+    const psbt = psbtFor(
+      hashA,
+      [{ script: leafA, controlBlock: rootControlBlock }],
+      [
+        encodeP2mrPsbtScriptSigField(keyA, hashA, signatureOf(keyA)),
+        qbitEntry(encodeQbitProprietaryP2mrScriptSigField(keyA, hashA, signatureOf(keyA))),
+      ]
+    )
     expect(decodePsbt(psbt).inputs[0]!.scriptSigs).toHaveLength(1)
     expect(finalWitness(finalizeP2mrPsbt(psbt))).toEqual([hex(signatureOf(keyA)), hex(leafA), hex(rootControlBlock)])
   })
@@ -350,7 +362,9 @@ describe('shape 5: multi_a leaves', () => {
   ])('finalizes multi_a(1, A, B) signed by key %s', (_name, pubkey, stack) => {
     const script = multiALeafScript(1, [keyA, keyB])
     const leafHash = p2mrLeafHash(P2MR_LEAF_VERSION_V1, script)
-    const finalized = finalizeP2mrPsbt(sign(psbtFor(leafHash, [{ script, controlBlock: rootControlBlock }]), [{ pubkey, leafHash }]))
+    const finalized = finalizeP2mrPsbt(
+      sign(psbtFor(leafHash, [{ script, controlBlock: rootControlBlock }]), [{ pubkey, leafHash }])
+    )
     const witness = finalWitness(finalized)
     expect(witness).toEqual([...stack, hex(script), hex(rootControlBlock)])
     expect(satisfiesMultiA(witness, [keyA, keyB], 1)).toBe(true)
@@ -372,7 +386,14 @@ describe('shape 5: multi_a leaves', () => {
       unplaced.map(pubkey => encodeP2mrPsbtScriptSigField(pubkey, leafHash, signatureOf(pubkey)))
     )
     const placed = keys.slice(keys.length - threshold)
-    const witness = finalWitness(finalizeP2mrPsbt(sign(psbt, placed.map(pubkey => ({ pubkey, leafHash })))))
+    const witness = finalWitness(
+      finalizeP2mrPsbt(
+        sign(
+          psbt,
+          placed.map(pubkey => ({ pubkey, leafHash }))
+        )
+      )
+    )
     const expected = keys.map((key, index) => (index >= keys.length - threshold ? hex(signatureOf(key)) : ''))
     expect(witness.slice(0, -2)).toEqual(expected.reverse())
     expect(satisfiesMultiA(witness, keys, threshold)).toBe(true)
@@ -381,7 +402,9 @@ describe('shape 5: multi_a leaves', () => {
   it('leaves a partly signed multi_a leaf for the co-signer, then finalizes it', () => {
     const script = multiALeafScript(2, [keyA, keyB])
     const leafHash = p2mrLeafHash(P2MR_LEAF_VERSION_V1, script)
-    const halfSigned = sign(psbtFor(leafHash, [{ script, controlBlock: rootControlBlock }]), [{ pubkey: keyA, leafHash }])
+    const halfSigned = sign(psbtFor(leafHash, [{ script, controlBlock: rootControlBlock }]), [
+      { pubkey: keyA, leafHash },
+    ])
     expectProtocolError(
       () => finalizeP2mrPsbt(halfSigned),
       'INVALID_PSBT',
@@ -395,9 +418,11 @@ describe('shape 5: multi_a leaves', () => {
 
 describe('inputs finalize always rejects are refused before the signer runs', () => {
   it('refuses an input carrying a non-empty final scriptSig', () => {
-    const psbt = psbtFor(hashA, [{ script: leafA, controlBlock: rootControlBlock }], [
-      { key: Uint8Array.of(0x07), value: Uint8Array.of(0x51) },
-    ])
+    const psbt = psbtFor(
+      hashA,
+      [{ script: leafA, controlBlock: rootControlBlock }],
+      [{ key: Uint8Array.of(0x07), value: Uint8Array.of(0x51) }]
+    )
     const keys = [{ inputIndex: 0, pubkey: keyA, leafHash: hashA }]
     const signer = vi.fn(() => signatureOf(keyA))
     const message = /input 0: a P2MR input cannot carry a final scriptSig/

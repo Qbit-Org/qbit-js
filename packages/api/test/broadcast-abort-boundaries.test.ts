@@ -65,9 +65,10 @@ function track<T>(promise: Promise<T>): { settled: boolean; value?: T; error?: u
 const BASE = 'https://esplora.example/regtest/api'
 
 /** A real P2MR transaction whose txid the client derives from the hex (see broadcast.test.ts). */
-const P2MR_TX = JSON.parse(
-  readFileSync(new URL('./fixtures/p2mr-witness-tx.json', import.meta.url), 'utf8')
-) as { rawTxHex: string; txid: string }
+const P2MR_TX = JSON.parse(readFileSync(new URL('./fixtures/p2mr-witness-tx.json', import.meta.url), 'utf8')) as {
+  rawTxHex: string
+  txid: string
+}
 
 const CLIENTS = [
   ['EsploraClient', EsploraClient],
@@ -131,32 +132,35 @@ describe('broadcast abort and deadline boundaries', () => {
         STOPS.map(([label, kind]) => [name, label, first, kind, Client] as const)
       )
     )
-  )('%s: %s while the attempt re-sent after %s is in flight is unknown_outcome (%s)', async (_name, _label, first, kind, Client) => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const { fetchFn, calls } = makeFetch((i, _, init) => {
-      if (i > 0) return hangUntilAborted(init)
-      if (first === 'a 429') return { status: 429, body: 'slow down' }
-      throw connectionRefused()
-    })
-    // The re-sent attempt starts after the 5ms backoff, before the stop at 10ms.
-    const client = new Client({ baseUrl: BASE, fetchFn, retries: 2, retryBaseDelayMs: 5 })
+  )(
+    '%s: %s while the attempt re-sent after %s is in flight is unknown_outcome (%s)',
+    async (_name, _label, first, kind, Client) => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+      const { fetchFn, calls } = makeFetch((i, _, init) => {
+        if (i > 0) return hangUntilAborted(init)
+        if (first === 'a 429') return { status: 429, body: 'slow down' }
+        throw connectionRefused()
+      })
+      // The re-sent attempt starts after the 5ms backoff, before the stop at 10ms.
+      const client = new Client({ baseUrl: BASE, fetchFn, retries: 2, retryBaseDelayMs: 5 })
 
-    const { outcome, reason, stopAfter10ms } = startBroadcast(client, kind)
-    await stopAfter10ms()
+      const { outcome, reason, stopAfter10ms } = startBroadcast(client, kind)
+      await stopAfter10ms()
 
-    // The second POST may have reached the node, whatever happened to the first.
-    expect(outcome.error).toBeInstanceOf(QbitApiError)
-    expect(outcome.error).toMatchObject({
-      kind: 'unknown_outcome',
-      txid: P2MR_TX.txid,
-      // Error URLs redact the base path, so match either spelling.
-      url: expect.stringMatching(/^https:\/\/esplora\.example\/.*\/tx$/),
-      cause: { kind },
-    })
-    if (kind === 'aborted') expect(((outcome.error as QbitApiError).cause as QbitApiError).cause).toBe(reason)
-    expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`, `${BASE}/tx`])
-    expect(vi.getTimerCount()).toBe(0)
-  })
+      // The second POST may have reached the node, whatever happened to the first.
+      expect(outcome.error).toBeInstanceOf(QbitApiError)
+      expect(outcome.error).toMatchObject({
+        kind: 'unknown_outcome',
+        txid: P2MR_TX.txid,
+        // Error URLs redact the base path, so match either spelling.
+        url: expect.stringMatching(/^https:\/\/esplora\.example\/.*\/tx$/),
+        cause: { kind },
+      })
+      if (kind === 'aborted') expect(((outcome.error as QbitApiError).cause as QbitApiError).cause).toBe(reason)
+      expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`, `${BASE}/tx`])
+      expect(vi.getTimerCount()).toBe(0)
+    }
+  )
 
   it('MempoolQbitClient: an abort after /tx rejects definitively, before /tx/push starts, is a definite aborted', async () => {
     const controller = new AbortController()

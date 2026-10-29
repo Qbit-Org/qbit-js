@@ -141,10 +141,7 @@ describe('P2MR signing preflight accepts only Core v1 pk/multi_a templates', () 
   })
 
   it('rejects a multi_a leaf with a trailing opcode', () => {
-    expectRejectedBeforeSigning(
-      concat(multiALeafScript(1, [pubkey, secondPubkey]), [OP_1]),
-      pubkey
-    )
+    expectRejectedBeforeSigning(concat(multiALeafScript(1, [pubkey, secondPubkey]), [OP_1]), pubkey)
   })
 
   it('rejects a multi_a threshold pushed non-minimally', () => {
@@ -179,10 +176,7 @@ describe('P2MR signing preflight accepts only Core v1 pk/multi_a templates', () 
   })
 
   it('signs both keys of multi_a(2, A, B)', () => {
-    const { signer, signedPsbt } = signAll(multiALeafScript(2, [pubkey, secondPubkey]), [
-      pubkey,
-      secondPubkey,
-    ])
+    const { signer, signedPsbt } = signAll(multiALeafScript(2, [pubkey, secondPubkey]), [pubkey, secondPubkey])
     expect(signer).toHaveBeenCalledTimes(2)
     expect(decodePsbt(signedPsbt).inputs[0]!.scriptSigs).toHaveLength(2)
   })

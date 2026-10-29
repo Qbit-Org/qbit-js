@@ -87,12 +87,9 @@ describe('bech32 decoder input boundaries', () => {
 
     expect(verifyP2mrMessageProof(message, proof, verifyPqc, { expectedAddress: address })).toBe(true)
     expect(
-      verifyP2mrMessageProof(
-        message,
-        { ...proof, address: kelvinSpelling(address) },
-        verifyPqc,
-        { expectedAddress: address }
-      )
+      verifyP2mrMessageProof(message, { ...proof, address: kelvinSpelling(address) }, verifyPqc, {
+        expectedAddress: address,
+      })
     ).toBe(false)
   })
 
@@ -121,9 +118,10 @@ describe('bech32 decoder input boundaries', () => {
         `${upper.slice(0, 10)}${sample}${upper.slice(10)}`,
       ]
       for (const variant of variants) {
-        expect(thrownCode(() => decodeP2mrAddress(variant)), JSON.stringify(variant)).toBe(
-          'INVALID_BECH32'
-        )
+        expect(
+          thrownCode(() => decodeP2mrAddress(variant)),
+          JSON.stringify(variant)
+        ).toBe('INVALID_BECH32')
       }
     }
   })
@@ -134,20 +132,14 @@ describe('bech32 decoder input boundaries', () => {
     const boundaryHrp = addressWithHrp('!~')
     expect(thrownCode(() => decodeP2mrAddress(boundaryHrp))).toBe('WRONG_HRP')
 
-    expect(thrownCode(() => decodeP2mrAddress(boundaryHrp.replace('!', ' ')))).toBe(
-      'INVALID_BECH32'
-    )
-    expect(thrownCode(() => decodeP2mrAddress(boundaryHrp.replace('~', '\u007f')))).toBe(
-      'INVALID_BECH32'
-    )
+    expect(thrownCode(() => decodeP2mrAddress(boundaryHrp.replace('!', ' ')))).toBe('INVALID_BECH32')
+    expect(thrownCode(() => decodeP2mrAddress(boundaryHrp.replace('~', '\u007f')))).toBe('INVALID_BECH32')
   })
 
   it('rejects mixed-case ASCII spellings', () => {
     const upper = MAINNET_ADDRESS.toUpperCase()
 
-    expect(thrownCode(() => decodeP2mrAddress(`Q${MAINNET_ADDRESS.slice(1)}`))).toBe(
-      'INVALID_BECH32'
-    )
+    expect(thrownCode(() => decodeP2mrAddress(`Q${MAINNET_ADDRESS.slice(1)}`))).toBe('INVALID_BECH32')
     expect(thrownCode(() => decodeP2mrAddress(`${upper.slice(0, -1)}w`))).toBe('INVALID_BECH32')
     const innerUpper = `${MAINNET_ADDRESS.slice(0, 3)}Z${MAINNET_ADDRESS.slice(4)}`
     expect(thrownCode(() => decodeP2mrAddress(innerUpper))).toBe('INVALID_BECH32')
@@ -167,21 +159,15 @@ describe('bech32 decoder input boundaries', () => {
     expect(thrownCode(() => decodeP2mrAddress(ninetyOne.toUpperCase()))).toBe('INVALID_BECH32')
     expect(thrownCode(() => parseQbitUri(`qbit:${ninetyOne}`))).toBe('INVALID_BECH32')
 
-    expect(thrownCode(() => decodeP2mrAddress(`${MAINNET_ADDRESS}${'q'.repeat(30)}`))).toBe(
-      'INVALID_BECH32'
-    )
+    expect(thrownCode(() => decodeP2mrAddress(`${MAINNET_ADDRESS}${'q'.repeat(30)}`))).toBe('INVALID_BECH32')
     expect(thrownCode(() => decodeP2mrAddress('q'.repeat(4096)))).toBe('INVALID_BECH32')
   })
 
   it('rejects empty and separator-less input', () => {
     expect(thrownCode(() => decodeP2mrAddress(''))).toBe('INVALID_BECH32')
     expect(thrownCode(() => decodeP2mrAddress('qb'))).toBe('INVALID_BECH32')
-    expect(thrownCode(() => decodeP2mrAddress(MAINNET_ADDRESS.replace('1', '')))).toBe(
-      'INVALID_BECH32'
-    )
-    expect(thrownCode(() => decodeP2mrAddress(`1${MAINNET_ADDRESS.slice(3)}`))).toBe(
-      'INVALID_BECH32'
-    )
+    expect(thrownCode(() => decodeP2mrAddress(MAINNET_ADDRESS.replace('1', '')))).toBe('INVALID_BECH32')
+    expect(thrownCode(() => decodeP2mrAddress(`1${MAINNET_ADDRESS.slice(3)}`))).toBe('INVALID_BECH32')
   })
 
   it('still decodes canonical lowercase and all-uppercase spellings on every network', () => {

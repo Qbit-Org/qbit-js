@@ -77,9 +77,7 @@ describe('fee-rate ceiling', () => {
   })
 
   it('accepts a caller-raised ceiling', () => {
-    expect(feeTiersFromEstimates({ '1': 100_000 }, { maxFeeRate: 200_000 })).toEqual([
-      { target: 1, feeRate: 100_000 },
-    ])
+    expect(feeTiersFromEstimates({ '1': 100_000 }, { maxFeeRate: 200_000 })).toEqual([{ target: 1, feeRate: 100_000 }])
     expect(() => feeTiersFromEstimates({ '1': 200_001 }, { maxFeeRate: 200_000 })).toThrow(QbitApiError)
   })
 

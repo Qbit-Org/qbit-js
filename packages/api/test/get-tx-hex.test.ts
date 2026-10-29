@@ -14,9 +14,11 @@ const BASE = 'https://esplora.example/regtest/api'
 const SAFE_BASE = 'https://esplora.example/...'
 
 /** A real P2MR transaction with witness data (BIP144 encoding) and its txid. */
-const P2MR_TX = JSON.parse(
-  readFileSync(new URL('./fixtures/p2mr-witness-tx.json', import.meta.url), 'utf8')
-) as { unsignedTxHex: string; rawTxHex: string; txid: string }
+const P2MR_TX = JSON.parse(readFileSync(new URL('./fixtures/p2mr-witness-tx.json', import.meta.url), 'utf8')) as {
+  unsignedTxHex: string
+  rawTxHex: string
+  txid: string
+}
 
 /** A one-input, one-output legacy transaction and its txid, computed independently. */
 const LEGACY_TX_HEX =
@@ -28,11 +30,7 @@ const CLIENTS = [
   ['MempoolQbitClient', MempoolQbitClient],
 ] as const
 
-function serving(
-  Client: typeof EsploraClient,
-  body: string,
-  status = 200
-): { client: EsploraClient; urls: string[] } {
+function serving(Client: typeof EsploraClient, body: string, status = 200): { client: EsploraClient; urls: string[] } {
   const urls: string[] = []
   const fetchFn = (async (input: RequestInfo | URL) => {
     urls.push(String(input))

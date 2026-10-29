@@ -235,7 +235,10 @@ describe('PSBT map and transaction bounds', () => {
     expect(bytes.length).toBeGreaterThan(10_000_000)
     expect(bytes.length).toBeLessThan(PSBT_DEFAULT_MAX_BYTES)
     const ms = elapsedMs(() => {
-      expectInvalidPsbt(() => parsePsbt(bytes), new RegExp(`more than ${OBJECTS_AT_DEFAULT} map entries.*raise maxObjects`))
+      expectInvalidPsbt(
+        () => parsePsbt(bytes),
+        new RegExp(`more than ${OBJECTS_AT_DEFAULT} map entries.*raise maxObjects`)
+      )
     })
     expect(ms).toBeLessThan(2000)
   })

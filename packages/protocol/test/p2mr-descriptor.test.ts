@@ -47,12 +47,8 @@ describe('P2MR descriptors', () => {
     const expectedRoot = p2mrLeafHash(P2MR_LEAF_VERSION_V1, singleKeyLeafScript(hexToBytes(PK_A)))
 
     expect(bytesToHex(p2mrRootFromDescriptor(descriptor))).toBe(bytesToHex(expectedRoot))
-    expect(p2mrAddressFromDescriptor(descriptor, 'regtest')).toBe(
-      p2mrAddressFromPubkey(hexToBytes(PK_A), 'regtest')
-    )
-    expect(
-      serializeP2mrDescriptor(parseP2mrDescriptor(addDescriptorChecksum(descriptor)), false)
-    ).toBe(descriptor)
+    expect(p2mrAddressFromDescriptor(descriptor, 'regtest')).toBe(p2mrAddressFromPubkey(hexToBytes(PK_A), 'regtest'))
+    expect(serializeP2mrDescriptor(parseP2mrDescriptor(addDescriptorChecksum(descriptor)), false)).toBe(descriptor)
   })
 
   it('parses multi_a and sortedmulti_a descriptors', () => {
@@ -80,9 +76,7 @@ describe('P2MR descriptors', () => {
     const multiLeaf = p2mrLeafHash(P2MR_LEAF_VERSION_V1, multiALeafScript(1, [hexToBytes(PK_A)]))
 
     expect(serializeP2mrDescriptor(parseP2mrDescriptor(twoLeaf), false)).toBe(twoLeaf)
-    expect(bytesToHex(p2mrRootFromDescriptor(twoLeaf))).toBe(
-      bytesToHex(p2mrBranchHash(leafA, leafB))
-    )
+    expect(bytesToHex(p2mrRootFromDescriptor(twoLeaf))).toBe(bytesToHex(p2mrBranchHash(leafA, leafB)))
     expect(serializeP2mrDescriptor(parseP2mrDescriptor(nested), false)).toBe(nested)
     expect(bytesToHex(p2mrRootFromDescriptor(nested))).toBe(
       bytesToHex(p2mrBranchHash(leafA, p2mrBranchHash(leafB, multiLeaf)))
@@ -90,8 +84,7 @@ describe('P2MR descriptors', () => {
   })
 
   it('parses pqc ranged descriptors without trying to derive private keys', () => {
-    const descriptor =
-      `mr(pk(pqc([00000000/87h/1h]${QRPV}/87h/1h/0h/0/*)))`
+    const descriptor = `mr(pk(pqc([00000000/87h/1h]${QRPV}/87h/1h/0h/0/*)))`
     const parsed = parseP2mrDescriptor(descriptor)
 
     expect(parsed.type).toBe('mr')
@@ -113,36 +106,21 @@ describe('P2MR descriptors', () => {
     const descriptor = addDescriptorChecksum(`rawmr(${RAW_ROOT})`)
 
     expect(() => verifyDescriptorChecksum(`${descriptor.slice(0, -1)}x`)).toThrow(QbitProtocolError)
-    expect(() => parseP2mrDescriptor(`rawmr(${RAW_ROOT})`, { requireChecksum: true })).toThrow(
+    expect(() => parseP2mrDescriptor(`rawmr(${RAW_ROOT})`, { requireChecksum: true })).toThrow(QbitProtocolError)
+    expect(() =>
+      formatP2mrImportDescriptors({ external: RANGED_EXTERNAL, internal: RANGED_INTERNAL }, [0, 0x80000000])
+    ).toThrow(QbitProtocolError)
+    expect(() => formatP2mrImportDescriptors({ external: descriptor, internal: `mr(pk(${PK_A}))` }, [0, 20])).toThrow(
       QbitProtocolError
     )
-    expect(() =>
-      formatP2mrImportDescriptors(
-        { external: RANGED_EXTERNAL, internal: RANGED_INTERNAL },
-        [0, 0x80000000]
-      )
-    ).toThrow(QbitProtocolError)
-    expect(() =>
-      formatP2mrImportDescriptors({ external: descriptor, internal: `mr(pk(${PK_A}))` }, [0, 20])
-    ).toThrow(QbitProtocolError)
-    expect(() => parseP2mrDescriptor(`mr({pk(${PK_A}),pk(${PK_B}),pk(${PK_A})})`)).toThrow(
-      QbitProtocolError
-    )
+    expect(() => parseP2mrDescriptor(`mr({pk(${PK_A}),pk(${PK_B}),pk(${PK_A})})`)).toThrow(QbitProtocolError)
     expect(() => parseP2mrDescriptor(`mr(pk(pqc(not-a-bip32-key/0)))`)).toThrow(QbitProtocolError)
-    expect(() => parseP2mrDescriptor(`mr(pk(pqc(qrpvV1brS3WRoVwg/0)))`)).toThrow(
-      QbitProtocolError
-    )
-    expect(() => parseP2mrDescriptor(`mr(pk(pqc(${QRPV}/*/0)))`)).toThrow(
-      QbitProtocolError
-    )
+    expect(() => parseP2mrDescriptor(`mr(pk(pqc(qrpvV1brS3WRoVwg/0)))`)).toThrow(QbitProtocolError)
+    expect(() => parseP2mrDescriptor(`mr(pk(pqc(${QRPV}/*/0)))`)).toThrow(QbitProtocolError)
   })
 
   it('formats Core importdescriptors entries for receive and change descriptors', () => {
-    const entries = formatP2mrImportDescriptors(
-      { external: RANGED_EXTERNAL, internal: RANGED_INTERNAL },
-      [0, 20],
-      1234
-    )
+    const entries = formatP2mrImportDescriptors({ external: RANGED_EXTERNAL, internal: RANGED_INTERNAL }, [0, 20], 1234)
 
     expect(entries).toHaveLength(2)
     expect(entries[0]).toMatchObject({

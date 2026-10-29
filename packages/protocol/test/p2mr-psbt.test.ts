@@ -35,10 +35,7 @@ const SIGNATURE = new Uint8Array(PQC_SIGNATURE_BYTES).fill(0x33)
 describe('P2MR PSBT field codecs', () => {
   it('encodes and decodes witness signatures with default and explicit sighash types', () => {
     const defaultItem = encodeP2mrWitnessSignature(SIGNATURE)
-    const explicitItem = encodeP2mrWitnessSignature(
-      SIGNATURE,
-      SIGHASH_ANYONECANPAY | SIGHASH_ALL
-    )
+    const explicitItem = encodeP2mrWitnessSignature(SIGNATURE, SIGHASH_ANYONECANPAY | SIGHASH_ALL)
 
     expect(defaultItem).toHaveLength(PQC_SIGNATURE_BYTES)
     expect(decodeP2mrWitnessSignature(defaultItem)).toMatchObject({
@@ -51,9 +48,7 @@ describe('P2MR PSBT field codecs', () => {
       explicitHashType: true,
     })
     expect(isValidP2mrSighashType(0x04)).toBe(false)
-    expect(() => decodeP2mrWitnessSignature(Uint8Array.of(...SIGNATURE, 0))).toThrow(
-      QbitProtocolError
-    )
+    expect(() => decodeP2mrWitnessSignature(Uint8Array.of(...SIGNATURE, 0))).toThrow(QbitProtocolError)
   })
 
   it('encodes and decodes standard P2MR script signature fields', () => {
@@ -95,42 +90,26 @@ describe('P2MR PSBT field codecs', () => {
     const scriptSig = encodeQbitProprietaryP2mrScriptSigField(PUBKEY, LEAF_HASH, SIGNATURE)
     const leafScript = encodeQbitProprietaryP2mrLeafScriptField(CONTROL_BLOCK, script)
 
-    expect(
-      decodeQbitProprietaryP2mrInputField(
-        rootField.subtype,
-        rootField.keyData,
-        rootField.value
-      )
-    ).toMatchObject({ type: 'qbitP2mrMerkleRoot' })
-    expect(
-      decodeQbitProprietaryP2mrInputField(
-        scriptSig.subtype,
-        scriptSig.keyData,
-        scriptSig.value
-      )
-    ).toMatchObject({ type: 'p2mrScriptSig' })
-    expect(
-      decodeQbitProprietaryP2mrInputField(
-        leafScript.subtype,
-        leafScript.keyData,
-        leafScript.value
-      )
-    ).toMatchObject({ type: 'p2mrLeafScript' })
+    expect(decodeQbitProprietaryP2mrInputField(rootField.subtype, rootField.keyData, rootField.value)).toMatchObject({
+      type: 'qbitP2mrMerkleRoot',
+    })
+    expect(decodeQbitProprietaryP2mrInputField(scriptSig.subtype, scriptSig.keyData, scriptSig.value)).toMatchObject({
+      type: 'p2mrScriptSig',
+    })
+    expect(decodeQbitProprietaryP2mrInputField(leafScript.subtype, leafScript.keyData, leafScript.value)).toMatchObject(
+      { type: 'p2mrLeafScript' }
+    )
   })
 
   it('rejects malformed Core P2MR PSBT field shapes', () => {
-    expect(() =>
-      decodeP2mrPsbtScriptSigField(Uint8Array.of(PSBT_IN_P2MR_SCRIPT_SIG, ...PUBKEY), SIGNATURE)
-    ).toThrow(QbitProtocolError)
+    expect(() => decodeP2mrPsbtScriptSigField(Uint8Array.of(PSBT_IN_P2MR_SCRIPT_SIG, ...PUBKEY), SIGNATURE)).toThrow(
+      QbitProtocolError
+    )
     expect(() =>
       decodeP2mrPsbtLeafScriptField(Uint8Array.of(PSBT_IN_P2MR_LEAF_SCRIPT, P2MR_LEAF_VERSION_V1), Uint8Array.of(0xc0))
     ).toThrow(QbitProtocolError)
     expect(() =>
-      decodeQbitProprietaryP2mrInputField(
-        PSBT_QBIT_IN_P2MR_MERKLE_ROOT,
-        Uint8Array.of(0),
-        LEAF_HASH
-      )
+      decodeQbitProprietaryP2mrInputField(PSBT_QBIT_IN_P2MR_MERKLE_ROOT, Uint8Array.of(0), LEAF_HASH)
     ).toThrow(QbitProtocolError)
   })
 })

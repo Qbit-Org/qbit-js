@@ -96,7 +96,10 @@ describe('error URL redaction', () => {
 
   it.each([
     ['a runtime that names no URL', () => new TypeError('Failed to fetch')],
-    ['node-fetch quoting the normalized URL', (url: string) => new TypeError(`request to ${new URL(url).href} failed, reason: connect ECONNREFUSED`)],
+    [
+      'node-fetch quoting the normalized URL',
+      (url: string) => new TypeError(`request to ${new URL(url).href} failed, reason: connect ECONNREFUSED`),
+    ],
     ['undici quoting the configured URL', (url: string) => new TypeError(`Failed to parse URL from ${url}`)],
   ])('redacts the base path from a network error from %s', async (_case, makeError) => {
     const baseUrl = `HTTPS://Indexer.Example/v1/${SECRET}/api`
@@ -112,7 +115,9 @@ describe('error URL redaction', () => {
     const error = await rejection(client.getAddressUtxos(ADDR))
 
     expect(error).toMatchObject({ kind: 'network', url: `${SAFE_BASE}/address/${ADDR}/utxo` })
-    expect(error.message).toMatch(new RegExp(`^network error: ${SAFE_BASE.replace(/\./g, '\\.')}/address/${ADDR}/utxo \\(TypeError: `))
+    expect(error.message).toMatch(
+      new RegExp(`^network error: ${SAFE_BASE.replace(/\./g, '\\.')}/address/${ADDR}/utxo \\(TypeError: `)
+    )
     expectNoSecret(error)
     // cause is a redacted copy; the underlying error stays reachable for programmatic inspection.
     expect(error.cause).toBeInstanceOf(TypeError)
@@ -427,7 +432,12 @@ describe('redacted error causes', () => {
   })
 
   it('redacts a string thrown in place of an error', async () => {
-    const client = new EsploraClient({ baseUrl: BASE, retries: 0, sleepFn: noSleep, fetchFn: throwingFetch(url => url) })
+    const client = new EsploraClient({
+      baseUrl: BASE,
+      retries: 0,
+      sleepFn: noSleep,
+      fetchFn: throwingFetch(url => url),
+    })
 
     const error = await rejection(client.getTipHeight())
 
@@ -595,17 +605,28 @@ describe('error sites of rate limiting, body timeouts, cancellation and broadcas
     const error = await rejection(client.getTipHash())
 
     expect(error).toMatchObject({ kind: 'timeout', status: 200, url: `${SAFE_BASE}/blocks/tip/hash` })
-    expect(error.message).toMatch(/^request timed out after 20ms: https:\/\/indexer\.example\/\.\.\.\/blocks\/tip\/hash/)
+    expect(error.message).toMatch(
+      /^request timed out after 20ms: https:\/\/indexer\.example\/\.\.\.\/blocks\/tip\/hash/
+    )
     expectNoSecret(error)
   })
 
   it('redacts a fetch that rejects with the URL when its attempt times out', async () => {
-    const client = new EsploraClient({ baseUrl: BASE, retries: 0, timeoutMs: 5, sleepFn: noSleep, fetchFn: hangingFetch() })
+    const client = new EsploraClient({
+      baseUrl: BASE,
+      retries: 0,
+      timeoutMs: 5,
+      sleepFn: noSleep,
+      fetchFn: hangingFetch(),
+    })
 
     const error = await rejection(client.getTipHash())
 
     expect(error).toMatchObject({ kind: 'timeout', url: `${SAFE_BASE}/blocks/tip/hash` })
-    expect(error.cause).toMatchObject({ message: `aborted: ${SAFE_BASE}/blocks/tip/hash`, url: `${SAFE_BASE}/blocks/tip/hash` })
+    expect(error.cause).toMatchObject({
+      message: `aborted: ${SAFE_BASE}/blocks/tip/hash`,
+      url: `${SAFE_BASE}/blocks/tip/hash`,
+    })
     expectNoSecret(error)
   })
 
@@ -618,7 +639,10 @@ describe('error sites of rate limiting, body timeouts, cancellation and broadcas
     await new Promise(resolve => setTimeout(resolve, 5))
     controller.abort(new Error('user left the screen'))
     const aborted = await pending
-    expect(aborted).toMatchObject({ kind: 'aborted', message: 'request aborted by caller (Error: user left the screen)' })
+    expect(aborted).toMatchObject({
+      kind: 'aborted',
+      message: 'request aborted by caller (Error: user left the screen)',
+    })
     expectNoSecret(aborted)
     // The shared GET was abandoned by its only caller; fetch sees why.
     const reason = signals[0]!.reason as QbitApiError
@@ -652,7 +676,8 @@ describe('error sites of rate limiting, body timeouts, cancellation and broadcas
     ],
     [
       'a backend relaying a lost node connection',
-      (url: string) => new Response(`sendrawtransaction RPC error: {"code":"ECONNRESET","url":"${url}"}`, { status: 400 }),
+      (url: string) =>
+        new Response(`sendrawtransaction RPC error: {"code":"ECONNRESET","url":"${url}"}`, { status: 400 }),
       { status: 400 },
       `backend lost its node connection (HTTP 400 from ${SAFE_BASE}/tx: `,
     ],
@@ -763,7 +788,12 @@ describe('error sites of rate limiting, body timeouts, cancellation and broadcas
 
   it('never echoes a valid base URL in the errors for other invalid options', async () => {
     const { fetchFn } = fetchReplying(() => ({}))
-    for (const options of [{ timeoutMs: -1 }, { retries: 99 }, { retryBaseDelayMs: Infinity }, { maxRetryAfterMs: 0.5 }]) {
+    for (const options of [
+      { timeoutMs: -1 },
+      { retries: 99 },
+      { retryBaseDelayMs: Infinity },
+      { maxRetryAfterMs: 0.5 },
+    ]) {
       let error: unknown
       try {
         new EsploraClient({ baseUrl: BASE, fetchFn, ...options })
