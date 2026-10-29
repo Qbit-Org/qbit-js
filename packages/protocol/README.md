@@ -113,8 +113,12 @@ See [Signing and finalization](docs/signing-and-finalization.md).
   phase `'sign'` the signer was invoked for `failed` but no signature was
   stored, so `failed` is not in `signed` and `onSigned` never ran for it; a
   stateful signer must still treat that key use as consumed, so it records
-  each key use inside `sign`, before signing, and never signs again from the
-  same one-time state. In phase `'onSigned'` the signature for `failed` is
+  each key use inside `sign`, before signing. Key that record by the digest it
+  signs: the retry below asks for the same digest again, which the signer may
+  sign from the same state, while a different digest must be refused. A signer
+  that cannot sign the same digest twice must be left out of the retry's
+  `keys`; the other plans are then signed without it. In phase `'onSigned'` the
+  signature for `failed` is
   stored and is the last entry of `signed`; only the callback failed. Retry by
   calling `signP2mrPsbt` with `error.psbt` and only the keys not listed in
   `error.signed`; a key whose signature is already present is refused before

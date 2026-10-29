@@ -10,7 +10,7 @@
 // and name a file in this repository, and its #anchor, if any, must be the
 // GitHub slug of a heading in that page. Any other URL of this repository
 // (`tree/`, another branch, a page outside packages/*/docs) fails, and so does
-// a relative `../docs/` link, so the site never gets one.
+// a relative docs link in any link form, so the site never gets one.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,7 +24,12 @@ const TRAILING_PUNCTUATION = /[.,:;!?]+$/
 const REPO_URL = /github\.com\/qbit-org\/qbit-js(?![\w-])/i
 const DOC_URL =
   /^https:\/\/github\.com\/Qbit-Org\/qbit-js\/blob\/main\/packages\/(\w[\w.-]*)\/docs\/(\w[\w.-]*\.md)(?:#(.+))?$/
-const RELATIVE_DOC_LINK = /\]\(\.\.\/docs\//
+// A relative link to a docs page in any link form: a Markdown target
+// (`](../docs/x.md)`, `](./../docs/x.md)`, `](docs/x.md)`), `{@link ../docs/x.md}`
+// or an autolink `<docs/x.md>`. A path merely named in prose or in backticks is
+// not a link and is left alone.
+const RELATIVE_DOC_LINK =
+  /\]\((?!https?:)[^)\s]*docs\/[^)\s]*\.md|\{@link\s+(?!https?:)[^}\s]*docs\/[^}\s]*\.md|<(?!https?:)[^>\s]*docs\/[^>\s]*\.md>/
 
 // GitHub's heading ids (github-slugger): lowercase, drop everything but
 // letters, marks, numbers, connector punctuation, spaces and `-`, then turn
@@ -80,7 +85,7 @@ for (const pkg of readdirSync(join(repoRoot, 'packages'))) {
       .forEach((line, index) => {
         const where = `${relative(repoRoot, file)}:${index + 1}`
         if (RELATIVE_DOC_LINK.test(line)) {
-          errors.push(`${where}: relative ../docs/ link; use the https://github.com/Qbit-Org/qbit-js/blob/main URL`)
+          errors.push(`${where}: relative docs/ link; use the https://github.com/Qbit-Org/qbit-js/blob/main URL`)
         }
         for (const [token] of line.matchAll(URL_TOKEN)) {
           if (!REPO_URL.test(token)) continue

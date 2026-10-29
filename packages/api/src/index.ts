@@ -610,7 +610,8 @@ export interface EsploraClientOptions {
    * Longest server-requested `Retry-After` delay the client will sleep before
    * retrying, in ms (default 30000; an integer from 0 to 2147483647). A longer
    * request is not slept on: a read's 429 (`rate_limit`) or its 500, 502, 503
-   * or 504 (`http`) is thrown at once with `retryAfterMs` set. A submission's
+   * or 504 (`http`) is thrown at once with `retryAfterMs` set, unless its body
+   * could not be read, which throws `parse` without `retryAfterMs`. A submission's
    * 429 is not re-sent then, and is judged by its body first, as the
    * [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes) says.
    */
