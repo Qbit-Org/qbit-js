@@ -4,6 +4,14 @@ import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { EsploraClient, MempoolQbitClient, QbitApiError, type RequestOptions } from '../src/index'
+import { createMockEsplora, type MockBackend, type MockFault } from '../src/testing'
+
+// Tests whose backend just has to answer use the testing kit, wrapping its
+// fetchFn to abort or delay at a given request. `makeFetch` stays for what the
+// kit does not model: a request with no reply until it is aborted, a fetch or a
+// body that ignores its signal (the kit's stalled body errors on abort, as
+// undici's does), a body whose chunks or cancels the test controls, and checks
+// on the RequestInit the client passes.
 
 interface MockReply {
   status?: number
@@ -113,6 +121,28 @@ function historyPage(n: number, confirmed = true): string {
   ])
 }
 
+/** A testing-kit backend whose history for ADDR is 100 confirmed transactions: four full chain pages. */
+function longHistory(backend: MockBackend, faults: MockFault[] = []) {
+  return createMockEsplora({
+    backend,
+    baseUrl: BASE,
+    txs: Array.from({ length: 100 }, (_, n) => ({
+      txid: txid(n + 1),
+      vout: [{ address: ADDR, value: 1 }],
+      block: { height: n + 1 },
+    })),
+    faults,
+  })
+}
+
+/** `mock`'s fetchFn, with every reply arriving `ms` after its request. */
+function delayed(mock: { fetchFn: typeof fetch }, ms: number): typeof fetch {
+  return (input, init) => {
+    const reply = mock.fetchFn(input, init)
+    return new Promise(resolve => setTimeout(() => resolve(reply), ms))
+  }
+}
+
 /** Esplora history whose confirmed chain never ends: every page has one new tx. */
 function endlessEsploraHistory(i: number, url: string): MockReply {
   if (url === `${BASE}/address/${ADDR}`) return { body: JSON.stringify(STATS) }
@@ -149,32 +179,34 @@ describe('caller cancellation (AbortSignal)', () => {
 
   it('issues no further page fetches once aborted between pages', async () => {
     const controller = new AbortController()
-    const { fetchFn, calls } = makeFetch((i, url) => {
-      if (i === 2) controller.abort()
-      return endlessEsploraHistory(i, url)
-    })
+    const mock = longHistory('esplora')
+    const fetchFn: typeof fetch = (input, init) => {
+      if (mock.requests.length === 2) controller.abort()
+      return mock.fetchFn(input, init)
+    }
     const client = new EsploraClient({ baseUrl: BASE, fetchFn })
 
     await expect(client.getAddressHistory(ADDR, { signal: controller.signal })).rejects.toMatchObject({
       kind: 'aborted',
     })
     await flush()
-    expect(calls).toHaveLength(3)
+    expect(mock.requests).toHaveLength(3)
   })
 
   it('stops a mempool-qbit combined-history scan mid-pagination', async () => {
     const controller = new AbortController()
-    const { fetchFn, calls } = makeFetch((i, url) => {
-      if (i === 1) controller.abort()
-      return { body: url === `${BASE}/address/${ADDR}` ? JSON.stringify(STATS) : historyPage(i) }
-    })
+    const mock = longHistory('mempool-qbit')
+    const fetchFn: typeof fetch = (input, init) => {
+      if (mock.requests.length === 1) controller.abort()
+      return mock.fetchFn(input, init)
+    }
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn })
 
     await expect(client.getAddressHistory(ADDR, { signal: controller.signal })).rejects.toMatchObject({
       kind: 'aborted',
     })
     await flush()
-    expect(calls).toHaveLength(2)
+    expect(mock.requests).toHaveLength(2)
   })
 
   it('maps an abort to `aborted` (not timeout/network) and does not retry it', async () => {
@@ -267,8 +299,9 @@ describe('caller cancellation (AbortSignal)', () => {
   })
 
   it('rejects an already-aborted signal without making a request', async () => {
-    const { fetchFn, calls } = makeFetch(() => ({ body: JSON.stringify(STATS) }))
-    const client = new EsploraClient({ baseUrl: BASE, fetchFn })
+    const mock = longHistory('esplora')
+    const calls = mock.requests
+    const client = new EsploraClient({ baseUrl: BASE, fetchFn: mock.fetchFn })
 
     await expect(client.getAddressStats(ADDR, { signal: AbortSignal.abort() })).rejects.toMatchObject({
       kind: 'aborted',
@@ -281,6 +314,7 @@ describe('caller cancellation (AbortSignal)', () => {
 
   it('rejects promptly when aborted while the response body is still streaming', async () => {
     const controller = new AbortController()
+    // A body that never ends and ignores the abort, so only the client's own race against the signal ends the read.
     const stalledBody = new ReadableStream<Uint8Array>({ start() {} })
     const { fetchFn } = makeFetch(() => ({ body: stalledBody }))
     const client = new EsploraClient({ baseUrl: BASE, fetchFn })
@@ -321,16 +355,17 @@ describe('caller cancellation (AbortSignal)', () => {
   })
 
   it('rejects a broadcast with an already-aborted signal as aborted without sending it', async () => {
-    const { fetchFn, calls } = makeFetch(() => ({ body: P2MR_TX.txid }))
-    const esplora = new EsploraClient({ baseUrl: BASE, fetchFn })
-    const mempool = new MempoolQbitClient({ baseUrl: BASE, fetchFn })
+    const electrs = createMockEsplora({ backend: 'esplora', baseUrl: BASE })
+    const hosted = createMockEsplora({ backend: 'mempool-qbit', baseUrl: BASE })
+    const esplora = new EsploraClient({ baseUrl: BASE, fetchFn: electrs.fetchFn })
+    const mempool = new MempoolQbitClient({ baseUrl: BASE, fetchFn: hosted.fetchFn })
 
     for (const client of [esplora, mempool]) {
       const error = await client.broadcastTx(P2MR_TX.rawTxHex, { signal: AbortSignal.abort() }).catch(e => e)
       // Nothing was sent, so this is a definite cancellation, not an unknown outcome.
       expect(error).toMatchObject({ kind: 'aborted' })
     }
-    expect(calls).toHaveLength(0)
+    expect([...electrs.requests, ...hosted.requests]).toHaveLength(0)
   })
 
   it.each([
@@ -437,7 +472,12 @@ describe('abortable backoff', () => {
   it('aborting during the default backoff rejects without waiting out the sleep', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
     const controller = new AbortController()
-    const { fetchFn, calls } = makeFetch(() => ({ status: 503, body: 'busy' }))
+    const mock = createMockEsplora({
+      backend: 'esplora',
+      baseUrl: BASE,
+      faults: [{ route: 'GET /address/:address', kind: 'status', status: 503, body: 'busy', times: Infinity }],
+    })
+    const { fetchFn, requests: calls } = mock
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, retryBaseDelayMs: 60_000 })
 
     const outcome = track(client.getAddressStats(ADDR, { signal: controller.signal }))
@@ -456,7 +496,12 @@ describe('abortable backoff', () => {
   it('passes the signal to a custom sleepFn and stops waiting even if it ignores it', async () => {
     const controller = new AbortController()
     const sleepFn = vi.fn((_ms: number, _signal?: AbortSignal) => new Promise<void>(() => {}))
-    const { fetchFn, calls } = makeFetch(() => ({ status: 503, body: 'busy' }))
+    const mock = createMockEsplora({
+      backend: 'esplora',
+      baseUrl: BASE,
+      faults: [{ route: 'GET /address/:address', kind: 'status', status: 503, body: 'busy', times: Infinity }],
+    })
+    const { fetchFn, requests: calls } = mock
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn })
 
     const outcome = track(client.getAddressStats(ADDR, { signal: controller.signal }))
@@ -477,11 +522,10 @@ describe('abortable backoff', () => {
 describe('per-call deadline (deadlineMs)', () => {
   it('rejects a full history scan at the deadline and stops fetching', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    // Each page takes 100 ms and the confirmed chain never ends.
-    const { fetchFn, calls } = makeFetch(
-      (i, url) => new Promise(resolve => setTimeout(() => resolve(endlessEsploraHistory(i, url)), 100))
-    )
-    const client = new EsploraClient({ baseUrl: BASE, fetchFn })
+    // Each page takes 100 ms, and the confirmed chain outlasts the deadline.
+    const mock = longHistory('esplora')
+    const calls = mock.requests
+    const client = new EsploraClient({ baseUrl: BASE, fetchFn: delayed(mock, 100) })
 
     const outcome = track(client.getAddressHistory(ADDR, { deadlineMs: 350 }))
     await vi.advanceTimersByTimeAsync(349)
@@ -515,7 +559,12 @@ describe('per-call deadline (deadlineMs)', () => {
 
   it('covers backoff: a deadline shorter than the backoff rejects at the deadline', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const { fetchFn, calls } = makeFetch(() => ({ status: 503, body: 'busy' }))
+    const mock = createMockEsplora({
+      backend: 'esplora',
+      baseUrl: BASE,
+      faults: [{ route: 'GET /address/:address', kind: 'status', status: 503, body: 'busy', times: Infinity }],
+    })
+    const { fetchFn, requests: calls } = mock
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, retryBaseDelayMs: 1_000 })
 
     const outcome = track(client.getAddressStats(ADDR, { deadlineMs: 500 }))
@@ -529,10 +578,9 @@ describe('per-call deadline (deadlineMs)', () => {
 
   it('still retries transient failures that fit inside the deadline', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const { fetchFn, calls } = makeFetch(i =>
-      i === 0 ? { status: 503, body: 'busy' } : { body: JSON.stringify(STATS) }
-    )
-    const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, retryBaseDelayMs: 100 })
+    const mock = longHistory('esplora', [{ route: 'GET /address/:address', kind: 'status', status: 503, body: 'busy' }])
+    const calls = mock.requests
+    const client = new EsploraClient({ baseUrl: BASE, fetchFn: mock.fetchFn, retries: 2, retryBaseDelayMs: 100 })
 
     const outcome = track(client.getAddressStats(ADDR, { deadlineMs: 1_000 }))
     await vi.advanceTimersByTimeAsync(100)
@@ -543,13 +591,14 @@ describe('per-call deadline (deadlineMs)', () => {
 
   it('covers the mempool-qbit /tx/push broadcast fallback with the same deadline', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const { fetchFn, calls } = makeFetch(
-      (_, url) =>
-        new Promise(resolve =>
-          setTimeout(() => resolve(url.endsWith('/tx') ? { status: 404, body: 'Not Found' } : { body: 'never' }), 600)
-        )
-    )
-    const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn })
+    // Each reply takes 600 ms: /tx declines with a 404, and the deadline fires during /tx/push.
+    const mock = createMockEsplora({
+      backend: 'mempool-qbit',
+      baseUrl: BASE,
+      faults: [{ route: 'POST /tx', kind: 'status', status: 404, body: 'Not Found' }],
+    })
+    const calls = mock.requests
+    const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn: delayed(mock, 600) })
 
     const outcome = track(client.broadcastTx('00', { deadlineMs: 1_000 }))
     await vi.advanceTimersByTimeAsync(999)
@@ -563,8 +612,9 @@ describe('per-call deadline (deadlineMs)', () => {
   it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 31])(
     'rejects an invalid deadlineMs (%s) before any request',
     async deadlineMs => {
-      const { fetchFn, calls } = makeFetch(() => ({ body: JSON.stringify(STATS) }))
-      const client = new EsploraClient({ baseUrl: BASE, fetchFn })
+      const mock = longHistory('esplora')
+      const calls = mock.requests
+      const client = new EsploraClient({ baseUrl: BASE, fetchFn: mock.fetchFn })
 
       await expect(client.getAddressStats(ADDR, { deadlineMs })).rejects.toMatchObject({ kind: 'http' })
       await expect(client.getAddressHistory(ADDR, { deadlineMs })).rejects.toMatchObject({ kind: 'http' })
@@ -767,10 +817,8 @@ describe('body release on abort or deadline', () => {
 
 describe('resource cleanup', () => {
   it('removes its listeners from the caller signal on success, failure, and abort', async () => {
-    const { fetchFn } = makeFetch((i, url) =>
-      url.endsWith('/missing') ? { status: 404, body: 'Not Found' } : endlessEsploraHistory(i, url)
-    )
-    const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 0 })
+    const mock = longHistory('esplora', [{ route: 'GET /tx/:txid', kind: 'status', status: 404, body: 'Not Found' }])
+    const client = new EsploraClient({ baseUrl: BASE, fetchFn: mock.fetchFn, retries: 0 })
     const controller = new AbortController()
     const { signal } = controller
 
@@ -788,8 +836,7 @@ describe('resource cleanup', () => {
 
   it('clears the deadline timer once the call settles', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const { fetchFn } = makeFetch(() => ({ body: JSON.stringify(STATS) }))
-    const client = new EsploraClient({ baseUrl: BASE, fetchFn })
+    const client = new EsploraClient({ baseUrl: BASE, fetchFn: longHistory('esplora').fetchFn })
 
     const outcome = track(client.getAddressStats(ADDR, { deadlineMs: 60_000 }))
     await vi.advanceTimersByTimeAsync(0)

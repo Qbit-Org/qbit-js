@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { EsploraClient, MempoolQbitClient, QbitApiError } from '../src/index'
+import { createMockEsplora, type MockBackend, type MockFault, type MockTx } from '../src/testing'
 
 // getAddressHistory must not return a history the backend cut short as if it
 // were complete. The backend below follows Qbit-Org/qbit-electrs@53102e9:
@@ -16,6 +17,11 @@ import { EsploraClient, MempoolQbitClient, QbitApiError } from '../src/index'
 //     `src/new_index/mempool.rs:280-292`).
 // mempool-qbit in esplora mode, as mempool.qbit.org runs it, passes the combined
 // route and the stats through from that backend unchanged.
+//
+// The testing kit (`createMockEsplora`) serves this model from a fixture that
+// stays the same for the mock's life. Tests whose backend changes between
+// requests (a reorg, an arrival during the scan, a lagging or failover node)
+// keep the hand-written `electrs` model below, which they mutate as they go.
 
 interface MockReply {
   status?: number
@@ -139,6 +145,30 @@ function electrs(state: Node, url: string): MockReply {
   throw new Error(`unexpected url ${url}`)
 }
 
+/** `node(confirmed, mempool)` as a testing-kit fixture: the kit lists the chain by height and the mempool in reverse order, newest first. */
+function fixture(confirmed: number, mempool: number): { state: Node; txs: MockTx[] } {
+  const state = node(confirmed, mempool)
+  const pays = [{ address: ADDR, value: 1 }]
+  const txs: MockTx[] = [
+    ...state.chain.map((id, n) => ({ txid: id, vout: pays, block: { height: confirmed - n } })),
+    ...[...state.mempool].reverse().map(id => ({ txid: id, vout: pays })),
+  ]
+  return { state, txs }
+}
+
+function kit(backend: MockBackend, txs: MockTx[], faults: MockFault[] = []) {
+  const mock = createMockEsplora({ backend, baseUrl: BASE, txs, faults })
+  return { mock, fetchFn: mock.fetchFn, calls: () => mock.requests.map(request => request.url) }
+}
+
+/** What the history of `state` must hold: the rows a mock over `txs` serves for its txids. */
+async function expectedRows(txs: MockTx[], state: Node) {
+  const reference = createMockEsplora({ backend: 'esplora', baseUrl: BASE, txs })
+  const rows = (ids: string[]) =>
+    Promise.all(ids.map(async id => (await reference.fetchFn(`${BASE}/tx/${id}`)).json() as Promise<unknown>))
+  return { confirmed: await rows(state.chain), mempool: await rows(state.mempool) }
+}
+
 function esplora(fetchFn: typeof fetch): EsploraClient {
   return new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep, retries: 0 })
 }
@@ -171,18 +201,17 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 
 describe('EsploraClient.getAddressHistory against the address stats', () => {
   it('returns a history whose counts match unchanged stats, read before and after the scan', async () => {
-    const state = node(60, 50)
-    const { fetchFn, calls } = makeFetch((_i, url) => electrs(state, url))
+    const { state, txs } = fixture(60, 50)
+    const { fetchFn, calls } = kit('esplora', txs)
 
-    await expect(esplora(fetchFn).getAddressHistory(ADDR)).resolves.toEqual(expected(state))
-    expect(calls[0]).toBe(STATS_URL)
-    expect(calls[calls.length - 1]).toBe(STATS_URL)
-    expect(statsReads(calls)).toBe(2)
+    await expect(esplora(fetchFn).getAddressHistory(ADDR)).resolves.toEqual(await expectedRows(txs, state))
+    expect(calls()[0]).toBe(STATS_URL)
+    expect(calls()[calls().length - 1]).toBe(STATS_URL)
+    expect(statsReads(calls())).toBe(2)
   })
 
   it('rejects a mempool list cut at the 50-row cap of /txs/mempool', async () => {
-    const state = node(30, 60)
-    const { fetchFn } = makeFetch((_i, url) => electrs(state, url))
+    const { fetchFn } = kit('esplora', fixture(30, 60).txs)
 
     const error = await esplora(fetchFn)
       .getAddressHistory(ADDR)
@@ -259,10 +288,10 @@ describe('EsploraClient.getAddressHistory against the address stats', () => {
   })
 
   it('replays the first page for an unparseable cursor, which still fails closed', async () => {
-    const state = node(30, 0)
-    const { fetchFn } = makeFetch((_i, url) =>
-      electrs(state, url.replace(/\/txs\/chain\/[0-9a-f]{64}$/, '/txs/chain/not-a-txid'))
-    )
+    const { mock } = kit('esplora', fixture(30, 0).txs)
+    // A backend that receives every cursor mangled ignores it, as qbit-electrs ignores an unparseable one.
+    const fetchFn: typeof fetch = (input, init) =>
+      mock.fetchFn(String(input).replace(/\/txs\/chain\/[0-9a-f]{64}$/, '/txs/chain/not-a-txid'), init)
 
     await expect(esplora(fetchFn).getAddressHistory(ADDR)).rejects.toMatchObject({
       kind: 'invalid_cursor',
@@ -341,28 +370,36 @@ describe('EsploraClient.getAddressHistory against the address stats', () => {
     ['a fractional tx_count', { chain_stats: { tx_count: 1.5 }, mempool_stats: { tx_count: 0 } }],
     ['an unsafe tx_count', { chain_stats: { tx_count: 2 ** 53 }, mempool_stats: { tx_count: 0 } }],
   ])('rejects stats with %s as parse before scanning', async (_name, body) => {
-    const { fetchFn, calls } = makeFetch(() => ({ body: JSON.stringify(body) }))
+    const { fetchFn, calls } = kit(
+      'esplora',
+      [],
+      [{ route: 'GET /address/:address', kind: 'status', status: 200, body: JSON.stringify(body), times: Infinity }]
+    )
 
     await expect(esplora(fetchFn).getAddressHistory(ADDR)).rejects.toMatchObject({
       kind: 'parse',
       message: `esplora address stats lacked a non-negative safe-integer chain or mempool tx_count: ${ADDR}`,
     })
-    expect(calls).toEqual([STATS_URL])
+    expect(calls()).toEqual([STATS_URL])
   })
 
   it('reads the stats in requests of their own, not joined to one already in flight', async () => {
-    const state = node(2, 1)
+    const { state, txs } = fixture(2, 1)
+    const { mock, calls } = kit('esplora', txs)
     const held = deferred()
-    const { fetchFn, calls } = makeFetch(async (i, url) => {
-      if (i === 0) await held.promise
-      return electrs(state, url)
-    })
+    // The first reply is held back until the test releases it.
+    const fetchFn: typeof fetch = async (input, init) => {
+      const first = mock.requests.length === 0
+      const reply = await mock.fetchFn(input, init)
+      if (first) await held.promise
+      return reply
+    }
     const client = esplora(fetchFn)
 
     // A poller's stats request is still waiting for its reply.
     const polled = client.getAddressStats(ADDR)
-    await expect(client.getAddressHistory(ADDR)).resolves.toEqual(expected(state))
-    expect(statsReads(calls)).toBe(3)
+    await expect(client.getAddressHistory(ADDR)).resolves.toEqual(await expectedRows(txs, state))
+    expect(statsReads(calls())).toBe(3)
 
     held.resolve()
     await expect(polled).resolves.toMatchObject({ chain_stats: { tx_count: 2 } })
@@ -395,23 +432,23 @@ describe('MempoolQbitClient.getAddressHistory against the address stats', () => 
     [0, 75],
     [50, 0],
   ])('returns %i mempool and %i confirmed transactions when the counts match', async (mempool, confirmed) => {
-    const state = node(confirmed, mempool)
-    const { fetchFn, calls } = makeFetch((_i, url) => electrs(state, url))
+    const { state, txs } = fixture(confirmed, mempool)
+    const { fetchFn, calls } = kit('mempool-qbit', txs)
 
-    await expect(mempoolQbit(fetchFn).getAddressHistory(ADDR)).resolves.toEqual(expected(state))
-    expect(statsReads(calls)).toBe(2)
+    await expect(mempoolQbit(fetchFn).getAddressHistory(ADDR)).resolves.toEqual(await expectedRows(txs, state))
+    expect(statsReads(calls())).toBe(2)
   })
 
   it.each([50, 100])('rejects losing all confirmed history after %i mempool transactions', async mempool => {
-    const state = node(30, mempool)
-    const { fetchFn, calls } = makeFetch((_i, url) => electrs(state, url))
+    const { state, txs } = fixture(30, mempool)
+    const { fetchFn, calls } = kit('mempool-qbit', txs)
 
     await expect(mempoolQbit(fetchFn).getAddressHistory(ADDR)).rejects.toMatchObject({
       kind: 'invalid_cursor',
       message: `mempool-qbit address history returned 0 confirmed and ${mempool} mempool transactions, but the address stats count 30 and ${mempool}: ${ADDR}`,
     })
     // The page after the last mempool row came back empty.
-    expect(calls[calls.length - 2]).toBe(`${BASE}/address/${ADDR}/txs?after_txid=${state.mempool[mempool - 1]}`)
+    expect(calls()[calls().length - 2]).toBe(`${BASE}/address/${ADDR}/txs?after_txid=${state.mempool[mempool - 1]}`)
   })
 
   it('rejects history cut short by a failover node that still has the cursor in its mempool', async () => {
@@ -487,14 +524,14 @@ describe('MempoolQbitClient.getAddressHistory against the address stats', () => 
 
 describe('MempoolQbitClient.getAddressTxs after a page of mempool rows', () => {
   it('rejects an empty page after the last mempool row while confirmed history exists', async () => {
-    const state = node(30, 50)
-    const { fetchFn, calls } = makeFetch((_i, url) => electrs(state, url))
+    const { state, txs } = fixture(30, 50)
+    const { fetchFn, calls } = kit('mempool-qbit', txs)
 
     await expect(mempoolQbit(fetchFn).getAddressTxs(ADDR)).rejects.toMatchObject({
       kind: 'invalid_cursor',
       message: `mempool-qbit combined history ended after a mempool transaction with 0 of 30 confirmed transactions: ${ADDR}`,
     })
-    expect(calls).toEqual([
+    expect(calls()).toEqual([
       `${BASE}/address/${ADDR}/txs`,
       `${BASE}/address/${ADDR}/txs?after_txid=${state.mempool[49]}`,
       STATS_URL,
@@ -502,26 +539,25 @@ describe('MempoolQbitClient.getAddressTxs after a page of mempool rows', () => {
   })
 
   it('returns no confirmed transactions when the stats count none', async () => {
-    const state = node(0, 50)
-    const { fetchFn, calls } = makeFetch((_i, url) => electrs(state, url))
+    const { fetchFn, calls } = kit('mempool-qbit', fixture(0, 50).txs)
 
     await expect(mempoolQbit(fetchFn).getAddressTxs(ADDR)).resolves.toEqual([])
-    expect(statsReads(calls)).toBe(1)
+    expect(statsReads(calls())).toBe(1)
   })
 
   it('reads no stats when the confirmed rows follow the mempool rows', async () => {
-    const state = node(30, 49)
-    const { fetchFn, calls } = makeFetch((_i, url) => electrs(state, url))
+    const { state, txs } = fixture(30, 49)
+    const { fetchFn, calls } = kit('mempool-qbit', txs)
 
-    await expect(mempoolQbit(fetchFn).getAddressTxs(ADDR)).resolves.toEqual(render(state, state.chain.slice(0, 25)))
-    expect(statsReads(calls)).toBe(0)
+    const { confirmed } = await expectedRows(txs, state)
+    await expect(mempoolQbit(fetchFn).getAddressTxs(ADDR)).resolves.toEqual(confirmed.slice(0, 25))
+    expect(statsReads(calls())).toBe(0)
   })
 
   it('rejects malformed stats as parse', async () => {
-    const state = node(30, 50)
-    const { fetchFn } = makeFetch((_i, url) =>
-      url === STATS_URL ? { body: '{"chain_stats":{},"mempool_stats":{}}' } : electrs(state, url)
-    )
+    const { fetchFn } = kit('mempool-qbit', fixture(30, 50).txs, [
+      { route: 'GET /address/:address', kind: 'status', status: 200, body: '{"chain_stats":{},"mempool_stats":{}}' },
+    ])
 
     await expect(mempoolQbit(fetchFn).getAddressTxs(ADDR)).rejects.toMatchObject({
       kind: 'parse',

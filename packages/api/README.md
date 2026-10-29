@@ -37,7 +37,9 @@ its `package.json` declares no `engines` range. What the repository checks:
   (`lib: ["ES2022"]`, `types: ["node"]`, no DOM lib) and as a browser project
   (`lib: ["ES2022", "DOM"]`, no `@types/node`). It then loads the CommonJS and
   the ESM build side by side in Node.js. The browser project is only
-  type-checked; no test runs in a browser.
+  type-checked; no test runs in a browser. It also resolves `@qbit-oss/api`
+  and `@qbit-oss/api/testing` under `moduleResolution` `node10`, `node16`
+  and `bundler`.
 - `smoke:consumer` installs the packed package into a fresh project with npm and
   imports it by name through both builds in Node.js.
 
@@ -133,6 +135,16 @@ A whole payment, recovering from `unknown_outcome` as below, is in [examples/src
   CommonJS and the ESM build, or two versions, has two `QbitApiError` classes,
   and `instanceof` is false for the other one's errors. Keep a default branch
   for kinds this version does not list. [Resilience](docs/resilience.md)
+
+## Testing
+
+`@qbit-oss/api/testing` is an offline mock of the qbit-electrs and mempool-qbit
+backends for your unit tests. `createMockEsplora` serves every route the
+clients call from a small fixture of transactions, fees and tip, records each
+request, and injects faults: an HTTP status with `Retry-After`, a refused
+connection, a stalled body, and a submission the node accepts, rejects or
+accepts without a reply. Pass its `fetchFn` to a client. It is for tests only;
+see [Testing](docs/testing.md).
 
 ## Topic pages
 

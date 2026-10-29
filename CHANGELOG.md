@@ -39,6 +39,26 @@ breaking changes bump MINOR.
 
 ### @qbit-oss/api
 
+- New `@qbit-oss/api/testing` entry point, for tests only: `createMockEsplora`
+  returns an offline mock of the qbit-electrs or mempool-qbit backend to pass
+  to a client as `fetchFn`. It serves every route `EsploraClient` and
+  `MempoolQbitClient` call from a declarative fixture, answers as the chosen
+  backend does where they differ (an unknown txid's status is
+  `200 {"confirmed":false}` on qbit-electrs and `404` on mempool-qbit), records
+  each request, and injects per-route faults: an HTTP status with
+  `Retry-After`, a refused connection, a stalled body, and a submission that is
+  accepted, rejected with a node code, or accepted with its reply lost. Without
+  a fault, a submission gets qbit Core v1.0.0's verdict from the outputs the
+  fixture and earlier submissions create and spend: `-27` for a transaction in
+  a block while one of its outputs is unspent, `-25` for a spend of an output
+  that is unknown or spent in a block, and `-26` for a conflict with a mempool
+  transaction, which the mock never takes as a replacement. Its options are
+  validated up front, and `null` is refused, not taken as the default. It
+  ships in both builds with type declarations, and imports nothing from the
+  client at runtime. A `testing/package.json` shim points resolvers that
+  ignore `exports` at it: TypeScript's `moduleResolution: "node10"`, Jest
+  before 28, webpack 4 and Metro without package exports. `@qbit-oss/api`
+  itself resolves as before. See [Testing](packages/api/docs/testing.md).
 - The `unknown_outcome` error message ends "may have been accepted; resubmit
   the same hex, and never rebuild the payment with different inputs" (or
   "resubmit the same hex with its { txid }" when no txid is known) instead of

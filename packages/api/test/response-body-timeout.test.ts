@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { EsploraClient, QbitApiError, type RequestOptions } from '../src/index'
+import { createMockEsplora, type MockFault } from '../src/testing'
 
 const BASE = 'https://esplora.example/regtest/api'
 /** BASE as errors show it: the origin, with the base path redacted. */
@@ -12,6 +13,20 @@ const STATS = {
   mempool_stats: { funded_txo_count: 0, funded_txo_sum: 0, spent_txo_count: 0, spent_txo_sum: 0, tx_count: 0 },
 }
 const TXID = 'ab'.repeat(32)
+
+/**
+ * A testing-kit backend whose address stats are STATS. Most tests here keep
+ * `makeFetch` instead: they control a body's chunks and watch its cancellation
+ * and each attempt's signal, which the kit's stall fault does not expose.
+ */
+function statsBackend(faults: MockFault[] = []) {
+  return createMockEsplora({
+    backend: 'esplora',
+    baseUrl: BASE,
+    txs: [{ txid: TXID, vout: [{ address: ADDR, value: 10 }], block: { height: 1 } }],
+    faults,
+  })
+}
 
 const encoder = new TextEncoder()
 const noSleep = () => Promise.resolve()
@@ -354,13 +369,19 @@ describe('EsploraClient response body timeout', () => {
 
   it('still honours Retry-After when a transient body arrives in time', async () => {
     const sleep = vi.fn(noSleep)
-    const { fetchFn, signals } = makeFetch(i =>
-      i === 0 ? { status: 503, headers: { 'retry-after': '3' }, body: 'busy' } : { body: JSON.stringify(STATS) }
-    )
-    const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs: 1_000, retries: 1, sleepFn: sleep })
+    const mock = statsBackend([
+      { route: 'GET /address/:address', kind: 'status', status: 503, retryAfter: 3, body: 'busy' },
+    ])
+    const client = new EsploraClient({
+      baseUrl: BASE,
+      fetchFn: mock.fetchFn,
+      timeoutMs: 1_000,
+      retries: 1,
+      sleepFn: sleep,
+    })
 
     await expect(client.getAddressStats(ADDR)).resolves.toEqual(STATS)
-    expect(signals).toHaveLength(2)
+    expect(mock.requests).toHaveLength(2)
     expect(sleep).toHaveBeenCalledWith(3000, expect.any(AbortSignal))
   })
 
@@ -676,11 +697,11 @@ describe('EsploraClient without a global TextDecoder', () => {
     const saved = Object.getOwnPropertyDescriptor(globalThis, 'TextDecoder')
     Reflect.deleteProperty(globalThis, 'TextDecoder')
     try {
-      const { fetchFn, signals } = makeFetch(() => ({ body: JSON.stringify(STATS) }))
-      const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
+      const mock = statsBackend()
+      const client = new EsploraClient({ baseUrl: BASE, fetchFn: mock.fetchFn, sleepFn: noSleep })
 
       await expect(client.getAddressStats(ADDR)).resolves.toEqual(STATS)
-      expect(signals).toHaveLength(1)
+      expect(mock.requests).toHaveLength(1)
     } finally {
       if (saved) Object.defineProperty(globalThis, 'TextDecoder', saved)
     }

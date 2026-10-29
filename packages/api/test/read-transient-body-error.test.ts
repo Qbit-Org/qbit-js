@@ -16,6 +16,8 @@ function resetBody(): ReadableStream<Uint8Array> {
   })
 }
 
+// Not the testing kit: these bodies fail mid-read, which the kit does not model
+// (its stall fault never ends a body; it does not break one).
 function makeFetch(replies: Array<() => Response>) {
   let calls = 0
   const fetchFn = (async () => {
