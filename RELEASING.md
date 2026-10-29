@@ -99,8 +99,8 @@ and are never moved. Pushing one to `Qbit-Org/qbit-js` publishes that version.
 
 ## Publishing
 
-Nothing has been published yet. The first publish follows the one-time
-setup below.
+Both packages were first published as 0.1.0 on 2026-10-26. Every publish
+needs the one-time setup below to be in place.
 
 `.github/workflows/publish.yml` publishes both packages when a `v*` tag is
 pushed to `Qbit-Org/qbit-js`. Its jobs never run in any other repository,

@@ -72,7 +72,8 @@ validateP2mrSigningPlans({ psbt, keys }) // the plan checks signP2mrPsbt runs be
 Then sign with `signP2mrPsbt({ psbt, keys, sign })`, where `sign` is a
 synchronous callback that returns your PQC signer's 3680-byte signature for the
 sighash it is given. Pass the `psbt` it returns to `finalizeP2mrPsbt`, then
-`extractP2mrTransaction` returns the transaction bytes to broadcast.
+`extractP2mrTransaction` returns the transaction as bytes. `@qbit-oss/api`'s
+`broadcastTx` takes hex, so send `bytesToHex(tx)`.
 See [Signing and finalization](docs/signing-and-finalization.md).
 
 ## Common tasks

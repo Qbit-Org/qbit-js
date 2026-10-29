@@ -44,7 +44,7 @@ breaking changes bump MINOR.
   does, with the same effect on lockfiles and overrides. `@noble/hashes` 1.8.0
   declares `engines` `node: ^14.21.3 || >=16`, where 1.3.0 declared none.
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-10-26)
 
 This is the first release line, and nothing has been published before. Changes
 are listed against the unpublished `0.0.0` development snapshot of both
