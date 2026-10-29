@@ -34,9 +34,7 @@ Prerequisites, setup, CI checks and the change process are in
 
 ```sh
 corepack pnpm install
-corepack pnpm build
-corepack pnpm test
-corepack pnpm typecheck
+corepack pnpm verify
 ```
 
 ## Releases

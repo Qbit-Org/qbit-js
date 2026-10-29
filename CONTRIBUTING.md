@@ -11,26 +11,36 @@ engine" warning on them, and pnpm 11 itself fails to start on Node.js older than
 11), and Corepack runs that exact version. Node.js 25 and later no longer bundle
 Corepack, so on Node.js 26+ install it with `npm install -g corepack`.
 
-CI reads its Node.js major version from `.nvmrc` and runs the newest 22.x;
-`nvm use` selects the newest 22.x you have installed, which must still be
-22.13 or later.
+CI reads its Node.js major version from `.nvmrc` and uses the 22.x release
+available on the runner. With nvm, run `nvm install` rather than `nvm use`: it
+installs the newest 22.x, while `nvm use` can pick an older installed 22.x
+that pnpm 11 refuses to start on (anything below 22.13).
 
 ## Setup
 
 ```sh
-corepack pnpm install
+corepack pnpm install --frozen-lockfile --config.engine-strict=true
 corepack pnpm verify
 ```
 
+Installing with `--frozen-lockfile --config.engine-strict=true` matches CI: it
+fails instead of rewriting the lockfile or only warning about an unsupported
+Node.js version. After changing dependencies, run a plain
+`corepack pnpm install` to update the lockfile.
+
+Package scripts, `verify` included, call `pnpm` themselves. Run
+`corepack enable` once so that plain `pnpm` is the version `packageManager`
+pins. It installs global `pnpm` shims, so it can need write access to the
+directory that holds the `node` binary.
+
 `verify` runs CI's offline checks in CI's order and stops at the first failure:
 `format:check`, `build`, `test`, `typecheck`, `pack:check` and
-`consumer:check`. CI also checks that pnpm matches `packageManager` and
-installs with `--frozen-lockfile --config.engine-strict=true`, which Corepack
-and a clean install cover locally. It runs two network checks that `verify`
-leaves out: `smoke:consumer`, which installs the packed packages with npm and
-resolves their dependencies from the registry, and `fixtures:check`, which
-clones qbit Core and also needs git and Python (see
-`scripts/check-core-fixtures.sh`). Both run locally too, given network access.
+`consumer:check`. CI also checks that pnpm matches `packageManager`, and runs
+two network checks that `verify` leaves out: `smoke:consumer`, which installs
+the packed packages with npm and resolves their dependencies from the
+registry, and `fixtures:check`, which clones qbit Core and also needs git and
+Python (see `scripts/check-core-fixtures.sh`). Both run locally too, given
+network access.
 
 ## CI checks
 
@@ -85,7 +95,9 @@ Prettier skips what `.gitignore` lists and what `.prettierignore` excludes:
 The fixtures in `packages/protocol/fixtures` and `packages/api/test/fixtures`
 are generated, derived or vendored from qbit Core. Do not edit them by hand:
 regenerate or re-vendor them as the
-[conformance playbook](docs/conformance-playbook.md) describes.
+[conformance playbook](docs/conformance-playbook.md) describes. Core's vendored
+vectors in `packages/protocol/fixtures/core/` have their re-vendoring steps in
+[their README](packages/protocol/fixtures/core/README.md), and
 `packages/api/test/fixtures/p2mr-witness-tx.json` records its own derivation
 in `source.method`.
 

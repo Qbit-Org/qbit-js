@@ -8,5 +8,5 @@
 - [ ] User-visible changes have a CHANGELOG.md entry, marked **Breaking:** when
       existing caller code can fail or behave differently.
 - [ ] Docs are updated to match.
-- [ ] Fixtures are untouched, or regenerated from their recorded source (see
-      the Fixtures section of `CONTRIBUTING.md`).
+- [ ] Fixtures are untouched, or regenerated or re-vendored as the Fixtures
+      section of `CONTRIBUTING.md` describes.
