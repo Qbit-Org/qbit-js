@@ -911,8 +911,9 @@ export class EsploraClient {
    *   settings.
    * @throws {@link QbitApiError} `http` when `baseUrl` is missing or not an
    *   accepted URL, or `timeoutMs`, `retries`, `retryBaseDelayMs` or
-   *   `maxRetryAfterMs` is out of range; `network` when `fetchFn` is not a
-   *   function, or is omitted and the global `fetch` is not one.
+   *   `maxRetryAfterMs` is out of range; `network` when `fetchFn` is given and
+   *   is not a function, or when it is omitted (`undefined` or `null`) and the
+   *   global `fetch` is not one.
    *
    * @example
    * ```ts
@@ -2979,9 +2980,11 @@ function unknownOutcomeError(
   options: Omit<QbitApiErrorOptions, 'url' | 'txid'> = {}
 ): QbitApiError {
   const subject = txid === undefined ? 'the transaction' : `txid ${txid}`
+  // Without a known txid an already-known reply cannot resolve, so say how to supply one.
+  const resubmit = txid === undefined ? 'resubmit the same hex with its { txid }' : 'resubmit the same hex'
   return new QbitApiError(
     'unknown_outcome',
-    `transaction submission outcome unknown (${reason}); ${subject} may have been accepted; resubmit the same hex, and never rebuild the payment with different inputs`,
+    `transaction submission outcome unknown (${reason}); ${subject} may have been accepted; ${resubmit}, and never rebuild the payment with different inputs`,
     { ...options, url, ...(txid === undefined ? {} : { txid }) }
   )
 }

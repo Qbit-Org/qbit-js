@@ -10,8 +10,9 @@ on:
 permissions: {}
 
 # A newer push to a pull request cancels the run it supersedes. Runs for pushes
-# to the same branch are serialized and never cancelled: a newer push replaces
-# a run still waiting, so an older push's docs can never overwrite a newer one's.
+# to the same branch run one at a time, and a newer push replaces a run that is
+# still waiting, so a newer push deploys after an older one. Re-running an older
+# run by hand rebuilds and deploys that older commit's docs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
