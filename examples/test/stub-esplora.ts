@@ -37,6 +37,12 @@ export interface StubEsploraOptions {
   confirmedSats?: number
   mempoolSats?: number
   utxos?: EsploraUtxo[]
+  /**
+   * The most `utxos` rows the stub lists (default 500). Above it,
+   * `GET /address/:address/utxo` answers 400, as qbit-electrs does above its
+   * `--utxos-limit`, whose default is 500.
+   */
+  utxosLimit?: number
   /** Height of the chain tip (default 2,000). */
   tipHeight?: number
   /**
@@ -48,8 +54,14 @@ export interface StubEsploraOptions {
   /** The address's transactions, in one page each; the address stats count them. */
   history?: { confirmed: unknown[]; mempool: unknown[] }
   feeEstimates?: Record<string, number>
-  /** One reply per `POST /tx`, in order; later posts are accepted. */
+  /** One reply per `POST /tx`, in order; later posts get `replyFor`'s reply, or are accepted. */
   broadcastReplies?: BroadcastReply[]
+  /**
+   * The reply to a `POST /tx` of `rawTxHex` once `broadcastReplies` are used
+   * up, or undefined to accept it, as a node whose mempool takes some
+   * transactions and refuses others does.
+   */
+  replyFor?: (rawTxHex: string) => BroadcastReply | undefined
   /** Called on each `POST /tx` before it is answered. */
   onBroadcast?: () => void
   /**
@@ -66,6 +78,8 @@ export interface StubEsploraOptions {
   stallReads?: boolean
   /** Leave every `GET /tx/:txid` unanswered until the client aborts it. */
   stallLookups?: boolean
+  /** Answer each `GET /tx/:txid` only after this many ms, unless the client aborts it first. */
+  lookupDelayMs?: number
 }
 
 export interface StubEsplora {
@@ -115,7 +129,16 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
         mempool_stats: stats(options.mempoolSats ?? 0, history.mempool.length),
       })
     }
-    if (method === 'GET' && path === `/address/${address}/utxo`) return json(options.utxos ?? [])
+    if (method === 'GET' && path === `/address/${address}/utxo`) {
+      const utxos = options.utxos ?? []
+      const limit = options.utxosLimit ?? 500
+      if (utxos.length > limit) {
+        return new Response(`Too many unspent transaction outputs (>${limit}). Contact support to raise limits.`, {
+          status: 400,
+        })
+      }
+      return json(utxos)
+    }
     if (method === 'GET' && path === `/address/${address}/txs/mempool`) return json(history.mempool)
     if (method === 'GET' && path === `/address/${address}/txs/chain`) return json(history.confirmed)
     if (method === 'GET' && path.startsWith(`/address/${address}/txs/chain/`)) return json([]) // after the one page
@@ -128,8 +151,15 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
       // 200 {"confirmed":false}, the same as a transaction in its mempool.
       return json(known.get(status[1]!) ?? { confirmed: false })
     }
+    const hexLookup = /^\/tx\/([0-9a-f]{64})\/hex$/.exec(path)
+    if (method === 'GET' && hexLookup) {
+      // The hex of a transaction the node has, as POSTed.
+      const hex = known.has(hexLookup[1]!) ? broadcasts.find(hex => txidFromRawTx(hex) === hexLookup[1]) : undefined
+      return hex === undefined ? txNotFound() : new Response(hex)
+    }
     const lookup = /^\/tx\/([0-9a-f]{64})$/.exec(path)
     if (method === 'GET' && lookup) {
+      if (options.lookupDelayMs !== undefined && signal) await answerAfter(options.lookupDelayMs, signal)
       if (options.lookupReply) return json(options.lookupReply(lookup[1]!))
       const tx = known.get(lookup[1]!)
       if (tx === undefined) return fundingTx(lookup[1]!) ?? txNotFound()
@@ -145,7 +175,7 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
       broadcasts.push(hex)
       options.onBroadcast?.()
       const txid = txidFromRawTx(hex)
-      switch (replies.shift() ?? 'accept') {
+      switch (replies.shift() ?? options.replyFor?.(hex) ?? 'accept') {
         case 'accept':
           if (!known.has(txid)) known.set(txid, { confirmed: false })
           return new Response(txid)
@@ -182,6 +212,17 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
   }
 
   return { fetchFn, requests, broadcasts, known }
+}
+
+/** Resolves after `ms`, or rejects with `signal`'s reason if it aborts first. */
+function answerAfter(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    })
+  })
 }
 
 /** A reply that never comes: the request fails only when `signal` aborts. */
