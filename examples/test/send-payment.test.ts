@@ -30,6 +30,7 @@ import {
   abandonPendingPayment,
   AbandonPaymentError,
   reconcileBroadcast,
+  replacePendingPayment,
   sendPayment,
   SendPaymentError,
   type AbandonPaymentErrorCode,
@@ -104,7 +105,9 @@ beforeAll(async () => {
 
 /**
  * A store in memory. It writes a transaction's txid and hex as one Map entry,
- * and drops only the record whose txid it is given, as `PaymentStore` asks.
+ * swaps the record for another in one synchronous step, only while its txid
+ * is the one it is given, and drops only the record whose txid it is given,
+ * as `PaymentStore` asks.
  */
 function memoryStore(onReserve?: () => void) {
   const reservations: string[] = []
@@ -117,6 +120,12 @@ function memoryStore(onReserve?: () => void) {
     },
     saveSignature: record => void signatures.push(record),
     saveTransaction: (txid, rawTxHex) => void pending.set(txid, rawTxHex),
+    replaceTransaction: (oldTxid, { txid, rawTxHex }) => {
+      const [entry] = pending
+      if (entry?.[0] !== oldTxid) throw new Error(`test: transaction ${oldTxid} is not the pending one`)
+      pending.delete(oldTxid)
+      pending.set(txid, rawTxHex)
+    },
     dropTransaction: txid => void pending.delete(txid),
     pendingTransaction: () => {
       const [entry] = pending
@@ -194,6 +203,8 @@ const confirmedAt = (blockHeight: number, txid: string, value: number, vout = 0)
 const confirmed = (txid: string, value: number) => confirmedAt(100, txid, value)
 /** An output 10 blocks deep, so the payment looks up its funding transaction first. */
 const young = (txid: string, value: number, vout = 0) => confirmedAt(1_991, txid, value, vout)
+/** A deposit the first test's transaction does not spend, which pays AMOUNT_SATS and its fee alone. */
+const DEPOSIT = confirmed('d4'.repeat(32), 200_000)
 
 /** A client that hands broadcastTx a txid that does not match the hex, which it refuses with a TypeError before sending. */
 class MismatchedTxidClient extends EsploraClient {
@@ -321,11 +332,12 @@ const NOT_THE_TRANSACTION: [string, unknown][] = [
 ]
 /** A lookup reply that names `txid` in uppercase, which is still that transaction. */
 const upperCaseReply = (txid: string) => ({ txid: txid.toUpperCase(), status: { confirmed: false } })
-/** The unsigned transaction spending `spent` to `outputs`, as the example builds it, as hex. */
-function unsignedTxHex(spent: EsploraUtxo[], outputs: { value: bigint; scriptPubKey: Uint8Array }[]): string {
+type TxOutputs = { value: bigint; scriptPubKey: Uint8Array }[]
+/** The unsigned PSBT spending the sender's outputs `spent` to `outputs`, as the example builds it. */
+function unsignedPsbt(spent: EsploraUtxo[], outputs: TxOutputs) {
   const scriptPubKey = addressToScriptPubKey(from, 'regtest')
   const leafScript = singleKeyLeafScript(key.pk32)
-  const psbt = createP2mrPsbt({
+  return createP2mrPsbt({
     inputs: spent.map(utxo => ({
       prevout: { txid: hexToBytes(utxo.txid).reverse(), vout: utxo.vout },
       witnessUtxo: { value: BigInt(utxo.value), scriptPubKey },
@@ -334,11 +346,40 @@ function unsignedTxHex(spent: EsploraUtxo[], outputs: { value: bigint; scriptPub
     })),
     outputs,
   })
-  return bytesToHex(psbt.global.find(entry => entry.key[0] === PSBT_GLOBAL_UNSIGNED_TX)!.value)
+}
+/** The unsigned transaction spending `spent` to `outputs`, as the example builds it, as hex. */
+function unsignedTxHex(spent: EsploraUtxo[], outputs: TxOutputs): string {
+  return bytesToHex(unsignedPsbt(spent, outputs).global.find(entry => entry.key[0] === PSBT_GLOBAL_UNSIGNED_TX)!.value)
 }
 /** The txid of the unsigned transaction spending `spent` to `outputs`, as the example builds it. */
-const unsignedTxid = (spent: EsploraUtxo[], outputs: { value: bigint; scriptPubKey: Uint8Array }[]) =>
-  txidFromRawTx(unsignedTxHex(spent, outputs))
+const unsignedTxid = (spent: EsploraUtxo[], outputs: TxOutputs) => txidFromRawTx(unsignedTxHex(spent, outputs))
+/**
+ * The signed transaction spending `spent` to `outputs`, as a wallet signs the
+ * replacement of a stuck payment: as `sendPayment` signs, each signature
+ * reserved and saved through `store`, with the replacement's txid.
+ */
+async function signedTx(spent: EsploraUtxo[], outputs: TxOutputs, store: PaymentStore): Promise<string> {
+  const psbt = unsignedPsbt(spent, outputs)
+  const txid = unsignedTxid(spent, outputs)
+  const leafHash = p2mrLeafHash(P2MR_LEAF_VERSION_V1, singleKeyLeafScript(key.pk32))
+  const pqc = await init()
+  const signed = signP2mrPsbt({
+    psbt,
+    keys: spent.map((_, inputIndex) => ({ inputIndex, pubkey: key.pk32, leafHash })),
+    sign: sighash => {
+      store.reserveSignature(key.pk32)
+      return pqc.sign(key.sk64, sighash)
+    },
+    onSigned: ({ field, ...plan }) => store.saveSignature({ txid, ...plan, key: field.key, value: field.value }),
+  })
+  return bytesToHex(extractP2mrTransaction(finalizeP2mrPsbt(signed.psbt)))
+}
+/** The first test's payment alone: the output of its fee bump, whose fee takes the change, 20,000 sats on 7,581 bytes. */
+const bumpOutputs = (): TxOutputs => [{ value: AMOUNT_SATS, scriptPubKey: addressToScriptPubKey(to, 'regtest') }]
+/** Its two inputs back to the sender, less 4 sat/vB on 7,581 bytes: a cancel, which pays no one. */
+const cancelOutputs = (): TxOutputs => [
+  { value: 130_000n - 4n * 7_581n, scriptPubKey: addressToScriptPubKey(from, 'regtest') },
+]
 /** Turns the record of transaction `tx` into one a corrupt store might return. */
 type Damage = (tx: { txid: string; rawTxHex: string }) => { txid?: unknown; rawTxHex?: unknown }
 /**
@@ -397,9 +438,13 @@ function foreignAbortController(): { signal: AbortSignal; abort(reason: unknown)
 describe('send-payment example', () => {
   let paid: ReturnType<typeof setUp> & { txid: string; rawTxHex: string }
 
+  /** A fee bump of the first test's transaction, signed: its two inputs, to `bumpOutputs()`. */
+  let bump: string
+
   beforeAll(async () => {
     const setup = setUp()
     paid = { ...setup, ...(await setup.send()) }
+    bump = await signedTx(UTXOS.slice(0, 2), bumpOutputs(), memoryStore().store)
   })
 
   it('builds, signs, finalizes and broadcasts the payment', async () => {
@@ -662,7 +707,7 @@ describe('send-payment example', () => {
   })
 
   it.each(CORRUPT_RECORDS)(
-    'reports a pending record with %s as corrupt_pending from sendPayment, reconcileBroadcast and abandonPendingPayment, before any request',
+    'reports a pending record with %s as corrupt_pending from sendPayment, reconcileBroadcast, abandonPendingPayment and replacePendingPayment, before any request',
     async (_, corrupt) => {
       // `pending` would point the wallet at a record reconcileBroadcast cannot
       // settle, and `not_pending` or `invalid_options` at nothing pending.
@@ -683,7 +728,7 @@ describe('send-payment example', () => {
       expect(codeOf(unsettled)).toBe('corrupt_pending')
       expect(unsettled instanceof SendPaymentError && unsettled.txid).toBe(recordTxid)
 
-      // Whatever txid the wallet asks it to release: the payment's, the record's, or another.
+      // Whatever txid the wallet gives it: the payment's, the record's, or another.
       for (const txid of new Set([paid.txid, recordTxid ?? paid.txid, 'ab'.repeat(32)])) {
         const kept = await caught(
           abandonPendingPayment({
@@ -699,6 +744,21 @@ describe('send-payment example', () => {
         expect(abandonCodeOf(kept), txid).toBe('corrupt_pending')
         expect(kept instanceof AbandonPaymentError && kept.txid, txid).toBe(txid)
         expect(kept instanceof Error && kept.message, txid).toContain('never repair it in place')
+
+        // Nor is it swapped for a replacement, whatever the replacement spends.
+        const unswapped = await caught(
+          replacePendingPayment({
+            client,
+            store,
+            txid,
+            rawTxHex: bump,
+            deadlineMs: 5_000,
+            signal: new AbortController().signal,
+          })
+        )
+
+        expect(abandonCodeOf(unswapped), txid).toBe('corrupt_pending')
+        expect(unswapped instanceof AbandonPaymentError && unswapped.txid, txid).toBe(txid)
       }
       expect(esplora.requests).toEqual([])
       expect(reservations).toEqual([])
@@ -1861,20 +1921,72 @@ describe('send-payment example', () => {
     expect(reservations).toEqual([])
   })
 
-  it('abandons a transaction no node will take any more, and returns the inputs a fee bump must spend', async () => {
+  /**
+   * A store holding the first test's transaction as pending, with `rawTxHex`
+   * as its hex, and a backend that has never seen it: a payment no node will
+   * take any more. `send` pays with that store, through a client of its own,
+   * so that hooks in `Client` see only the abandon and replace sequence.
+   */
+  function stuck(options: Omit<StubEsploraOptions, 'address'> = {}, rawTxHex = paid.rawTxHex, Client = EsploraClient) {
+    const { store, pending } = memoryStore()
+    store.saveTransaction(paid.txid, rawTxHex)
+    const esplora = stubEsplora({ address: from, utxos: UTXOS, ...options })
+    const client = new Client({ baseUrl: BASE_URL, fetchFn: esplora.fetchFn })
+    const abandon = (overrides: Partial<Parameters<typeof abandonPendingPayment>[0]> = {}) =>
+      abandonPendingPayment({
+        client,
+        address: from,
+        store,
+        txid: paid.txid,
+        deadlineMs: 5_000,
+        signal: new AbortController().signal,
+        ...overrides,
+      })
+    const replace = (overrides: Partial<Parameters<typeof replacePendingPayment>[0]> = {}) =>
+      replacePendingPayment({
+        client,
+        store,
+        txid: paid.txid,
+        rawTxHex: bump,
+        deadlineMs: 5_000,
+        signal: new AbortController().signal,
+        pollMs: 1,
+        ...overrides,
+      })
+    const sendClient = new EsploraClient({ baseUrl: BASE_URL, fetchFn: esplora.fetchFn })
+    const send = () =>
+      sendPayment({
+        client: sendClient,
+        key,
+        to,
+        amountSats: AMOUNT_SATS,
+        feeRate: FEE_RATE,
+        store,
+        deadlineMs: 20_000,
+        signal: new AbortController().signal,
+        pollMs: 1,
+      })
+    return { esplora, client, store, pending, abandon, replace, send }
+  }
+
+  it('proves a transaction no node will take any more stuck, keeps it pending, and swaps it for a fee bump of its inputs', async () => {
     // The node accepts the payment, later evicts it from its mempool, and then
     // refuses every resubmission because its mempool asks a higher fee.
+    const evicted = new Set<string>()
+    const pendingAtEachPost: (string | undefined)[] = []
     const { esplora, client, send, store, pending } = setUp({
-      broadcastReplies: ['accept', ...Array<BroadcastReply>(1_000).fill('reject, fee too low')],
+      replyFor: rawTxHex => (evicted.has(rawTxHex) ? 'reject, fee too low' : undefined),
+      onBroadcast: () => void pendingAtEachPost.push(store.pendingTransaction()?.txid),
     })
     const { txid, rawTxHex } = await send()
     esplora.known.delete(txid)
+    evicted.add(rawTxHex)
     const unsettled = await caught(reconcileBroadcast(client, { txid, rawTxHex }, reconcileOptions(200)))
     expect(QbitApiError.is(unsettled) && unsettled.kind).toBe('unknown_outcome')
     expect(codeOf(await caught(send()))).toBe('pending') // stuck until the wallet acts
     const sent = esplora.broadcasts.length
 
-    const inputs = await abandonPendingPayment({
+    const proof = await abandonPendingPayment({
       client,
       address: from,
       store,
@@ -1883,38 +1995,363 @@ describe('send-payment example', () => {
       signal: new AbortController().signal,
     })
 
-    expect(inputs).toEqual(UTXOS.slice(0, 2)) // the outputs the transaction spent, in its input order
-    expect(pending.size).toBe(0)
-    expect(esplora.broadcasts).toHaveLength(sent) // abandoning sends nothing
+    // The outputs the transaction spends, in its input order, and its record,
+    // which stays pending: no payment from other outputs can start.
+    expect(proof).toEqual({ pending: { txid, rawTxHex }, inputs: UTXOS.slice(0, 2) })
+    expect([...pending]).toEqual([[txid, rawTxHex]])
+    expect(esplora.broadcasts).toHaveLength(sent) // proving sends nothing
+    expect(codeOf(await caught(send()))).toBe('pending')
+
+    // The wallet signs a fee bump of exactly those outputs, and swaps it in.
+    const replaced = await replacePendingPayment({
+      client,
+      store,
+      txid,
+      rawTxHex: bump,
+      deadlineMs: 5_000,
+      signal: new AbortController().signal,
+      pollMs: 1,
+    })
+
+    expect(replaced).toEqual({ txid: txidFromRawTx(bump), rawTxHex: bump })
+    expect([...pending]).toEqual([[replaced.txid, bump]])
+    expect(esplora.broadcasts.slice(sent)).toEqual([bump])
+    expect(pendingAtEachPost.slice(sent)).toEqual([replaced.txid]) // sent only once it was pending
+    expect(esplora.known.has(replaced.txid)).toBe(true)
+  })
+
+  it('refuses a payment from other outputs while a stuck one is replaced, which could otherwise pay twice', async () => {
+    // With nothing pending, as the store was once the stuck transaction was
+    // released and before its replacement was saved, the next payment spends
+    // the deposit alone: nothing it spends conflicts with the stuck
+    // transaction, so both could confirm.
+    const { tx } = await plannedTransaction({ utxos: [...UTXOS, DEPOSIT] })
+    expect(outpointsOf(tx)).toEqual([`${DEPOSIT.txid}:0`])
+
+    // The stuck transaction stays pending until its replacement takes its
+    // place, so the same payment, started once the proof resolves or after a
+    // crash there, is refused before it scans.
+    const { esplora, pending, abandon, replace, send } = stuck({ utxos: [...UTXOS, DEPOSIT] })
+    await abandon()
+    const refused = await caught(send())
+
+    expect(codeOf(refused)).toBe('pending')
+    expect(refused instanceof SendPaymentError && refused.txid).toBe(paid.txid)
+
+    const { txid } = await replace()
+    const stillRefused = await caught(send())
+
+    expect(codeOf(stillRefused)).toBe('pending')
+    expect(stillRefused instanceof SendPaymentError && stillRefused.txid).toBe(txid)
+    expect(count(esplora.requests, '/utxo')).toBe(1) // abandonPendingPayment's
+    expect(esplora.broadcasts).toEqual([bump]) // only the replacement, which conflicts with the stuck transaction
+    expect([...pending]).toEqual([[txid, bump]])
+  })
+
+  it('refuses a concurrent sendPayment at every step from the proof to the replacement, which is pending from the swap on', async () => {
+    // Each step starts a payment the deposit could pay for alone.
+    const attempts: { step: string; outcome: Promise<unknown> }[] = []
+    let attempt = (step: string) => void step
+    class AttemptingClient extends EsploraClient {
+      override getTx(...args: Parameters<EsploraClient['getTx']>): ReturnType<EsploraClient['getTx']> {
+        attempt('while the indexer is asked for the stuck transaction')
+        return super.getTx(...args)
+      }
+
+      override getAddressUtxos(...args: Parameters<EsploraClient['getAddressUtxos']>): Promise<EsploraUtxo[]> {
+        attempt("while the address's unspent outputs are listed")
+        return super.getAddressUtxos(...args)
+      }
+
+      override broadcastTx(...args: Parameters<EsploraClient['broadcastTx']>): Promise<string> {
+        attempt('while the replacement is sent')
+        return super.broadcastTx(...args)
+      }
+    }
+    const { esplora, store, pending, abandon, replace, send } = stuck(
+      { utxos: [...UTXOS, DEPOSIT] },
+      paid.rawTxHex,
+      AttemptingClient
+    )
+    attempt = step => void attempts.push({ step, outcome: caught(send()) })
+    const swap = store.replaceTransaction
+    store.replaceTransaction = (oldTxid, record) => {
+      attempt('right before the swap')
+      swap(oldTxid, record)
+      attempt('right after the swap')
+    }
+
+    await abandon()
+    attempt('once the proof resolves, while the wallet signs the replacement')
+    const { txid } = await replace()
+    attempt('once the replacement is sent')
+
+    for (const [index, { step, outcome }] of attempts.entries()) {
+      const error = await outcome
+      expect(codeOf(error), step).toBe('pending')
+      expect(error instanceof SendPaymentError && error.txid, step).toBe(index < 4 ? paid.txid : txid)
+    }
+    expect(attempts.map(({ step }) => step)).toEqual([
+      'while the indexer is asked for the stuck transaction',
+      "while the address's unspent outputs are listed",
+      'once the proof resolves, while the wallet signs the replacement',
+      'right before the swap',
+      'right after the swap',
+      'while the replacement is sent',
+      'once the replacement is sent',
+    ])
+    expect(count(esplora.requests, '/utxo')).toBe(1) // none of them scanned
+    expect(esplora.broadcasts).toEqual([bump])
+    expect([...pending]).toEqual([[txid, bump]])
+  })
+
+  it('leaves the stuck transaction or its replacement pending, never neither, wherever it crashes, and ends as it would have', async () => {
+    const crash = new Error('test: crash')
+    const crashed = (error: unknown) => error === crash || (P2mrPsbtSigningError.is(error) && error.cause === crash)
+    const bumpTxid = txidFromRawTx(bump)
+    for (const step of [
+      'the lookup',
+      'the scan',
+      'signing the replacement',
+      'the swap, before it writes',
+      'the swap, once it has written',
+    ]) {
+      // Throws `crash` the first time the sequence reaches `step`.
+      let armed: string | undefined = step
+      const strike = (at: string) => {
+        if (armed !== at) return
+        armed = undefined
+        throw crash
+      }
+      class CrashingClient extends EsploraClient {
+        override getTx(...args: Parameters<EsploraClient['getTx']>): ReturnType<EsploraClient['getTx']> {
+          strike('the lookup')
+          return super.getTx(...args)
+        }
+
+        override getAddressUtxos(...args: Parameters<EsploraClient['getAddressUtxos']>): Promise<EsploraUtxo[]> {
+          strike('the scan')
+          return super.getAddressUtxos(...args)
+        }
+      }
+      const { esplora, client, store, pending, abandon, replace } = stuck({}, paid.rawTxHex, CrashingClient)
+      const swap = store.replaceTransaction
+      store.replaceTransaction = (oldTxid, record) => {
+        strike('the swap, before it writes')
+        swap(oldTxid, record)
+        strike('the swap, once it has written')
+      }
+      // The wallet's sequence: prove, sign the replacement, swap it in and send it.
+      const sequence = async () => {
+        const proof = await abandon()
+        const rawTxHex =
+          armed === 'signing the replacement'
+            ? await signedTx(proof.inputs, bumpOutputs(), { ...store, reserveSignature: () => strike(step) })
+            : bump
+        return replace({ rawTxHex })
+      }
+
+      const error = await caught(sequence())
+
+      expect(crashed(error), step).toBe(true)
+      const swapped = step === 'the swap, once it has written'
+      expect([...pending], step).toEqual([swapped ? [bumpTxid, bump] : [paid.txid, paid.rawTxHex]])
+      expect(esplora.broadcasts, step).toEqual([])
+
+      // After a restart, proving again is safe and changes nothing, and the
+      // wallet settles whichever is pending, as after any crash.
+      if (swapped) {
+        expect(abandonCodeOf(await caught(abandon())), step).toBe('not_pending') // the replacement is pending instead
+        await reconcileBroadcast(client, store.pendingTransaction()!, reconcileOptions(5_000))
+      } else {
+        expect(await abandon(), step).toEqual({
+          pending: { txid: paid.txid, rawTxHex: paid.rawTxHex },
+          inputs: UTXOS.slice(0, 2),
+        })
+        expect([...pending], step).toEqual([[paid.txid, paid.rawTxHex]])
+        await replace()
+      }
+      expect([...pending], step).toEqual([[bumpTxid, bump]])
+      expect(esplora.broadcasts, step).toEqual([bump])
+      expect(esplora.known.has(bumpTxid), step).toBe(true)
+    }
+  })
+
+  it('swaps a record only while it holds the stuck transaction, and sends no replacement it did not swap in', async () => {
+    // Another call, or another device sharing the store, has replaced the
+    // stuck transaction with one of its own.
+    const outputs = [...bumpOutputs(), { value: 3_000n, scriptPubKey: addressToScriptPubKey(from, 'regtest') }]
+    const theirs = {
+      txid: unsignedTxid(UTXOS.slice(0, 2), outputs),
+      rawTxHex: unsignedTxHex(UTXOS.slice(0, 2), outputs),
+    }
+
+    // Before the call: refused as not_pending.
+    const before = stuck()
+    before.store.replaceTransaction(paid.txid, theirs)
+
+    expect(abandonCodeOf(await caught(before.replace()))).toBe('not_pending')
+    expect([...before.pending]).toEqual([[theirs.txid, theirs.rawTxHex]])
+    expect(before.esplora.requests).toEqual([])
+
+    // Between its check and its write, which only the store's compare-and-set can see.
+    const during = stuck()
+    const swap = during.store.replaceTransaction
+    during.store.replaceTransaction = (oldTxid, record) => {
+      swap(paid.txid, theirs)
+      swap(oldTxid, record)
+    }
+    const refused = await caught(during.replace())
+
+    expect(refused instanceof Error && refused.message).toBe(`test: transaction ${paid.txid} is not the pending one`)
+    expect([...during.pending]).toEqual([[theirs.txid, theirs.rawTxHex]])
+    expect(during.esplora.requests).toEqual([])
+
+    // The store itself refuses a txid that is not the pending one's, and
+    // writes the replacement's txid and hex together.
+    const { store, pending } = memoryStore()
+    expect(() => store.replaceTransaction(paid.txid, theirs)).toThrow('is not the pending one') // nothing pending
+    store.saveTransaction(paid.txid, paid.rawTxHex)
+    expect(() => store.replaceTransaction(theirs.txid, { txid: paid.txid, rawTxHex: bump })).toThrow(
+      'is not the pending one'
+    )
+    expect([...pending]).toEqual([[paid.txid, paid.rawTxHex]])
+    store.replaceTransaction(paid.txid, theirs)
+    expect([...pending]).toEqual([[theirs.txid, theirs.rawTxHex]])
+  })
+
+  it.each<[string, BroadcastReply]>([
+    ['for a conflict', 'reject'],
+    ['for a fee too low', 'reject, fee too low'],
+  ])('keeps the replacement pending when the node refuses it %s, unlike sendPayment', async (_, reply) => {
+    const { esplora, pending, replace } = stuck({ broadcastReplies: [reply] })
+
+    const error = await caught(replace())
+
+    expect(QbitApiError.is(error) && error.kind).toBe('http')
+    expect([...pending]).toEqual([[txidFromRawTx(bump), bump]])
+    expect(esplora.broadcasts).toEqual([bump])
+  })
+
+  it('keeps the replacement pending on a TypeError, and reconciles an unknown outcome as sendPayment does', async () => {
+    const mismatched = stuck({}, paid.rawTxHex, MismatchedTxidClient)
+
+    expect(await caught(mismatched.replace())).toBeInstanceOf(TypeError)
+    expect([...mismatched.pending]).toEqual([[txidFromRawTx(bump), bump]])
+    expect(mismatched.esplora.broadcasts).toEqual([])
+
+    // The first POST never reaches the node: three not_found lookups, then the same hex again.
+    const lost = stuck({ broadcastReplies: ['lost'] })
+
+    expect(await lost.replace()).toEqual({ txid: txidFromRawTx(bump), rawTxHex: bump })
+    expect(lookups(lost.esplora.requests)).toBe(3)
+    expect(lost.esplora.broadcasts).toEqual([bump, bump])
+    expect([...lost.pending]).toEqual([[txidFromRawTx(bump), bump]])
+  })
+
+  it('takes a replacement that spends the same outputs in another order', async () => {
+    const reordered = unsignedTxHex([UTXOS[1]!, UTXOS[0]!], bumpOutputs())
+    const { esplora, pending, replace } = stuck()
+
+    const { txid } = await replace({ rawTxHex: reordered })
+
+    expect(txid).toBe(txidFromRawTx(reordered))
+    expect([...pending]).toEqual([[txid, reordered]])
+    expect(esplora.broadcasts).toEqual([reordered])
+  })
+
+  it('gives a stuck payment up only by swapping in a cancel, never through an empty store, and pays again once the cancel confirms', async () => {
+    // The backend lists what the store holds at each step of the sequence.
+    const pendingAtEachStep: (string | undefined)[] = []
+    let note = () => {}
+    class NotingClient extends EsploraClient {
+      override getTx(...args: Parameters<EsploraClient['getTx']>): ReturnType<EsploraClient['getTx']> {
+        note()
+        return super.getTx(...args)
+      }
+
+      override getAddressUtxos(...args: Parameters<EsploraClient['getAddressUtxos']>): Promise<EsploraUtxo[]> {
+        note()
+        return super.getAddressUtxos(...args)
+      }
+
+      override broadcastTx(...args: Parameters<EsploraClient['broadcastTx']>): Promise<string> {
+        note()
+        return super.broadcastTx(...args)
+      }
+    }
+    const utxos = [...UTXOS, DEPOSIT]
+    const { esplora, client, store, pending, abandon, replace, send } = stuck({ utxos }, paid.rawTxHex, NotingClient)
+    note = () => void pendingAtEachStep.push(store.pendingTransaction()?.txid)
+    const swap = store.replaceTransaction
+    store.replaceTransaction = (oldTxid, record) => {
+      note()
+      swap(oldTxid, record)
+      note()
+    }
+
+    const proof = await abandon()
+    note()
+    // Every input back to the sender, less the fee: it pays no one.
+    const cancel = await signedTx(proof.inputs, cancelOutputs(), {
+      ...store,
+      reserveSignature: pubkey => {
+        note()
+        store.reserveSignature(pubkey)
+      },
+    })
+    const { txid } = await replace({ rawTxHex: cancel })
+    note()
+
+    // Lookup, scan, proof, two signatures, swap, POST, and once it is sent.
+    expect(pendingAtEachStep).not.toContain(undefined)
+    expect(pendingAtEachStep).toEqual([...Array<string>(6).fill(paid.txid), ...Array<string>(3).fill(txid)])
+    expect([...pending]).toEqual([[txid, cancel]])
+    expect(esplora.broadcasts).toEqual([cancel])
+    expect(codeOf(await caught(send()))).toBe('pending') // until the cancel, or the stuck transaction, confirms
+
+    // The cancel confirms, so the payment was not made: the wallet clears it,
+    // as PaymentStore says, and may pay again, here from the deposit.
+    esplora.known.set(txid, { confirmed: true })
+    utxos.splice(0, utxos.length, DEPOSIT, confirmedAt(2_000, txid, Number(cancelOutputs()[0]!.value)))
+    await reconcileBroadcast(client, store.pendingTransaction()!, reconcileOptions(5_000))
+    expect(await client.getTxStatus(txid)).toEqual({ confirmed: true })
+    store.dropTransaction(txid)
+    const again = await send()
+
+    expect([...pending]).toEqual([[again.txid, again.rawTxHex]])
+    expect(esplora.broadcasts).toEqual([cancel, again.rawTxHex])
+  })
+
+  it('keeps a cancel pending, and pays nothing more, when the stuck transaction confirms instead', async () => {
+    const utxos = [...UTXOS, DEPOSIT]
+    const { esplora, client, store, pending, abandon, replace, send } = stuck({ utxos, replyFor: () => 'reject' })
+    const proof = await abandon()
+    const cancel = await signedTx(proof.inputs, cancelOutputs(), store)
+    // The cancel reaches the node, which refuses it: a peer has relayed the
+    // stuck transaction to it again, though the indexer has not seen it yet.
+    const refused = await caught(replace({ rawTxHex: cancel }))
+    expect(QbitApiError.is(refused) && refused.kind).toBe('http')
+    const cancelTxid = txidFromRawTx(cancel)
+    expect([...pending]).toEqual([[cancelTxid, cancel]])
+
+    // Then the stuck transaction confirms, spending the outputs the cancel
+    // spends: the payment was made, and the cancel can no longer confirm.
+    esplora.known.set(paid.txid, { confirmed: true })
+    utxos.splice(0, utxos.length, DEPOSIT)
+
+    // Nothing in the example settles the cancel or releases it: it stays
+    // pending, and no payment starts, until the wallet finds the stuck
+    // transaction confirmed, counts the payment as made, and clears the cancel.
+    const unsettled = await caught(reconcileBroadcast(client, store.pendingTransaction()!, reconcileOptions(200)))
+    expect(QbitApiError.is(unsettled) && unsettled.kind).toBe('unknown_outcome')
+    expect(abandonCodeOf(await caught(abandon({ txid: cancelTxid })))).toBe('inputs_spent')
+    expect(codeOf(await caught(send()))).toBe('pending')
+    expect([...pending]).toEqual([[cancelTxid, cancel]])
+    expect(new Set(esplora.broadcasts)).toEqual(new Set([cancel])) // the cancel alone, never another payment
   })
 
   describe('refuses to abandon a transaction', () => {
-    /**
-     * A store holding the first test's transaction as pending, with `rawTxHex`
-     * as its hex, and a backend that has never seen it.
-     */
-    function stuck(
-      options: Omit<StubEsploraOptions, 'address'> = {},
-      rawTxHex = paid.rawTxHex,
-      Client = EsploraClient
-    ) {
-      const { store, pending } = memoryStore()
-      store.saveTransaction(paid.txid, rawTxHex)
-      const esplora = stubEsplora({ address: from, utxos: UTXOS, ...options })
-      const client = new Client({ baseUrl: BASE_URL, fetchFn: esplora.fetchFn })
-      const abandon = (overrides: Partial<Parameters<typeof abandonPendingPayment>[0]> = {}) =>
-        abandonPendingPayment({
-          client,
-          address: from,
-          store,
-          txid: paid.txid,
-          deadlineMs: 5_000,
-          signal: new AbortController().signal,
-          ...overrides,
-        })
-      return { esplora, store, pending, abandon }
-    }
-
     it.each<[string, (esplora: ReturnType<typeof stubEsplora>) => void, AbandonPaymentErrorCode]>([
       ['the indexer has in its mempool', esplora => esplora.known.set(paid.txid, { confirmed: false }), 'known'],
       ['the indexer has in a block', esplora => esplora.known.set(paid.txid, { confirmed: true }), 'known'],
@@ -2014,7 +2451,26 @@ describe('send-payment example', () => {
       expect(pending.get(paid.txid)).toBe(paid.rawTxHex)
     })
 
-    it('whose stored hex turns corrupt during the lookups, as corrupt_pending, right before the release', async () => {
+    it('whose record is swapped for a replacement during the lookups, as not_pending, before it resolves', async () => {
+      // A client whose scan sees another call swap the record first.
+      let swap = () => {}
+      class SwapsTheRecordClient extends EsploraClient {
+        override getAddressUtxos(...args: Parameters<EsploraClient['getAddressUtxos']>): Promise<EsploraUtxo[]> {
+          swap()
+          return super.getAddressUtxos(...args)
+        }
+      }
+      const { store, pending, abandon } = stuck({}, paid.rawTxHex, SwapsTheRecordClient)
+      const replacement = { txid: txidFromRawTx(bump), rawTxHex: bump }
+      swap = () => store.replaceTransaction(paid.txid, replacement)
+
+      const error = await caught(abandon())
+
+      expect(abandonCodeOf(error)).toBe('not_pending')
+      expect([...pending]).toEqual([[replacement.txid, bump]])
+    })
+
+    it('whose stored hex turns corrupt during the lookups, as corrupt_pending, before it resolves', async () => {
       // A client whose scan sees the store's record overwritten with a cut-off copy first.
       const truncated = paid.rawTxHex.slice(0, -2)
       let corrupt = () => {}
@@ -2031,6 +2487,86 @@ describe('send-payment example', () => {
 
       expect(abandonCodeOf(error)).toBe('corrupt_pending')
       expect(pending.get(paid.txid)).toBe(truncated) // not released
+    })
+  })
+
+  describe('refuses to replace a transaction, before it changes or sends anything,', () => {
+    // Unsigned: they are refused before anything could check a witness.
+    const payment = () => [{ value: 50_000n, scriptPubKey: addressToScriptPubKey(to, 'regtest') }]
+
+    it.each<[string, () => unknown, string]>([
+      ['with one that spends only one of its inputs', () => unsignedTxHex([UTXOS[0]!], payment()), 'exactly'],
+      [
+        'with one that spends another output as well',
+        () => unsignedTxHex([...UTXOS.slice(0, 2), DEPOSIT], payment()),
+        'exactly',
+      ],
+      ['with one that spends other outputs', () => unsignedTxHex([DEPOSIT], payment()), 'exactly'],
+      ['with itself', () => paid.rawTxHex, 'itself'],
+      ['with itself, stored under an uppercase txid', () => paid.rawTxHex, 'itself'],
+      ['with hex that is not a whole transaction', () => bump.slice(0, -2), 'not a whole transaction'],
+      ['with hex that is not a string', () => 1, 'not a whole transaction'],
+    ])('%s', async (name, replacement, reason) => {
+      // A store may return the txid in uppercase: it still names that transaction.
+      const upperCase = name.includes('uppercase')
+      const txid = upperCase ? paid.txid.toUpperCase() : paid.txid
+      const { esplora, store, pending, replace } = stuck()
+      if (upperCase) pending.set(txid, pending.get(paid.txid)!).delete(paid.txid)
+
+      const error = await caught(replace({ txid, rawTxHex: replacement() as string }))
+
+      expect(abandonCodeOf(error)).toBe('invalid_replacement')
+      expect(error instanceof Error && error.message).toContain(reason)
+      expect(error instanceof AbandonPaymentError && error.txid).toBe(txid)
+      expect([...pending]).toEqual([[txid, paid.rawTxHex]])
+      expect(esplora.requests).toEqual([])
+    })
+
+    it.each<[string, Partial<Parameters<typeof replacePendingPayment>[0]>, AbandonPaymentErrorCode]>([
+      ['that is not the pending one', { txid: 'ab'.repeat(32) }, 'not_pending'],
+      ['with a deadline longer than a timer can wait', { deadlineMs: 2_147_483_648 }, 'invalid_options'],
+      ['with a zero poll interval', { pollMs: 0 }, 'invalid_options'],
+      ['with an object that is not a signal', { signal: { aborted: false } as AbortSignal }, 'invalid_options'],
+    ])('%s', async (_, overrides, code) => {
+      const { esplora, pending, replace } = stuck()
+
+      const error = await caught(replace(overrides))
+
+      expect(abandonCodeOf(error)).toBe(code)
+      expect([...pending]).toEqual([[paid.txid, paid.rawTxHex]])
+      expect(esplora.requests).toEqual([])
+    })
+
+    it('once its deadline has passed, as a timeout QbitApiError', async () => {
+      // The clock jumps past the deadline between the call's two readings of it.
+      const realNow = Date.now.bind(Date)
+      let readings = 0
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + (readings++ === 0 ? 0 : 60_000))
+      try {
+        const { esplora, pending, replace } = stuck()
+
+        const error = await caught(replace())
+
+        expect(readings).toBe(2)
+        expect(QbitApiError.is(error) && error.kind).toBe('timeout')
+        expect([...pending]).toEqual([[paid.txid, paid.rawTxHex]])
+        expect(esplora.requests).toEqual([])
+      } finally {
+        clock.mockRestore()
+      }
+    })
+
+    it('once its signal has aborted, as an aborted QbitApiError', async () => {
+      const controller = new AbortController()
+      controller.abort(new Error('test: cancelled'))
+      const { esplora, pending, replace } = stuck()
+
+      const error = await caught(replace({ signal: controller.signal }))
+
+      expect(QbitApiError.is(error) && error.kind).toBe('aborted')
+      expect(QbitApiError.is(error) && error.cause).toBe(controller.signal.reason)
+      expect([...pending]).toEqual([[paid.txid, paid.rawTxHex]])
+      expect(esplora.requests).toEqual([])
     })
   })
 })

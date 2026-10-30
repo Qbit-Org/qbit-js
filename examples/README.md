@@ -18,7 +18,7 @@ workspace package, `@qbit-oss/examples`; it is never published.
 | [`check-balance.ts`](src/check-balance.ts) | `EsploraClient`, `getAddressBalance`, `getFeeTiers`, and `feeTiersFromEstimates` with the wallet's own `maxFeeRate` |
 | [`payment-uri.ts`](src/payment-uri.ts) | `formatQbitUri` and `parseQbitUri`, and handling a rejected URI |
 | [`message-proof.ts`](src/message-proof.ts) | `createP2mrMessageProof` and `verifyP2mrMessageProof` with `{ expectedAddress }` |
-| [`send-payment.ts`](src/send-payment.ts) | A whole payment: UTXO scan and selection, skipping coinbase outputs that are not mature, PSBT, signing plans, signing with `onSigned`, finalizing, extracting and broadcasting, then recovering from `unknown_outcome`, or abandoning a transaction no node will take |
+| [`send-payment.ts`](src/send-payment.ts) | A whole payment: UTXO scan and selection, skipping coinbase outputs that are not mature, PSBT, signing plans, signing with `onSigned`, finalizing, extracting and broadcasting, then recovering from `unknown_outcome`, or replacing a transaction no node will take |
 
 ## Running them
 
@@ -48,13 +48,13 @@ derive keys that way in a wallet.
 more outputs than its `--utxos-limit`, 500 by default, and the payment then
 fails with a `too_many_utxos` `SendPaymentError` before any key is used.
 `abandonPendingPayment` lists them the same way, and rejects with a
-`too_many_utxos` `AbandonPaymentError` instead, releasing nothing. A regtest
+`too_many_utxos` `AbandonPaymentError` instead, changing nothing. A regtest
 wallet that mined to its own address the 1,000 or more blocks a coinbase output
 needs to mature holds a coinbase output for each block, so it has more than
 500. Raise the backend's `--utxos-limit`, consolidate the outputs
 into fewer with a backend that lists them all, or mine to an address other than
-the wallet's and send the wallet only what it needs. To abandon a payment,
-raise the limit, or use a backend that lists them all.
+the wallet's and send the wallet only what it needs. To replace a stuck
+payment, raise the limit, or use a backend that lists them all.
 
 ## Broadcasting
 
@@ -107,24 +107,45 @@ to settle later with `reconcileBroadcast`.
 
 A transaction the node accepted, later evicted and now refuses on every
 resubmission, for example because its mempool asks a higher fee, stays pending
-until the wallet calls `abandonPendingPayment`. That releases it only when the
-indexer does not know the txid and every input is still unspent, and resolves
-with those inputs. The only safe follow-up is a replacement that spends the
-same inputs at a higher fee, so that at most one of the two can confirm, never
-a payment built from other inputs. The replacement stays pending on any
+until the wallet replaces it. `abandonPendingPayment` proves it stuck: it
+resolves only when the indexer does not know the txid and every input is still
+unspent, with the pending record and those inputs, and changes nothing in the
+store. The transaction stays pending, so `sendPayment` keeps refusing to pay.
+The proof does not unsend it: a node the indexer does not see may still hold
+it, and mine it. So the only follow-up is a replacement that spends exactly the
+same inputs, so that at most one of the two can confirm: one that pays the same
+recipient at a higher fee, or, to give the payment up, a cancel that pays them
+back to the wallet's own address. The wallet builds and signs it, and
+`replacePendingPayment` checks that it spends exactly those inputs, swaps the
+stuck record for it with `PaymentStore.replaceTransaction`, one atomic
+compare-and-set on the stuck txid that writes the new txid and hex together,
+and only then sends it. One of the two is pending at every moment, so a crash
+leaves the one or the other, never neither, and no payment from other inputs
+can start in between. After a restart, the wallet settles whichever is pending
+with `reconcileBroadcast`, and proving again is safe, since it changes nothing.
+Never drop the stuck transaction instead, not even to give the payment up: were
+it to confirm after a payment from other inputs, the recipient would be paid
+twice. A cancel stays pending until it, or another transaction spending its
+inputs, confirms: if the cancel confirms, the payment was not made, and once
+the wallet clears it, `sendPayment` may pay again; if the stuck transaction
+confirms instead, the payment was made. The replacement stays pending on any
 rejection, even one that makes `sendPayment` drop its own transaction: the
-abandoned transaction, still in a mempool or in a block, may be why the node
-refused it.
+stuck transaction, still in a mempool or in a block, may be why the node
+refused it. The `PaymentStore` contract lets the wallet drop a pending
+transaction for three reasons only: the node definitely refused `sendPayment`'s
+first broadcast of it, it or another transaction spending its inputs
+confirmed, or the sweep for a corrupt record, below, has ended.
 
 A pending record that is corrupt, its txid or hex not a string, or its hex not
 the whole transaction its txid names, is reported as `corrupt_pending`, never
-as nothing pending, by `sendPayment`, `reconcileBroadcast` and
-`abandonPendingPayment`, whichever field is the damaged one and, for
-`abandonPendingPayment`, whatever txid it is asked to release, before any of
-them sends or releases anything: resubmitting hex that is another transaction,
+as nothing pending, by `sendPayment`, `reconcileBroadcast`,
+`abandonPendingPayment` and `replacePendingPayment`, whichever field is the
+damaged one and, for the last two, whatever txid they are given, before any of
+them sends anything or changes the store: resubmitting hex that is another transaction,
 such as an older payment that is still valid, would pay it again. The
 transaction may have been sent. The `PaymentStore` contract allows no rewrite
-of a pending record, and a corrupt one is never repaired in place: nothing
+of a pending record in place, only a swap for its replacement, and a corrupt
+one is never repaired in place, nor swapped: nothing
 tells which field is the damaged one, and either may hold an earlier payment's
 value, as after a write that stopped halfway, which is why the contract asks
 `saveTransaction` to write both in one atomic write. A lookup only shows that a txid is some

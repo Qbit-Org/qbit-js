@@ -12,8 +12,10 @@
 //
 // It checks its parameters before any request and the backend's UTXO rows
 // before any key is used, and it never stores a transaction while an earlier
-// payment is still pending. `abandonPendingPayment` releases a pending
-// transaction that no node will take any more.
+// payment is still pending. `abandonPendingPayment` checks that the indexer
+// does not know a pending transaction and that its inputs are unspent, and
+// `replacePendingPayment` swaps it for a replacement that spends the same
+// inputs, in one store step, so that one of the two is pending at every moment.
 //
 // `key` is the wallet's key from @qbit-oss/pqc's `deriveP2mrDescriptorKey`
 // (`{ pk32, sk64 }`). The broadcast rules are in packages/api/docs/broadcasting.md,
@@ -52,14 +54,15 @@ import { WALLET_MAX_FEE_RATE } from './check-balance'
  * What the wallet writes down while it pays. Each method must finish writing
  * before it returns: signing is synchronous and cannot wait for a promise.
  *
- * A pending record is never rewritten. One that `sendPayment`,
- * `reconcileBroadcast` or `abandonPendingPayment` refuses as
- * `corrupt_pending` is never repaired in place either: neither a lookup nor
- * the signature records can tell which of its fields is the damaged one, and
- * a repair that guesses wrong makes the record name another payment, which
- * the wallet clears once it confirms, forgetting the one still pending. Only
- * the sweep `AbandonPaymentErrorCode` describes for `corrupt_pending`
- * releases it.
+ * A pending record is never rewritten in place: only `replaceTransaction`
+ * swaps it, whole, for the record of a transaction that replaces it. One that
+ * `sendPayment`, `reconcileBroadcast`, `abandonPendingPayment` or
+ * `replacePendingPayment` refuses as `corrupt_pending` is never repaired in
+ * place either, nor swapped: neither a lookup nor the signature records can
+ * tell which of its fields is the damaged one, and a repair that guesses
+ * wrong makes the record name another payment, which the wallet clears once
+ * it confirms, forgetting the one still pending. Only the sweep
+ * `AbandonPaymentErrorCode` describes for `corrupt_pending` releases it.
  */
 export interface PaymentStore {
   /**
@@ -78,9 +81,12 @@ export interface PaymentStore {
    * transaction's. Until then, after a crash or an unknown outcome, settle it
    * by passing the record `pendingTransaction()` returns, txid and hex, to
    * `reconcileBroadcast`, which checks that the hex is that transaction; never
-   * pay again with other inputs. Only the proof `abandonPendingPayment` checks
-   * releases one that no node will take, and only the sweep
-   * `AbandonPaymentErrorCode` describes one it refuses as `corrupt_pending`.
+   * pay again with other inputs. One that no node will take is never
+   * released, only swapped for a replacement that spends the same inputs, with
+   * `replaceTransaction`, which then stays pending in its place: see
+   * `abandonPendingPayment`. Only the sweep
+   * `AbandonPaymentErrorCode` describes releases one refused as
+   * `corrupt_pending`.
    *
    * Write the txid and the hex as one value, in one atomic write: a write that
    * stops halfway can leave a record whose txid and hex are of two payments.
@@ -91,13 +97,32 @@ export interface PaymentStore {
    */
   saveTransaction(txid: string, rawTxHex: string): void
   /**
-   * The transaction is no longer pending: the node definitely did not accept
-   * it, or the proof `abandonPendingPayment` checks releases it. Remove the
-   * record only if its txid is `txid`: by the time a call drops its
-   * transaction, the record may hold another one, which stays pending.
+   * Swap the pending transaction `oldTxid` for `record`, the transaction that
+   * replaces it, in one atomic compare-and-set: replace the record only while
+   * its txid is `oldTxid`, and write the new txid and hex together, as one
+   * value, as `saveTransaction` writes them. Otherwise throw, and change
+   * nothing. So one of the two is pending at every moment, and a crash leaves
+   * the one or the other, never neither: never drop the old record and then
+   * save the new one. `replacePendingPayment` checks the record right before
+   * this call, with no await in between, which keeps two calls in one process
+   * from both swapping it; the compare-and-set keeps a store that several
+   * processes or devices share from swapping a record that another one has
+   * swapped or cleared meanwhile.
+   */
+  replaceTransaction(oldTxid: string, record: { txid: string; rawTxHex: string }): void
+  /**
+   * The transaction is no longer pending, for one of three reasons only: the
+   * node definitely did not accept `sendPayment`'s first broadcast of it; it,
+   * or another transaction spending its inputs, confirmed; or the sweep
+   * `AbandonPaymentErrorCode` describes for `corrupt_pending` has ended. Never
+   * drop one because no node takes it, not even to give the payment up, nor to
+   * make room for its replacement: swap it with `replaceTransaction`, as
+   * `replacePendingPayment` says. Remove the record only if its txid is
+   * `txid`: by the time a call drops its transaction, the record may hold
+   * another one, which stays pending.
    */
   dropTransaction(txid: string): void
-  /** The transaction saved with `saveTransaction` that is still pending, if any. */
+  /** The pending transaction, as `saveTransaction` or `replaceTransaction` wrote it, if any. */
   pendingTransaction(): { txid: string; rawTxHex: string } | undefined
 }
 
@@ -190,8 +215,9 @@ export interface SendPaymentParams {
  * - `corrupt_pending`: as with `pending`, an earlier payment is still pending,
  *   but the store's record of it is corrupt: its `txid` or `rawTxHex` is not a
  *   string, or the hex is not the whole transaction the txid names, whichever
- *   of the two is the damaged one. `reconcileBroadcast` and
- *   `abandonPendingPayment` refuse such a record with `corrupt_pending` too.
+ *   of the two is the damaged one. `reconcileBroadcast`,
+ *   `abandonPendingPayment` and `replacePendingPayment` refuse such a record
+ *   with `corrupt_pending` too.
  *   Never treat it as nothing pending, and never repair it in place: only the
  *   sweep `AbandonPaymentErrorCode` describes for `corrupt_pending` releases
  *   it.
@@ -525,7 +551,8 @@ export async function sendPayment(params: SendPaymentParams): Promise<{ txid: st
  * `deadlineMs`, and that `pending` is an object, throwing an `invalid_options`
  * `SendPaymentError` for any of them, such as for a call that passes the hex
  * alone; then the record, throwing a `corrupt_pending` `SendPaymentError`, as
- * `sendPayment` and `abandonPendingPayment` do, unless its `txid` and
+ * `sendPayment` does, and `abandonPendingPayment` and `replacePendingPayment`
+ * do with an `AbandonPaymentError`, unless its `txid` and
  * `rawTxHex` are strings and `rawTxHex` is the whole transaction `txid`,
  * compared case-insensitively, since resubmitting another transaction, such
  * as an older payment that is still valid, would pay it again. Never repair
@@ -600,20 +627,26 @@ export async function reconcileBroadcast(
 }
 
 /**
- * Why `abandonPendingPayment` refused to release a pending transaction. It
- * released nothing.
+ * Why `abandonPendingPayment` refused to prove a pending transaction stuck, or
+ * `replacePendingPayment` refused to replace one. Neither sent anything or
+ * changed the store.
  *
- * - `invalid_options`: `deadlineMs` is not a number above 0 and at most 2,147,483,647.
+ * - `invalid_options`: `deadlineMs` is not a number above 0 and at most
+ *   2,147,483,647, or, for `replacePendingPayment`, `pollMs` is not, or
+ *   `signal` does not have the shape `SendPaymentErrorCode` describes for
+ *   `invalid_options`.
  * - `not_pending`: the store holds no pending record, or a whole one whose
- *   txid is not `txid`.
+ *   txid is not `txid`. After a crash, it may hold the replacement already:
+ *   settle that one, as any pending transaction.
  * - `corrupt_pending`: the store's pending record is corrupt: its txid or hex
  *   is not a string, or the hex is not the whole transaction the txid names.
- *   This is checked first, so it is reported whatever `txid` this call is
- *   asked to release, never as `not_pending`. Checked before any request, and
- *   again right before the release: this call broadcast nothing and released
- *   nothing. Never treat it as nothing pending: the transaction may have been
- *   sent, and may yet confirm, and `reconcileBroadcast` and `sendPayment`
- *   refuse the record with `corrupt_pending` too.
+ *   The record's own consistency is checked before its txid is compared with
+ *   `txid`, so it is reported whatever `txid` the call is given, never as
+ *   `not_pending`. `abandonPendingPayment` checks it before any request and
+ *   again before it resolves, `replacePendingPayment` right before the swap.
+ *   Never treat it as nothing pending: the transaction may have been sent,
+ *   and may yet confirm, and `reconcileBroadcast` and `sendPayment` refuse the
+ *   record with `corrupt_pending` too.
  *
  *   Never repair the record in place, as `PaymentStore` says: nothing tells
  *   which field is the damaged one, and either may hold an earlier payment's
@@ -658,8 +691,8 @@ export async function reconcileBroadcast(
  *      deposit, or a block mined to the address, takes another round.
  *   4. Look in that history for a transaction, other than the transfers,
  *      that spends from the address and that the wallet does not know as an
- *      earlier payment. Such a transaction may be the lost one, or an
- *      abandoned one it was to replace, and may already have made the
+ *      earlier payment. Such a transaction may be the lost one, or a stuck
+ *      one it replaced, and may already have made the
  *      payment; the record keeps no height or time to tell. Only then clear
  *      the record, and only then pay again, if the payment was not made.
  * - `known`: the indexer knows the transaction, in its mempool or in a block,
@@ -673,13 +706,24 @@ export async function reconcileBroadcast(
  * - `inputs_spent`: an input is not among the address's unspent outputs. The
  *   transaction, or another one that spends the same output, may be in a
  *   block or in a mempool.
+ * - `invalid_replacement`: `replacePendingPayment`'s `rawTxHex` is not a
+ *   string holding a whole transaction, is the pending transaction itself, or
+ *   does not spend exactly the outputs the pending transaction spends, all of
+ *   them and no other.
  */
 export type AbandonPaymentErrorCode =
-  'invalid_options' | 'not_pending' | 'corrupt_pending' | 'known' | 'too_many_utxos' | 'invalid_utxos' | 'inputs_spent'
+  | 'invalid_options'
+  | 'not_pending'
+  | 'corrupt_pending'
+  | 'known'
+  | 'too_many_utxos'
+  | 'invalid_utxos'
+  | 'inputs_spent'
+  | 'invalid_replacement'
 
 export class AbandonPaymentError extends Error {
   readonly code: AbandonPaymentErrorCode
-  /** The transaction it was asked to release. */
+  /** The pending transaction it was asked to prove stuck, or to replace. */
   readonly txid: string
 
   constructor(code: AbandonPaymentErrorCode, message: string, txid: string) {
@@ -690,59 +734,63 @@ export class AbandonPaymentError extends Error {
   }
 }
 
+/** What `abandonPendingPayment` resolves with: what the replacement of a stuck transaction needs. */
+export interface StuckPayment {
+  /** The pending record, txid and hex, as the store held it once the lookups were over. It is still pending. */
+  pending: { txid: string; rawTxHex: string }
+  /**
+   * The outputs it spends, in its input order, as `getAddressUtxos` listed
+   * them: the outputs its replacement must spend, all of them and no other.
+   */
+  inputs: EsploraUtxo[]
+}
+
 /**
- * Release a pending transaction that no node will take any more, so that the
- * wallet can replace it. The example never calls it: call it on purpose, when
- * for example the node accepted the transaction, later evicted it from its
- * mempool, and now refuses every resubmission of the same hex because its
- * mempool asks a higher fee than it pays ("mempool min fee not met"). Until
- * then `sendPayment` refuses to pay with `pending`, and `reconcileBroadcast`
- * never settles.
+ * Prove that a pending transaction is stuck, and resolve with what its
+ * replacement needs, for `replacePendingPayment` to swap the two. The example
+ * never calls it: call it on purpose, when for example the node accepted the
+ * transaction, later evicted it from its mempool, and now refuses every
+ * resubmission of the same hex because its mempool asks a higher fee than it
+ * pays ("mempool min fee not met"). Until the wallet replaces it,
+ * `sendPayment` refuses to pay with `pending`, and `reconcileBroadcast` never
+ * settles.
  *
- * It releases `txid` from `store` only when the indexer does not know it
- * (`getTx` answers `not_found`) and every one of its inputs is still among
- * `address`'s unspent outputs, which qbit-electrs lists without any output a
- * transaction in its mempool spends. It resolves with those outputs, in the
- * transaction's input order. Otherwise it rejects with an
- * `AbandonPaymentError`, or with a `QbitApiError` when a lookup fails (`parse`
- * when `getTx` answers with anything but the transaction), and releases nothing.
+ * It resolves only when the indexer does not know `txid` (`getTx` answers
+ * `not_found`) and every one of its inputs is still among `address`'s unspent
+ * outputs, which qbit-electrs lists without any output a transaction in its
+ * mempool spends: with the pending record and those outputs. Otherwise it
+ * rejects with an `AbandonPaymentError`, or with a `QbitApiError` when a
+ * lookup fails (`parse` when `getTx` answers with anything but the
+ * transaction).
  *
- * Releasing it does not unsend it. The indexer can lag its node, and a node
- * that still holds a copy can relay or mine it, so the abandoned transaction
- * may yet confirm. The only safe follow-up is a replacement that spends the
- * **same** inputs, the outputs this resolves with, at a higher fee rate (a fee
- * bump): the two conflict, so at most one of them can confirm. Build it as
- * `sendPayment` builds its transaction, from exactly these outputs, then store
- * and broadcast it, and settle an unknown outcome with `reconcileBroadcast`,
- * as `sendPayment` does, but keep it pending on any rejection, even one that
- * makes `sendPayment` drop its own transaction. A replacement can be refused
- * because the abandoned transaction is still in that node's mempool, or in a
- * block: for a conflict with it, for a fee too low to replace it, or for
- * inputs it spent. Only what clears any pending record clears it: it, or a
- * transaction spending its inputs, confirms, or the proof
- * `abandonPendingPayment` checks holds for it. Never pay with a transaction
- * built from different inputs, such as a new `sendPayment` call, which picks
- * its own: if the abandoned transaction confirms as well, the recipient is
- * paid twice.
+ * Either way it changes nothing in the store: the transaction stays pending,
+ * so `sendPayment` keeps refusing to pay, and calling this again, after a
+ * crash for example, changes nothing either. The proof does not unsend it.
+ * The indexer can lag its node, and a node that still holds a copy can relay
+ * or mine it, so it may yet confirm. Were it released, nothing would be
+ * pending until its replacement was saved, and a crash or a `sendPayment` call
+ * in between could pay from other inputs: if the stuck transaction confirmed
+ * too, the recipient would be paid twice. So the only follow-up is a
+ * replacement that spends exactly the outputs this resolves with, which
+ * `replacePendingPayment` swaps for it in one store step: the two conflict, so
+ * at most one of them can confirm, and one of them is pending at every
+ * moment. Never drop the stuck transaction instead, not even to give the
+ * payment up: `replacePendingPayment` says how.
  */
 export async function abandonPendingPayment(params: {
   client: EsploraClient
   /** The address the payment spends from: `p2mrAddressFromPubkey(key.pk32, 'regtest')`. */
   address: string
   store: PaymentStore
-  /** The pending transaction to release, as `store.pendingTransaction()` names it. */
+  /** The pending transaction to prove stuck, as `store.pendingTransaction()` names it. */
   txid: string
   /** One budget for both lookups, at most 2,147,483,647 ms. */
   deadlineMs: number
   signal: AbortSignal
-}): Promise<EsploraUtxo[]> {
+}): Promise<StuckPayment> {
   const { client, address, store, txid, signal } = params
   if (!isTimerDelay(params.deadlineMs)) {
-    throw new AbandonPaymentError(
-      'invalid_options',
-      `deadlineMs must be a number above 0 and at most ${MAX_TIMER_MS}, not ${String(params.deadlineMs)}`,
-      txid
-    )
+    throw new AbandonPaymentError('invalid_options', delayMessage('deadlineMs', params.deadlineMs), txid)
   }
   const end = Date.now() + params.deadlineMs
   const rawTxHex = pendingHex(store, txid)
@@ -786,10 +834,111 @@ export async function abandonPendingPayment(params: {
     return utxo
   })
 
-  // Release only the transaction these lookups checked, with no await in between.
-  pendingHex(store, txid)
-  store.dropTransaction(txid)
-  return inputs
+  // The record once more, with no await before the return: it may have been
+  // swapped, cleared or damaged while the lookups ran. It stays pending.
+  return { pending: { txid, rawTxHex: pendingHex(store, txid) }, inputs }
+}
+
+/**
+ * Swap the stuck pending transaction `txid` for `rawTxHex`, its replacement,
+ * in one store step, then send the replacement, and resolve with its txid and
+ * hex once the node has it.
+ *
+ * Call it once `abandonPendingPayment` has resolved for `txid`, with a
+ * replacement built and signed as `sendPayment` builds and signs its
+ * transaction, each signature saved with the replacement's txid, from exactly
+ * the outputs that call resolves with, all of them and no other. To pay the
+ * same recipient the same amount at a higher fee rate than the stuck
+ * transaction (a fee bump), lower the change, or fold it into the fee. To give
+ * the payment up instead, pay them all back to the wallet's own address, less
+ * the fee: such a cancel pays no one. Never drop the stuck transaction to give
+ * the payment up: swap the cancel in. It stays pending until it, or another
+ * transaction spending its inputs, confirms. If the cancel confirms, the
+ * payment was not made, and once the wallet clears the cancel, `sendPayment`
+ * may pay again. If the stuck transaction, or one it replaced, confirms
+ * instead, its payment was made, and the cancel can no longer confirm.
+ *
+ * Before the swap, with no await in between, it checks `deadlineMs`, `pollMs`
+ * and `signal`, then the store's pending record, as `abandonPendingPayment`
+ * does, then that the replacement spends exactly the outputs the record's
+ * transaction spends, and rejects with an `AbandonPaymentError` (see
+ * `AbandonPaymentErrorCode`), with an `aborted` QbitApiError when `signal`
+ * has already aborted, or with a `timeout` one when the deadline has passed.
+ * It then swaps the record with `PaymentStore.replaceTransaction`. A refusal
+ * changes nothing in the store, and neither a refusal nor a swap that throws
+ * sends anything. The stuck transaction is pending up to the swap, and the
+ * replacement from the swap on, so one of the two is pending at every moment:
+ * a crash leaves the one or the other, never neither, and `sendPayment`
+ * refuses to pay throughout. After a restart,
+ * settle the one pending as any pending transaction, with
+ * `reconcileBroadcast`, and if it is the stuck one and still stuck, prove and
+ * replace it again. The two conflict, so at most one of them can confirm,
+ * whatever the indexer has seen since the proof, and whichever confirms
+ * clears the record, as `saveTransaction` says.
+ *
+ * The replacement is sent only once it is pending, as `sendPayment` sends its
+ * transaction, with the budget of its first broadcast, and an unknown outcome
+ * is settled with `reconcileBroadcast`. It stays pending on any rejection,
+ * even one that makes `sendPayment` drop its own transaction, and this
+ * rejects with the error: the stuck transaction, still in that node's mempool
+ * or in a block, may be why the node refused it, for a conflict with it, a
+ * fee too low to replace it, or inputs it spent.
+ */
+export async function replacePendingPayment(params: {
+  client: EsploraClient
+  store: PaymentStore
+  /** The stuck pending transaction, as `abandonPendingPayment` resolves with it, in `pending.txid`. */
+  txid: string
+  /** The signed replacement, which spends exactly the outputs `abandonPendingPayment` resolves with. */
+  rawTxHex: string
+  /** One budget for the broadcast and any reconciliation, at most 2,147,483,647 ms. */
+  deadlineMs: number
+  signal: AbortSignal
+  /** As `sendPayment`'s `pollMs` (default 2 s), at most 2,147,483,647 ms. */
+  pollMs?: number
+}): Promise<{ txid: string; rawTxHex: string }> {
+  const { client, store, txid: stuckTxid, rawTxHex, signal, pollMs = 2_000 } = params
+  const refuse = (code: AbandonPaymentErrorCode, message: string) => new AbandonPaymentError(code, message, stuckTxid)
+  if (!isTimerDelay(params.deadlineMs)) throw refuse('invalid_options', delayMessage('deadlineMs', params.deadlineMs))
+  if (!isTimerDelay(pollMs)) throw refuse('invalid_options', delayMessage('pollMs', pollMs))
+  if (!isSignal(signal)) throw refuse('invalid_options', NOT_A_SIGNAL)
+  const end = Date.now() + params.deadlineMs
+
+  // Nothing awaits from here to the swap, so the record checked is the record swapped.
+  const stuckHex = pendingHex(store, stuckTxid)
+  const txid = typeof rawTxHex === 'string' ? txidOf(rawTxHex) : undefined
+  if (txid === undefined) {
+    throw refuse('invalid_replacement', `the replacement of transaction ${stuckTxid} is not a whole transaction`)
+  }
+  if (txid === stuckTxid.toLowerCase()) {
+    throw refuse('invalid_replacement', `the replacement of transaction ${stuckTxid} is that transaction itself`)
+  }
+  // Exactly the stuck transaction's inputs, in any order: the two conflict, so
+  // at most one of them can confirm, and the replacement claims no output the
+  // stuck transaction does not claim already.
+  const outpoints = (hex: string) => spentOutpoints(hex).sort().join()
+  if (outpoints(rawTxHex) !== outpoints(stuckHex)) {
+    throw refuse(
+      'invalid_replacement',
+      `the replacement of transaction ${stuckTxid} does not spend exactly the outputs it spends`
+    )
+  }
+  throwIfCancelled(signal)
+  // The budget of sendPayment's first POST: if it stalls, reconciliation's
+  // last round still has time to resubmit. A deadline that has passed swaps nothing.
+  const deadlineMs = requestBudgetMs(msLeft(end), pollMs)
+  // One step: the stuck transaction is pending up to here, the replacement from here on.
+  store.replaceTransaction(stuckTxid, { txid, rawTxHex })
+  try {
+    await client.broadcastTx(rawTxHex, { txid, signal, deadlineMs })
+  } catch (error) {
+    // Pending on any rejection, unlike sendPayment's transaction: the stuck
+    // one, in that node's mempool or in a block, may be why the node refused it.
+    if (error instanceof TypeError || (QbitApiError.is(error) && NOT_ACCEPTED.has(error.kind))) throw error
+    // The node may have it: find out before sending again, as sendPayment does.
+    await reconcileBroadcast(client, { txid, rawTxHex }, { end, signal, pollMs })
+  }
+  return { txid, rawTxHex }
 }
 
 /** Throws a `SendPaymentError` for a parameter that could pay the wrong amount or fee, or never settle. */
@@ -815,39 +964,40 @@ function checkParams({ amountSats, feeRate, deadlineMs, pollMs, signal }: SendPa
   checkSignal(signal)
 }
 
-/**
- * Throws an `invalid_options` SendPaymentError unless `signal` has the shape
- * the client uses: a boolean `aborted`, and `addEventListener` and
- * `removeEventListener` for its 'abort' event.
- */
+/** Throws an `invalid_options` SendPaymentError unless `isSignal(signal)`. */
 function checkSignal(signal: AbortSignal): void {
+  if (!isSignal(signal)) throw new SendPaymentError('invalid_options', NOT_A_SIGNAL)
+}
+
+/** The message for a signal `isSignal` refuses. */
+const NOT_A_SIGNAL =
+  'signal must be an AbortSignal, or have its shape: a boolean aborted, addEventListener and removeEventListener'
+
+/**
+ * Whether `signal` has the shape the client uses: a boolean `aborted`, and
+ * `addEventListener` and `removeEventListener` for its 'abort' event.
+ */
+function isSignal(signal: AbortSignal): boolean {
   // By shape, as the client takes it: `instanceof AbortSignal` would refuse a
   // signal from another realm or a polyfill, and throw where there is no
   // AbortSignal global. Anything else would fail only once the work it should
   // cancel had started.
   const { aborted, addEventListener, removeEventListener } = (signal ?? {}) as Partial<AbortSignal>
-  if (
-    typeof aborted !== 'boolean' ||
-    typeof addEventListener !== 'function' ||
-    typeof removeEventListener !== 'function'
-  ) {
-    throw new SendPaymentError(
-      'invalid_options',
-      'signal must be an AbortSignal, or have its shape: a boolean aborted, addEventListener and removeEventListener'
-    )
-  }
+  return (
+    typeof aborted === 'boolean' && typeof addEventListener === 'function' && typeof removeEventListener === 'function'
+  )
 }
 
 /** Throws an `invalid_options` SendPaymentError naming option `name` unless `ms` is a delay a timer can wait. */
 function checkDelay(name: string, ms: number): void {
   // A timer fires at once for a longer delay than MAX_TIMER_MS, and the
   // client refuses such a deadline with an `http` error.
-  if (!isTimerDelay(ms)) {
-    throw new SendPaymentError(
-      'invalid_options',
-      `${name} must be a number above 0 and at most ${MAX_TIMER_MS}, not ${String(ms)}`
-    )
-  }
+  if (!isTimerDelay(ms)) throw new SendPaymentError('invalid_options', delayMessage(name, ms))
+}
+
+/** The message for option `name`, `ms`, which `isTimerDelay` refuses. */
+function delayMessage(name: string, ms: number): string {
+  return `${name} must be a number above 0 and at most ${MAX_TIMER_MS}, not ${String(ms)}`
 }
 
 /** Whether `ms` is a delay a timer can wait, and the client accepts as `deadlineMs`. */
@@ -955,8 +1105,8 @@ async function selectInputs(
 /**
  * Throws a `SendPaymentError` while `store` holds a transaction that is still
  * pending: `corrupt_pending` when its record is corrupt, which
- * `reconcileBroadcast` and `abandonPendingPayment` refuse too, and `pending`
- * otherwise.
+ * `reconcileBroadcast`, `abandonPendingPayment` and `replacePendingPayment`
+ * refuse too, and `pending` otherwise.
  */
 function refuseWhilePending(store: PaymentStore): void {
   const pending = store.pendingTransaction()
@@ -967,7 +1117,8 @@ function refuseWhilePending(store: PaymentStore): void {
 }
 
 /**
- * The hex `store` holds for its pending transaction `txid`. Throws a
+ * The hex `store` holds for its pending transaction `txid`, for
+ * `abandonPendingPayment` and `replacePendingPayment`. Throws a
  * `corrupt_pending` AbandonPaymentError when its pending record is corrupt,
  * whatever `txid` is, and `not_pending` when it holds no pending record, or a
  * whole one for another transaction.

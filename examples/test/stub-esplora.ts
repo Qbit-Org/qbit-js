@@ -54,8 +54,14 @@ export interface StubEsploraOptions {
   /** The address's transactions, in one page each; the address stats count them. */
   history?: { confirmed: unknown[]; mempool: unknown[] }
   feeEstimates?: Record<string, number>
-  /** One reply per `POST /tx`, in order; later posts are accepted. */
+  /** One reply per `POST /tx`, in order; later posts get `replyFor`'s reply, or are accepted. */
   broadcastReplies?: BroadcastReply[]
+  /**
+   * The reply to a `POST /tx` of `rawTxHex` once `broadcastReplies` are used
+   * up, or undefined to accept it, as a node whose mempool takes some
+   * transactions and refuses others does.
+   */
+  replyFor?: (rawTxHex: string) => BroadcastReply | undefined
   /** Called on each `POST /tx` before it is answered. */
   onBroadcast?: () => void
   /**
@@ -169,7 +175,7 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
       broadcasts.push(hex)
       options.onBroadcast?.()
       const txid = txidFromRawTx(hex)
-      switch (replies.shift() ?? 'accept') {
+      switch (replies.shift() ?? options.replyFor?.(hex) ?? 'accept') {
         case 'accept':
           if (!known.has(txid)) known.set(txid, { confirmed: false })
           return new Response(txid)
