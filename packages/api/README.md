@@ -38,7 +38,7 @@ its `package.json` declares no `engines` range. What the repository checks:
   (`lib: ["ES2022", "DOM"]`, no `@types/node`). It then loads the CommonJS and
   the ESM build side by side in Node.js. The browser project is only
   type-checked; no test runs in a browser. It also resolves `@qbit-oss/api`
-  and `@qbit-oss/api/testing` under `moduleResolution` `node10`, `node16`
+  and `@qbit-oss/api/testing` under `moduleResolution` `nodenext`, `node10`
   and `bundler`.
 - `smoke:consumer` installs the packed package into a fresh project with npm and
   imports it by name through both builds in Node.js.
