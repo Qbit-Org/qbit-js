@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -1577,7 +1577,13 @@ describe('adapters', () => {
 })
 
 describe('no legacy UniSat surface (guard)', () => {
-  const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8').toLowerCase()
+  // Every published source file, not just src/index.ts.
+  const srcDir = new URL('../src/', import.meta.url)
+  const source = readdirSync(srcDir, { recursive: true, encoding: 'utf8' })
+    .filter(file => file.endsWith('.ts'))
+    .map(file => readFileSync(new URL(file, srcDir), 'utf8'))
+    .join('\n')
+    .toLowerCase()
   it.each([
     'unisat.space',
     'inscription',
