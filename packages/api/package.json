@@ -1,6 +1,6 @@
 {
   "name": "@qbit-oss/api",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "qbit esplora REST client for address, UTXO, transaction, fee, and broadcast queries",
   "main": "lib/index.js",
   "module": "lib/index.mjs",

@@ -1,0 +1,5 @@
+# Commits that only reformat code, skipped by `git blame` (GitHub reads this
+# file itself; locally, run `git config blame.ignoreRevsFile .git-blame-ignore-revs`).
+
+# chore: add Prettier, a verify script, CONTRIBUTING and a PR template (#1)
+20656998231c6a87a6b741def6f1c50245c33641

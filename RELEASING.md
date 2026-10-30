@@ -85,11 +85,13 @@ PRs merge.
 
 1. In a PR to `release/X.Y`, set both versions to `X.Y.Z` and turn the
    candidate sections into one dated `X.Y.Z` section.
-2. Create the annotated tag `vX.Y.Z` and push it. The publish workflow
-   publishes both packages under `latest`, once another maintainer has
-   [approved](#approving-a-publish) its `publish` job. Then bump both
-   versions to `X.Y.(Z+1)-rc.0` in a PR.
-3. Merge the back-merge PR into `main`.
+2. Merge the back-merge PR into `main`. The READMEs and doc comments link to
+   `blob/main`, so `main` must hold every page and example they link to
+   before npm shows the new READMEs.
+3. Create the annotated tag `vX.Y.Z` on the release commit and push it. The
+   publish workflow publishes both packages under `latest`, once another
+   maintainer has [approved](#approving-a-publish) its `publish` job. Then
+   bump both versions to `X.Y.(Z+1)-rc.0` in a PR.
 
 ## Tags
 
