@@ -16,6 +16,8 @@ const BASE = 'https://esplora.example/regtest/api'
 const TXID = 'ab'.repeat(32)
 const LIMIT = 64 * 1024
 const CHUNK = 4 * 1024
+/** The error-preview cases build and redact multi-megabyte bodies, which takes seconds on a slow CI runner. */
+const SCALE_TIMEOUT_MS = 60_000
 const noSleep = () => Promise.resolve()
 
 function client(fetchFn: typeof fetch, options: { timeoutMs?: number; retries?: number } = {}): EsploraClient {
@@ -382,7 +384,7 @@ describe('de-duplicated waiters', () => {
   })
 })
 
-describe('error previews', () => {
+describe('error previews', { timeout: SCALE_TIMEOUT_MS }, () => {
   const gc = (() => {
     setFlagsFromString('--expose-gc')
     return runInNewContext('gc') as () => void
