@@ -1,5 +1,11 @@
-# Commits that only reformat code, skipped by `git blame` (GitHub reads this
-# file itself; locally, run `git config blame.ignoreRevsFile .git-blame-ignore-revs`).
+# Commits that git blame skips (GitHub reads this file itself; locally, run
+# `git config blame.ignoreRevsFile .git-blame-ignore-revs`).
+#
+# #1 reformatted every file with Prettier, and in the same squashed commit
+# added the verify script, CONTRIBUTING and the PR template. Blame skips it
+# for the reformat, so a line it added to an existing file, such as the verify
+# script in package.json, may be attributed to a nearby older commit; lines in
+# the files it created stay attributed to it.
 
 # chore: add Prettier, a verify script, CONTRIBUTING and a PR template (#1)
 20656998231c6a87a6b741def6f1c50245c33641

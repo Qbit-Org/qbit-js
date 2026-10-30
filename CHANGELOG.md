@@ -2,7 +2,9 @@
 
 Notable changes to `@qbit-oss/protocol` and `@qbit-oss/api`. Both packages share one
 version (see [RELEASING.md](RELEASING.md)). Versions follow SemVer. Below 1.0,
-breaking changes bump MINOR.
+**Breaking** changes bump MINOR. A **Behaviour change** is a fix that
+RELEASING.md lets a patch carry although it can make existing code fail or
+behave differently, so read those entries before taking a patch.
 
 ## 0.1.1 (2026-10-30)
 
@@ -10,10 +12,16 @@ This release fixes bugs, most of them where the packages did not do what qbit
 Core does, adds the `@qbit-oss/api/testing` entry point and the
 `maxResponseBytes` client option, and documents every public export. Entries
 marked **Behaviour change** can make existing code fail or behave
-differently. Each one refuses input that qbit Core refuses or that could make
-a call run without bound, caps what a hostile or broken server can send,
-reports an outcome that was claimed too definitely, or raises the
-`@noble/hashes` requirement.
+differently, as [RELEASING.md](RELEASING.md#versioning) allows in a patch:
+- PSBT refusals: transaction shapes and PSBT keys that qbit Core refuses;
+- descriptor objects that reach one node twice, refused because such a tree
+  can make the walk run without bound (a leaf object reused at two positions
+  is refused with them, so give each position its own object);
+- React Native `baseUrl`s that never worked;
+- `maxResponseBytes`, a new limit;
+- `broadcastTx` outcomes reported less definitely;
+- the `@noble/hashes` minimum;
+- the `unknown_outcome` message text.
 
 ### @qbit-oss/protocol
 
@@ -125,12 +133,12 @@ reports an outcome that was claimed too definitely, or raises the
   `@qbit-oss/api`, it is built for ES2020, which webpack 4's parser does not
   support. `@qbit-oss/api` itself resolves as before. See
   [Testing](packages/api/docs/testing.md).
-- The `unknown_outcome` error message ends "may have been accepted; resubmit
-  the same hex, and never rebuild the payment with different inputs" (or
-  "resubmit the same hex with its { txid }" when no txid is known) instead of
-  "may have been accepted, check its status before resubmitting": qbit-electrs
-  reports an unknown txid as unconfirmed, so a status check cannot settle the
-  outcome. The error's `kind` and fields are unchanged.
+- **Behaviour change:** The `unknown_outcome` error message ends "may have been
+  accepted; resubmit the same hex, and never rebuild the payment with different
+  inputs" (or "resubmit the same hex with its { txid }" when no txid is known)
+  instead of "may have been accepted, check its status before resubmitting":
+  qbit-electrs reports an unknown txid as unconfirmed, so a status check cannot
+  settle the outcome. The error's `kind` and fields are unchanged.
 - **Behaviour change:** Requires `@noble/hashes` `~1.8.0` (was `^1.3.0`) and
   imports its `sha2` entry point instead of the deprecated `sha256` one, as
   `@qbit-oss/protocol` does, with the same effect on lockfiles and overrides.
@@ -186,7 +194,7 @@ reports an outcome that was claimed too definitely, or raises the
   it, but the native stack requests and reports the encoded URL, so every reply
   was refused as a followed redirect, and every `broadcastTx` ended as
   `unknown_outcome`.
-- **Behaviour change** (submissions): `broadcastTx`, on both clients, ends
+- **Behaviour change:** `broadcastTx`, on both clients, ends
   as `unknown_outcome`, without re-sending, when a `429`'s body cannot be read
   in full: it fails, stalls past `timeoutMs`, passes `maxResponseBytes`, or
   an abort or the deadline cuts it short. Such a `429` was taken as proof that
@@ -196,7 +204,7 @@ reports an outcome that was claimed too definitely, or raises the
   relayed transport failure is `unknown_outcome`), so an unread one may have
   reported that the node has, or may have, the transaction. See the
   [outcome table](packages/api/docs/broadcasting.md#outcomes).
-- **Behaviour change** (submissions): `broadcastTx`, on both clients, judges
+- **Behaviour change:** `broadcastTx`, on both clients, judges
   a `429`'s body before re-sending it. An already-known body resolves with
   the known txid (`unknown_outcome` without one), and a relayed transport
   failure is `unknown_outcome`, both at once; only a `429` whose body is
