@@ -1,6 +1,6 @@
 {
   "name": "@qbit-oss/protocol",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "qbit protocol primitives: P2MR addresses and scripts, descriptors, PSBT creation, signing and finalizing, sighash, message proofs, and qbit: URIs",
   "main": "lib/index.js",
   "module": "lib/index.mjs",

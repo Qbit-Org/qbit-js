@@ -16,9 +16,26 @@ and published. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
     and is now rejected, an existing failure that now surfaces with a different
     error kind or code, or a changed retry or outcome contract.
   - **PATCH** (`0.1.0` → `0.1.1`) for backward-compatible fixes and additions.
+  - **PATCH, as a behaviour change**, for a fix that changes behaviour only
+    in one of these ways, and nothing else:
+    - it refuses input that qbit Core refuses, or input with which the call
+      could never have worked;
+    - it refuses input that could make a call run without bound, even where
+      some finite input of that shape is refused with it;
+    - it adds a resource limit whose default holds every legitimate use the
+      docs describe;
+    - it reports an outcome less definitely than before, such as
+      `unknown_outcome` where a definite error was claimed;
+    - it raises a dependency's minimum version within the same major;
+    - it changes an error message without changing the error's kind, code or
+      fields.
+
+    Such a change can still make existing code fail or behave differently,
+    so its CHANGELOG entry starts with **Behaviour change:**, and consumers
+    on a caret range receive it with the next patch.
   - A caret range stays inside one line below 1.0 (`^0.1.0` means
-    `>=0.1.0 <0.2.0`), so consumers never receive a breaking change from a
-    patch update.
+    `>=0.1.0 <0.2.0`), so consumers never receive a **Breaking** change from
+    a patch update, only the behaviour changes above.
 - Release candidates are `X.Y.Z-rc.N`, with `N` starting at `0` (what
   `npm version preminor --preid rc` produces). They are published under the npm
   dist-tag `candidate`, never `latest`. The registry points `latest` at a new
@@ -85,11 +102,13 @@ PRs merge.
 
 1. In a PR to `release/X.Y`, set both versions to `X.Y.Z` and turn the
    candidate sections into one dated `X.Y.Z` section.
-2. Create the annotated tag `vX.Y.Z` and push it. The publish workflow
-   publishes both packages under `latest`, once another maintainer has
-   [approved](#approving-a-publish) its `publish` job. Then bump both
-   versions to `X.Y.(Z+1)-rc.0` in a PR.
-3. Merge the back-merge PR into `main`.
+2. Merge the back-merge PR into `main`. The READMEs and doc comments link to
+   `blob/main`, so `main` must hold every page and example they link to
+   before npm shows the new READMEs.
+3. Create the annotated tag `vX.Y.Z` on the release commit and push it. The
+   publish workflow publishes both packages under `latest`, once another
+   maintainer has [approved](#approving-a-publish) its `publish` job. Then
+   bump both versions to `X.Y.(Z+1)-rc.0` in a PR.
 
 ## Tags
 
