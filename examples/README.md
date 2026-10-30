@@ -60,9 +60,10 @@ raise the limit, or use a backend that lists them all.
 
 `send-payment.ts` follows
 [Broadcasting](../packages/api/docs/broadcasting.md). It checks the recipient,
-amount, fee rate, deadline and poll interval before any request, and the
+amount, fee rate, deadline, poll interval and signal before any request, and the
 backend's UTXO rows before any key is used; `reconcileBroadcast` checks its
-poll interval and the time left before its `end` the same way. It refuses to
+poll interval, signal and the time left before its `end` the same way, and that
+its record is an object with a string txid and hex. It refuses to
 start while an earlier payment is still pending, and checks again right before
 it stores its own transaction, so two overlapping calls cannot both pay. It
 stores the signed transaction before the first broadcast and drops it only when
@@ -77,9 +78,12 @@ the reply as parsed, without checking that it is the transaction requested.
 Each round of reconciliation waits a poll interval, or
 half of what is left when less than two are left, then looks the transaction
 up. A round with less than two poll intervals left once its lookup is over is
-the last: unless the lookup found the transaction, it resubmits once with what
-remains, and stops, so only the last round resubmits with less than two poll
-intervals left. One budget rule covers the first broadcast and every other
+the last: unless the lookup found the transaction or the deadline has passed,
+it resubmits once with what remains, and stops, so only the last round
+resubmits with less than two poll intervals left. One reading of the clock
+decides that and sets that resubmission's budget, so the deadline passing just
+after the reading cannot stop the resubmission before it is sent. One budget
+rule covers the first broadcast and every other
 lookup and resubmission: each gets all but a poll interval of the time left
 while at least two poll intervals are left, and half of what is left below
 that. So one that stalls leaves a later request time, and however little time
@@ -110,10 +114,20 @@ transaction, is reported as `corrupt_pending`, never as nothing pending, by
 `sendPayment`, `reconcileBroadcast` and `abandonPendingPayment`, before any of
 them sends or releases anything: resubmitting hex that is another transaction,
 such as an older payment that is still valid, would pay it again. The
-transaction may have been sent, so the wallet must restore its hex before it
-can settle or release it. `client.getTxHex(txid)` restores it without a backup
-whenever the indexer knows the transaction, since it returns the hex only when
-it is that transaction; then the usual flow applies. While no indexer knows the
+transaction may have been sent, so the wallet must restore the record before
+it can settle or release it. That is the one rewrite of a pending record the
+`PaymentStore` contract allows, and only so that the hex is the transaction
+the txid names: usually with hex whose `txidFromRawTx` is the record's txid.
+`client.getTxHex(txid)` returns such hex without a backup whenever the indexer
+knows the transaction, since it returns the hex only when it is that
+transaction; then the usual flow applies. If the txid is the damaged field
+instead, so that `getTxHex(txid)` cannot find the transaction, the wallet looks
+up the hex's own txid with `getTxHex`, and gives the record that txid only if
+the indexer returns that same transaction. It never trusts the hex alone,
+which may be an older payment that is still valid. Otherwise the wallet knows
+neither the transaction's inputs nor, unless the hex is that transaction, its
+txid: it keeps the record, and the way out below without its inputs applies.
+While no indexer knows the
 transaction and the wallet has no record of its inputs, the wallet must not
 clear the record: it cannot tell which outputs a new payment may spend without
 paying twice. Only knowing the inputs, and seeing that the indexer does not know

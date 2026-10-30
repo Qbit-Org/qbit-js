@@ -51,6 +51,20 @@ import { WALLET_MAX_FEE_RATE } from './check-balance'
 /**
  * What the wallet writes down while it pays. Each method must finish writing
  * before it returns: signing is synchronous and cannot wait for a promise.
+ *
+ * A pending record is rewritten in one case only: restoring one that
+ * `sendPayment`, `reconcileBroadcast` or `abandonPendingPayment` refused as
+ * `corrupt_pending`, whose hex is not the transaction its txid names, as
+ * `AbandonPaymentErrorCode` says. No method here does that: the wallet writes
+ * the record itself, in place and only while it is still pending, and only so
+ * that `txidFromRawTx` of its hex is its txid, compared case-insensitively:
+ *
+ * - Usually its hex: the record keeps its txid and takes hex whose
+ *   `txidFromRawTx` is that txid, such as `client.getTxHex(txid)` returns.
+ * - When the txid is the damaged field: the record keeps its hex and takes
+ *   `txidFromRawTx` of it as its txid, but only once `client.getTxHex` of that
+ *   txid has returned that same transaction. Never on the hex alone: it may be
+ *   an older payment that is still valid, which resubmitting would pay again.
  */
 export interface PaymentStore {
   /**
@@ -83,7 +97,7 @@ export interface PaymentStore {
    * it, or the proof `abandonPendingPayment` checks releases it.
    */
   dropTransaction(txid: string): void
-  /** The transaction saved with `saveTransaction` that is still pending, if any. */
+  /** The transaction saved with `saveTransaction`, or restored as above, that is still pending, if any. */
   pendingTransaction(): { txid: string; rawTxHex: string } | undefined
 }
 
@@ -140,9 +154,11 @@ export interface SendPaymentParams {
  * - `invalid_fee_rate`: `feeRate` is not a number from qbit Core's minimum
  *   relay fee rate, 0.25 sat/vB, to `WALLET_MAX_FEE_RATE`.
  * - `invalid_options`: `deadlineMs` or `pollMs` is not a number above 0 and at
- *   most 2,147,483,647, the longest delay a timer supports. `reconcileBroadcast`
- *   applies the same rules to its `pollMs`, and to the time left before its
- *   `end` unless `end` has passed; its transaction stays pending.
+ *   most 2,147,483,647, the longest delay a timer supports, or `signal` is not
+ *   an `AbortSignal`. `reconcileBroadcast` applies the same rules to its
+ *   `pollMs` and `signal`, and to the time left before its `end` unless `end`
+ *   has passed, and refuses a record that is not an object with a string
+ *   `txid` and `rawTxHex`, such as the hex alone; its transaction stays pending.
  * - `too_many_utxos`: the backend refuses to list the address's unspent
  *   outputs because there are more than it lists for one address.
  *   qbit-electrs refuses above its `--utxos-limit`, 500 by default, with a
@@ -172,8 +188,8 @@ export interface SendPaymentParams {
  *   pending, but the hex the store holds for it is not that transaction, or
  *   not a whole transaction. `reconcileBroadcast` refuses such a record with
  *   `corrupt_pending` too, and `abandonPendingPayment` cannot release it.
- *   Never treat it as nothing pending: restore its hex, as
- *   `AbandonPaymentErrorCode` says.
+ *   Never treat it as nothing pending: restore the record, as `PaymentStore`
+ *   allows and `AbandonPaymentErrorCode` says.
  */
 export type SendPaymentErrorCode =
   | 'invalid_amount'
@@ -462,8 +478,11 @@ export async function sendPayment(params: SendPaymentParams): Promise<{ txid: st
  * Each round waits a poll interval, or half of what is left before `end` when
  * less than two are left, then looks the transaction up. A round with less
  * than two poll intervals left once its lookup is over is the last: unless the
- * lookup found the transaction, it resubmits once with what remains and stops.
- * So only the last round resubmits with less than two poll intervals left.
+ * lookup found the transaction or `end` has passed, it resubmits once with
+ * what remains and stops. One reading of the clock decides that and sets that
+ * resubmission's budget, so the clock reaching `end` just after the reading
+ * cannot stop the resubmission before it is sent. So only the last round
+ * resubmits with less than two poll intervals left.
  * One budget rule covers every other request, and `sendPayment`'s first
  * broadcast, which is round 0: each gets all but a poll interval of the time
  * left while at least two are left, and half of what is left below that, and
@@ -486,13 +505,15 @@ export async function sendPayment(params: SendPaymentParams): Promise<{ txid: st
  * call this again later, for example after a restart. If no node will take it
  * any more, see `abandonPendingPayment`.
  *
- * Before any request, it checks, in this order: `pollMs` and the time left
- * before `end`, as `sendPayment` checks `pollMs` and `deadlineMs`, throwing an
- * `invalid_options` `SendPaymentError` for a value a timer cannot wait; then
- * the record, throwing a `corrupt_pending` `SendPaymentError` unless `rawTxHex`
- * is the whole transaction `txid`, compared case-insensitively, since
- * resubmitting another transaction, such as an older payment that is still
- * valid, would pay it again. Restore such a record's hex as
+ * Before any request, it checks, in this order: `pollMs`, `signal` and the
+ * time left before `end`, as `sendPayment` checks `pollMs`, `signal` and
+ * `deadlineMs`, and that `pending` is an object with a string `txid` and
+ * `rawTxHex`, throwing an `invalid_options` `SendPaymentError` for any of them,
+ * such as for a call that passes the hex alone; then the record, throwing a
+ * `corrupt_pending` `SendPaymentError` unless `rawTxHex` is the whole
+ * transaction `txid`, compared case-insensitively, since resubmitting another
+ * transaction, such as an older payment that is still valid, would pay it
+ * again. Restore such a record as `PaymentStore` allows and
  * `AbandonPaymentErrorCode` says. Only then does an `end` that has already
  * passed, which is no mistake, reject with `unknown_outcome` without a
  * request, as when `end` passes while it polls. So a corrupt record is
@@ -505,14 +526,23 @@ export async function reconcileBroadcast(
 ): Promise<void> {
   const { end, signal, pollMs } = options
   checkDelay('pollMs', pollMs)
+  checkSignal(signal)
   // Read the clock once: `end` passing between two readings is no invalid option.
   const timeLeft = end - Date.now()
   if (!(timeLeft <= 0)) checkDelay('the time left before end', timeLeft)
-  const { txid: recordTxid, rawTxHex } = pending // read once, so that the hex checked is the hex sent
-  if (!isHexOf(rawTxHex, recordTxid)) {
+  // Read once, so that the hex checked is the hex sent. The hex alone, or
+  // nothing, in the record's place reads as no fields.
+  const { txid: recordTxid, rawTxHex }: Partial<typeof pending> = pending ?? {}
+  if (typeof recordTxid !== 'string' || typeof rawTxHex !== 'string') {
+    throw new SendPaymentError(
+      'invalid_options',
+      'the pending record must be an object { txid, rawTxHex } with both strings, as PaymentStore.pendingTransaction() returns it'
+    )
+  }
+  const txid = txidOf(rawTxHex) // the record's txid, in lowercase, if the hex is that whole transaction
+  if (txid !== recordTxid.toLowerCase()) {
     throw new SendPaymentError('corrupt_pending', corruptRecord(recordTxid), recordTxid)
   }
-  const txid = txidFromRawTx(rawTxHex) // the record's txid, in lowercase
   let absentReplies = 0
   while (Date.now() < end && !signal.aborted) {
     // Give the transaction time to propagate.
@@ -534,14 +564,16 @@ export async function reconcileBroadcast(
     if (lookup === 'found') return
     // Decided once the lookup is over, from the one reading that also sets the
     // resubmission's budget, so that only the last round resubmits in the
-    // final stretch, and then stops.
+    // final stretch, and then stops. Read again, the clock could reach `end`
+    // in between and stop the last round's resubmission before it is sent.
     const left = end - Date.now()
     const lastRound = finalStretch(left, pollMs)
     absentReplies = lookup === 'absent' ? absentReplies + 1 : 0
     if (absentReplies < 3 && !lastRound) continue
+    if (left <= 0) break // `end` passed during the lookup: no time is left to resubmit
     absentReplies = 0
     try {
-      const deadlineMs = lastRound ? msLeft(end) : requestBudgetMs(left, pollMs) // the last request gets all that is left
+      const deadlineMs = lastRound ? left : requestBudgetMs(left, pollMs) // the last request gets all that is left
       await client.broadcastTx(rawTxHex, { txid, signal, deadlineMs })
       return
     } catch {
@@ -565,15 +597,27 @@ export async function reconcileBroadcast(
  *   pending: the transaction may have been sent, and may yet confirm. Until
  *   the record holds the transaction's hex again, this call cannot release
  *   it, and `reconcileBroadcast` and `sendPayment` refuse with
- *   `corrupt_pending`. Restore the hex, then settle or release the
- *   transaction as usual. `client.getTxHex(txid)` needs no backup: it
- *   returns the hex only when it is transaction `txid`, and it answers
- *   whenever the indexer knows the transaction, in its mempool or in a
- *   block. It does not check the witnesses, which the txid does not commit
- *   to, but hex with other witnesses still spends the same inputs to the
- *   same outputs, so resubmitting it cannot pay twice. Hex from the wallet's
- *   own records, such as a backup of the store, will do once
- *   `txidFromRawTx` of it is `txid`, compared case-insensitively.
+ *   `corrupt_pending`. Restore the record, the one rewrite `PaymentStore`
+ *   allows, then settle or release the transaction as usual.
+ *   `client.getTxHex(txid)` needs no backup: it returns the hex only when it
+ *   is transaction `txid`, and it answers whenever the indexer knows the
+ *   transaction, in its mempool or in a block. It does not check the
+ *   witnesses, which the txid does not commit to, but hex with other
+ *   witnesses still spends the same inputs to the same outputs, so
+ *   resubmitting it cannot pay twice. Hex from the wallet's own records, such
+ *   as a backup of the store, will do once `txidFromRawTx` of it is `txid`,
+ *   compared case-insensitively.
+ *
+ *   The txid may be the damaged field instead, while the hex is the
+ *   transaction that was sent, so that `getTxHex(txid)` cannot find it. Then
+ *   look up the hex's own txid, `txidFromRawTx` of it, with `getTxHex`, and
+ *   only if the indexer returns that same transaction, give the record that
+ *   txid, as `PaymentStore` says. Never trust the hex alone: it may be an
+ *   older payment that is still valid, which resubmitting would pay again.
+ *   Otherwise, the wallet knows neither the transaction's inputs nor, unless
+ *   the hex is that transaction, its txid: keep the record, ask again later,
+ *   and failing that, take the last way out below, a transfer of every
+ *   confirmed output to the wallet itself.
  *
  *   While no indexer knows the transaction, so that `getTxHex` answers
  *   `not_found`, and the wallet has no record of its inputs, the wallet must
@@ -719,7 +763,7 @@ export async function abandonPendingPayment(params: {
 }
 
 /** Throws a `SendPaymentError` for a parameter that could pay the wrong amount or fee, or never settle. */
-function checkParams({ amountSats, feeRate, deadlineMs, pollMs }: SendPaymentParams): void {
+function checkParams({ amountSats, feeRate, deadlineMs, pollMs, signal }: SendPaymentParams): void {
   // A NaN or infinite fee rate would reach BigInt() as a bare RangeError, a
   // rate below Core's minimum relay fee would make a transaction no node
   // relays, and a rate above the wallet's ceiling, from a typo or a hostile
@@ -738,6 +782,15 @@ function checkParams({ amountSats, feeRate, deadlineMs, pollMs }: SendPaymentPar
   }
   checkDelay('deadlineMs', deadlineMs)
   if (pollMs !== undefined) checkDelay('pollMs', pollMs)
+  checkSignal(signal)
+}
+
+/** Throws an `invalid_options` SendPaymentError unless `signal` is an AbortSignal. */
+function checkSignal(signal: AbortSignal): void {
+  // Anything else would fail only once the work it should cancel has started.
+  if (!(signal instanceof AbortSignal)) {
+    throw new SendPaymentError('invalid_options', 'signal must be an AbortSignal')
+  }
 }
 
 /** Throws an `invalid_options` SendPaymentError naming option `name` unless `ms` is a delay a timer can wait. */
@@ -886,7 +939,7 @@ function pendingHex(store: PaymentStore, txid: string): string {
 
 /** The message for a pending transaction `txid` whose stored hex is not that transaction. */
 function corruptRecord(txid: string): string {
-  return `transaction ${txid} is still pending, but the hex stored for it is not that transaction: restore it with getTxHex(txid) or from the wallet's own records, and never treat it as nothing pending`
+  return `transaction ${txid} is still pending, but the hex stored for it is not that transaction: restore the record as PaymentStore says, with getTxHex(txid) or from the wallet's own records, and never treat it as nothing pending`
 }
 
 /** Whether `rawTxHex` is the whole transaction `txid`, which compares case-insensitively. */
@@ -1097,20 +1150,26 @@ function throwIfCancelled(signal: AbortSignal): void {
  */
 function waitWithin<T>(start: () => Promise<T>, end: number, signal: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const promise = start() // in the executor, so that a throw rejects the wait, before the timer and listener exist
     const settle = (finish: () => void) => {
       clearTimeout(timer)
       signal.removeEventListener('abort', onAbort)
       finish()
     }
     const onAbort = () => settle(() => reject(cancelled(signal)))
-    const timer = setTimeout(() => settle(() => reject(deadlinePassed())), end - Date.now())
+    // The listener, then the timer, then the work, whose outcome is handled at
+    // once: a throw rejects the wait, and leaves nothing started without a
+    // handler, and no timer or listener behind.
     signal.addEventListener('abort', onAbort)
+    const timer = setTimeout(() => settle(() => reject(deadlinePassed())), end - Date.now())
+    try {
+      start().then(
+        value => settle(() => resolve(value)),
+        (error: unknown) => settle(() => reject(error))
+      )
+    } catch (error) {
+      settle(() => reject(error))
+    }
     if (signal.aborted) onAbort()
-    promise.then(
-      value => settle(() => resolve(value)),
-      (error: unknown) => settle(() => reject(error))
-    )
   })
 }
 

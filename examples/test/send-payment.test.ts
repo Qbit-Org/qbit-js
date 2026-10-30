@@ -59,6 +59,19 @@ vi.mock('@qbit-oss/pqc', async importOriginal => {
   }
 })
 
+// Counts the calls to txidFromRawTx, which parses and hashes a whole transaction.
+const txidHashes = vi.hoisted(() => ({ count: 0 }))
+vi.mock('@qbit-oss/api', async importOriginal => {
+  const api = await importOriginal<typeof import('@qbit-oss/api')>()
+  return {
+    ...api,
+    txidFromRawTx: (rawTxHex: string) => {
+      txidHashes.count += 1
+      return api.txidFromRawTx(rawTxHex)
+    },
+  }
+})
+
 // Two confirmed outputs to spend, and an unconfirmed one the example leaves alone.
 const UTXOS: EsploraUtxo[] = [
   { txid: 'a1'.repeat(32), vout: 1, value: 100_000, status: { confirmed: true, block_height: 120 } },
@@ -608,7 +621,7 @@ describe('send-payment example', () => {
 
       expect(codeOf(error)).toBe('corrupt_pending')
       expect(error instanceof SendPaymentError && error.txid).toBe(paid.txid)
-      expect(error instanceof Error && error.message).toContain('restore it with getTxHex(txid)')
+      expect(error instanceof Error && error.message).toContain('restore the record as PaymentStore says')
       expect(esplora.requests).toEqual([])
       expect(reservations).toEqual([])
       expect([...pending]).toEqual([[paid.txid, stored]])
@@ -679,23 +692,65 @@ describe('send-payment example', () => {
     }
   })
 
-  it.each<[string, { endMs?: number; pollMs?: number }]>([
+  it.each<[string, { endMs?: number; pollMs?: number; signal?: () => unknown }]>([
     ['a zero poll interval', { pollMs: 0 }],
     ['a NaN poll interval', { pollMs: Number.NaN }],
     ['a poll interval longer than a timer can wait', { pollMs: 2_147_483_648 }],
     ['a NaN end', { endMs: Number.NaN }],
     ['an infinite end', { endMs: Number.POSITIVE_INFINITY }],
     ['an end further away than a timer can wait', { endMs: 2_147_483_647 + 60_000 }],
-  ])('refuses to reconcile with %s, before any request', async (_, { endMs = 5_000, pollMs = 1 }) => {
+    ['a signal that is not an AbortSignal', { signal: () => ({}) }],
+    ['no signal', { signal: () => undefined }],
+  ])(
+    'refuses to reconcile with %s, before any request',
+    async (_, { endMs = 5_000, pollMs = 1, signal = () => AbortSignal.timeout(1_000) }) => {
+      const esplora = stubEsplora({ address: from })
+      const client = new EsploraClient({ baseUrl: BASE_URL, fetchFn: esplora.fetchFn })
+      // Unchecked, such a call would poll back to back, or never settle, until
+      // the signal aborts, or fail only once it had started waiting.
+      const options = { end: Date.now() + endMs, signal: signal() as AbortSignal, pollMs }
+
+      const error = await caught(reconcileBroadcast(client, paid, options))
+
+      expect(codeOf(error)).toBe('invalid_options')
+      expect(esplora.requests).toEqual([])
+    }
+  )
+
+  it.each<[string, () => unknown]>([
+    // reconcileBroadcast(client, rawTxHex, options), as an earlier version of this example took it.
+    ['the hex alone', () => paid.rawTxHex],
+    ['nothing', () => undefined],
+    ['null', () => null],
+    ['a record without its hex', () => ({ txid: paid.txid })],
+    ['a record whose txid is not a string', () => ({ txid: 1, rawTxHex: paid.rawTxHex })],
+  ])(
+    'refuses %s in place of the pending record as invalid_options, not corrupt_pending, before any request',
+    async (_, record) => {
+      const esplora = stubEsplora({ address: from })
+      const client = new EsploraClient({ baseUrl: BASE_URL, fetchFn: esplora.fetchFn })
+
+      const error = await caught(
+        reconcileBroadcast(client, record() as { txid: string; rawTxHex: string }, reconcileOptions(5_000))
+      )
+
+      expect(codeOf(error)).toBe('invalid_options')
+      expect(error instanceof Error && error.message).toContain('an object { txid, rawTxHex } with both strings')
+      expect(esplora.requests).toEqual([])
+    }
+  )
+
+  it("parses and hashes the record's hex once", async () => {
     const esplora = stubEsplora({ address: from })
     const client = new EsploraClient({ baseUrl: BASE_URL, fetchFn: esplora.fetchFn })
-    // Unchecked, such a call would poll back to back, or never settle, until the signal aborts.
-    const options = { end: Date.now() + endMs, signal: AbortSignal.timeout(1_000), pollMs }
+    esplora.known.set(paid.txid, { confirmed: false })
+    txidHashes.count = 0
 
-    const error = await caught(reconcileBroadcast(client, paid, options))
+    await reconcileBroadcast(client, paid, reconcileOptions(5_000))
 
-    expect(codeOf(error)).toBe('invalid_options')
-    expect(esplora.requests).toEqual([])
+    // The stub hashes nothing to answer a lookup, so every hash is the example's.
+    expect(lookups(esplora.requests)).toBe(1)
+    expect(txidHashes.count).toBe(1)
   })
 
   it.each(CORRUPT_HEX)(
@@ -709,7 +764,7 @@ describe('send-payment example', () => {
 
       expect(codeOf(error)).toBe('corrupt_pending')
       expect(error instanceof SendPaymentError && error.txid).toBe(paid.txid)
-      expect(error instanceof Error && error.message).toContain('restore it with getTxHex(txid)')
+      expect(error instanceof Error && error.message).toContain('restore the record as PaymentStore says')
       expect(esplora.requests).toEqual([])
     }
   )
@@ -758,6 +813,28 @@ describe('send-payment example', () => {
 
     await reconcileBroadcast(client, store.pendingTransaction()!, reconcileOptions(5_000))
     expect(pending.get(txid)).toBe(rawTxHex)
+    expect(esplora.broadcasts).toEqual([rawTxHex]) // the lookup found it: never re-sent
+    expect(codeOf(await caught(send()))).toBe('pending')
+  })
+
+  it("restores a record whose txid is the damaged field once the indexer returns the hex's own transaction", async () => {
+    // The node accepted the payment, and the store's copy of its txid was damaged since.
+    const { esplora, client, send, store, pending } = setUp()
+    const { txid, rawTxHex } = await send()
+    const damaged = `${txid.slice(0, -1)}${txid.endsWith('0') ? '1' : '0'}`
+    pending.delete(txid)
+    pending.set(damaged, rawTxHex)
+    expect(codeOf(await caught(send()))).toBe('corrupt_pending')
+    const notFound = await caught(client.getTxHex(damaged))
+    expect(QbitApiError.is(notFound) && notFound.kind).toBe('not_found')
+
+    // The hex's own txid: the indexer returns that same transaction, so the record takes that txid.
+    const ownTxid = txidFromRawTx(store.pendingTransaction()!.rawTxHex)
+    expect(await client.getTxHex(ownTxid)).toBe(rawTxHex)
+    pending.delete(damaged)
+    pending.set(ownTxid, rawTxHex)
+
+    await reconcileBroadcast(client, store.pendingTransaction()!, reconcileOptions(5_000))
     expect(esplora.broadcasts).toEqual([rawTxHex]) // the lookup found it: never re-sent
     expect(codeOf(await caught(send()))).toBe('pending')
   })
@@ -827,6 +904,9 @@ describe('send-payment example', () => {
     ['a deadline longer than a timer can wait', { deadlineMs: 2_147_483_648 }, 'invalid_options'],
     ['a zero poll interval', { pollMs: 0 }, 'invalid_options'],
     ['a poll interval longer than a timer can wait', { pollMs: 2_147_483_648 }, 'invalid_options'],
+    // Unchecked, either would fail only once the signer load and the scan had started.
+    ['a signal that is not an AbortSignal', { signal: {} as AbortSignal }, 'invalid_options'],
+    ['no signal', { signal: undefined as unknown as AbortSignal }, 'invalid_options'],
   ])('refuses %s before any request or signature', async (_, params, code) => {
     const { esplora, send, reservations, pending } = setUp()
 
@@ -1417,6 +1497,58 @@ describe('send-payment example', () => {
     }
   })
 
+  it('gives the last round its resubmission with the time left at the one reading that made it the last', async () => {
+    // The first POST never reached the node. Once the lookup is over, the
+    // clock reads `msBeforeEnd` before `end`, then `end`, as if it ticked
+    // between two readings.
+    for (const [msBeforeEnd, resubmits] of [
+      [1, true],
+      [0, false],
+    ] as const) {
+      const esplora = stubEsplora({ address: from })
+      await onFakeClock(async () => {
+        const options = reconcileOptions(1_000, 1_000)
+        let clock: { mockRestore(): void } | undefined
+        class TicksAfterLookupClient extends BudgetsClient {
+          override async getTx(...args: Parameters<EsploraClient['getTx']>): ReturnType<EsploraClient['getTx']> {
+            try {
+              return await super.getTx(...args)
+            } finally {
+              clock = vi
+                .spyOn(Date, 'now')
+                .mockReturnValueOnce(options.end - msBeforeEnd)
+                .mockReturnValue(options.end)
+            }
+          }
+        }
+        const client = new TicksAfterLookupClient({ baseUrl: BASE_URL, fetchFn: esplora.fetchFn })
+        try {
+          const error = await settledWithin(reconcileBroadcast(client, paid, options), 1_000)
+
+          // The lookup misses with less than two polls left, so its round is
+          // the last: with 1 ms left, it resubmits with that 1 ms, and with
+          // none, it sends nothing.
+          const name = `${msBeforeEnd} ms before end`
+          const budgets = client.calls.map(({ request, deadlineMs }) => [request, deadlineMs])
+          if (resubmits) {
+            expect(error, name).toBeUndefined()
+            expect(budgets, name).toEqual([
+              ['lookup', 250],
+              ['broadcast', 1],
+            ])
+            expect(esplora.broadcasts, name).toEqual([paid.rawTxHex])
+          } else {
+            expect(QbitApiError.is(error) && error.kind, name).toBe('unknown_outcome')
+            expect(budgets, name).toEqual([['lookup', 250]])
+            expect(esplora.broadcasts, name).toEqual([])
+          }
+        } finally {
+          clock?.mockRestore()
+        }
+      })
+    }
+  })
+
   it('handles every request it starts when the deadline passes between two readings of the clock', async () => {
     // Neither request is ever answered, so each fails only at its own deadline.
     const { esplora, send, reservations, pending } = setUp({ stallReads: true })
@@ -1475,6 +1607,41 @@ describe('send-payment example', () => {
       })
     } finally {
       signerLoad.throws = undefined
+      process.off('unhandledRejection', onUnhandled)
+    }
+  })
+
+  it('starts no signer load and leaves no timer behind when it cannot listen for a cancel', async () => {
+    // An AbortSignal whose addEventListener throws. Had the payment started
+    // loading the signer first, the failed load would go unhandled, and the
+    // wait's timer would stay armed until the deadline.
+    const controller = new AbortController()
+    const thrown = new Error('test: no listener')
+    Object.defineProperty(controller.signal, 'addEventListener', {
+      value: () => {
+        throw thrown
+      },
+    })
+    const { esplora, send, reservations, pending } = setUp({}, controller)
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => void unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    signerLoad.during = () => Promise.reject(new Error('test: the signer failed to load'))
+    try {
+      await onFakeClock(async () => {
+        const error = await settledWithin(send(20_000), 0)
+        // Node reports any rejection nothing handles once the event loop turns.
+        await new Promise(resolve => setImmediate(resolve))
+
+        expect(error).toBe(thrown)
+        expect(unhandled).toEqual([])
+        expect(vi.getTimerCount()).toBe(0)
+        expect(esplora.requests).toEqual([]) // the client could not listen either
+        expect(reservations).toEqual([])
+        expect(pending.size).toBe(0)
+      })
+    } finally {
+      signerLoad.during = undefined
       process.off('unhandledRejection', onUnhandled)
     }
   })
@@ -1726,7 +1893,7 @@ describe('send-payment example', () => {
 
         expect(abandonCodeOf(error)).toBe('corrupt_pending')
         expect(error instanceof AbandonPaymentError && error.txid).toBe(paid.txid)
-        expect(error instanceof Error && error.message).toContain('restore it with getTxHex(txid)')
+        expect(error instanceof Error && error.message).toContain('restore the record as PaymentStore says')
         expect(esplora.requests).toEqual([])
         expect(pending.get(paid.txid)).toBe(stored)
       }
