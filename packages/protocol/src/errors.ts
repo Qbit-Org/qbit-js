@@ -1,5 +1,6 @@
+import type { getQbitNetwork, qbitNetworks } from './networks'
 import type { Psbt } from './psbt'
-import type { P2mrSigningPlanRef } from './signing'
+import type { P2mrPsbtSignFn, P2mrSigningPlanRef } from './signing'
 
 /**
  * The `code` of a {@link QbitProtocolError}:

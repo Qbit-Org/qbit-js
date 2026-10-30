@@ -1,5 +1,7 @@
 import type { BroadcastTxOptions, EsploraAddressStats, EsploraFeeEstimates, MempoolRecommendedFees } from './index'
 import { QbitApiError } from './errors'
+import type { EsploraClient } from './esplora-client'
+import type { MempoolQbitClient } from './mempool-qbit-client'
 import { tryTxidFromRawTx } from './raw-tx'
 import { isRecord, TXID_PATTERN } from './validation'
 

@@ -18,13 +18,12 @@ means the hex parses or `{ txid }` was passed ([The txid](#the-txid)).
 
 | Reply or event | `EsploraClient` | `MempoolQbitClient` (`/tx`) |
 | --- | --- | --- |
-| Abort or expired `deadlineMs` before the POST is sent, or while a `429` body is read | `aborted` / `timeout` | same |
+| Abort or expired `deadlineMs` before the POST is sent or re-sent, or after a `429` whose whole body is neither already-known nor a relayed transport failure ⁷ | `aborted` / `timeout` | same |
 | Connection failure before anything was sent ¹ | retried, then `network` | same |
-| `429` with retries left, and no `Retry-After` or one at most `maxRetryAfterMs`, its body read or not | re-sent after `Retry-After` or the backoff | same |
-| `429` whose body fails or stalls, past `timeoutMs` included, once not retried ⁴ | `rate_limit` | same |
+| `429` with retries left, and no `Retry-After` or one at most `maxRetryAfterMs`, whose whole body was read and is neither already-known nor a relayed transport failure ⁷ | re-sent after `Retry-After` or the backoff | same |
 | Any other network error, an attempt over `timeoutMs`, or an abort or deadline once the POST may have been sent ² | `unknown_outcome` | same |
 | Redirect refused: a `3xx`, an `opaqueredirect`, or a reply the runtime followed (`redirected`, or a `url` other than the one requested) ³ | `unknown_outcome` | same |
-| Any other reply whose body fails or stalls | `unknown_outcome` | same |
+| Any reply whose body fails, stalls (past `timeoutMs` included) or exceeds `maxResponseBytes`, a `429` included ⁶ | `unknown_outcome` | same |
 | `2xx` that echoes the txid ⁵ | resolves | same |
 | Any other `2xx`, an already-known or rejection body included | `unknown_outcome` | same |
 | `501` | `http` | `/tx/push` |
@@ -61,6 +60,21 @@ waited on. `rate_limit` carries `retryAfterMs` when the reply sent
 ⁵ With no known txid, a `2xx` resolves only when its body is itself a 64-hex
 txid.
 
+⁶ The client cannot judge a reply whose body it could not read in full, and
+the node may have accepted the transaction before the backend answered. A
+`429` is no exception: only its body shows that nothing was processed, and it
+might instead have been already-known, which resolves, or a relayed transport
+failure. The client stops reading a body as soon as it passes
+`maxResponseBytes` (see [Configuration](configuration.md#response-size-limit)),
+and never re-sends such a reply. The `unknown_outcome` carries the error that
+ended the read as `cause`: `response_too_large`, `timeout`, `aborted` or
+`parse`. No submission ends as `response_too_large`.
+
+⁷ Only such a `429` proves that nothing was processed, so the client re-sends
+it, and an abort or expired deadline while it waits to, or once the whole
+`429` has arrived, is definite. A `429` that is already-known or a relayed
+transport failure is judged by the rows below it, never re-sent.
+
 `/tx/push` means `MempoolQbitClient` submits again through the `/tx/push` form
 route and returns that call's result, judged by the `EsploraClient` column. An
 uncertain `/tx` attempt never falls back, and neither does an abort or expired
@@ -72,7 +86,8 @@ original ([Recovering from an unknown outcome](#recovering-from-an-unknown-outco
 
 A `QbitApiError` thrown by a custom `fetchFn` passes through as it is, and on
 `MempoolQbitClient` one that matches a `/tx/push` row falls back. One of kind
-`network`, `timeout` or `aborted` becomes `unknown_outcome` with it as `cause`,
+`network`, `timeout`, `aborted` or `response_too_large` (which says a reply
+arrived) becomes `unknown_outcome` with it as `cause`,
 except a `network` error from this copy of the package whose original cause is
 a connection failure before anything was sent, which is retried. An error from
 another copy (the other build, or another version) is judged by its public

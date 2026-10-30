@@ -30,6 +30,7 @@ own page.
 - crash-safe P2MR signing for stateful signers: see [signing-and-finalization.md](signing-and-finalization.md)
 - error classification across builds: see [error-classification.md](error-classification.md)
 - qbit Core's restricted-output consensus rule: see [consensus-checks.md](consensus-checks.md)
+- qbit Core's `CheckTransaction` shape rules (inputs and outputs present, no outpoint spent twice, no null outpoint) before signing: see [consensus-checks.md](consensus-checks.md)
 - sighash-type guardrails on the signing path, sighash-type enforcement at
   finalization, and signing and finalization agreement: see
   [signing-and-finalization.md](signing-and-finalization.md)

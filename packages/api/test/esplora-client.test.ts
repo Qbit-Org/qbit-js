@@ -707,6 +707,59 @@ describe('MempoolQbitClient endpoints', () => {
     ])
   })
 
+  it('accepts a continuation cursor in uppercase or mixed case, as EsploraClient does', async () => {
+    const cursorTx = { ...confirmedTx, txid: 'ab'.repeat(32) }
+    const nextTx = { ...confirmedTx, txid: 'cd'.repeat(32) }
+    const firstPage = [
+      mempoolTx,
+      ...Array.from({ length: 8 }, (_, index) => ({ ...confirmedTx, txid: String(index + 1).padStart(64, 'e') })),
+      cursorTx,
+    ]
+    const { fetchFn, calls } = makeFetch((_i, url) => {
+      if (url.endsWith(`/address/${ADDR}/txs`)) return { body: JSON.stringify(firstPage) }
+      if (url.endsWith(`/address/${ADDR}/txs?after_txid=${cursorTx.txid}`)) {
+        return { body: JSON.stringify([nextTx]) }
+      }
+      throw new Error(`unexpected url ${url}`)
+    })
+    const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
+
+    await expect(client.getAddressTxs(ADDR, 'AB'.repeat(32))).resolves.toEqual([nextTx])
+    await expect(client.getAddressTxs(ADDR, 'Ab'.repeat(32))).resolves.toEqual([nextTx])
+    // The internal cursor is the backend's own lowercase txid.
+    expect(calls.map(call => call.url)).toEqual([
+      `${BASE}/address/${ADDR}/txs`,
+      `${BASE}/address/${ADDR}/txs?after_txid=${cursorTx.txid}`,
+      `${BASE}/address/${ADDR}/txs`,
+      `${BASE}/address/${ADDR}/txs?after_txid=${cursorTx.txid}`,
+    ])
+  })
+
+  it('rejects a cursor that is not a string as invalid_cursor, before any request', async () => {
+    // An untyped caller (JSON input, say) can pass anything; no such cursor names a txid.
+    const { fetchFn, calls } = makeFetch(() => ({ body: JSON.stringify([mempoolTx, confirmedTx]) }))
+    const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
+
+    for (const [cursor, shown] of [
+      [42, 'number'],
+      [{ txid: confirmedTx.txid }, 'object'],
+      [null, 'null'],
+      [Symbol('cursor'), 'symbol'],
+      [true, 'boolean'],
+    ] as const) {
+      const error = await client.getAddressTxs(ADDR, cursor as unknown as string).then(
+        () => undefined,
+        (caught: unknown) => caught
+      )
+      expect(error).toBeInstanceOf(QbitApiError)
+      expect(error).toMatchObject({
+        kind: 'invalid_cursor',
+        message: `mempool-qbit address history cursor is not a txid string but ${shown} (${ADDR})`,
+      })
+    }
+    expect(calls).toHaveLength(0)
+  })
+
   it('fails closed when a continuation cursor is stale or unconfirmed', async () => {
     const { fetchFn, calls } = makeFetch(() => ({
       body: JSON.stringify([mempoolTx, confirmedTx]),

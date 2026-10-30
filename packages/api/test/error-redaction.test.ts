@@ -737,7 +737,7 @@ describe('error sites of rate limiting, body timeouts, cancellation and broadcas
     expectNoSecret(error)
   })
 
-  it('redacts rate_limit errors carrying retryAfterMs', async () => {
+  it("redacts a read's rate_limit carrying retryAfterMs, and a submission's unreadable 429", async () => {
     const { fetchFn } = fetchReplying(url =>
       url.endsWith('/tx')
         ? failingBody(new TypeError(`terminated: ${url}`), { status: 429, headers: { 'retry-after': '5' } })
@@ -755,14 +755,16 @@ describe('error sites of rate limiting, body timeouts, cancellation and broadcas
     })
     expectNoSecret(read)
 
+    // A submission's 429 whose body could not be read may have said the node
+    // has the transaction, so it is an unknown outcome.
     const submission = await rejection(client.broadcastTx(HEX, { txid: TXID }))
     expect(submission).toMatchObject({
-      kind: 'rate_limit',
+      kind: 'unknown_outcome',
       status: 429,
-      retryAfterMs: 5_000,
       url: `${SAFE_BASE}/tx`,
-      message: `HTTP 429 from ${SAFE_BASE}/tx (reply body could not be read)`,
+      message: expect.stringContaining('(HTTP 429 reply body could not be read)'),
     })
+    expect(submission.cause).toMatchObject({ kind: 'parse', status: 429 })
     expectNoSecret(submission)
   })
 

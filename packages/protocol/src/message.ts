@@ -19,7 +19,7 @@ import {
   assertBytes,
   assertByteLength,
 } from './bytes'
-import { decodeP2mrAddress, canonicalP2mrAddress } from './addresses'
+import { decodeP2mrAddress, canonicalP2mrAddress, type p2mrAddressFromPubkey } from './addresses'
 import { singleKeyLeafScript, p2mrLeafHash, buildControlBlock, verifyControlBlock } from './scripts'
 
 /**

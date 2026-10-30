@@ -1,3 +1,9 @@
+import type { extractP2mrTransaction } from './psbt'
+import type { encodeP2mrPsbtLeafScriptField, encodeP2mrPsbtScriptSigField } from './psbt-fields'
+import type { verifyControlBlock } from './scripts'
+import type { p2mrSighash } from './sighash'
+import type { finalizeP2mrPsbt } from './signing'
+
 /**
  * Witness version of P2MR outputs. Their scriptPubKey starts with `OP_2`, and
  * the data part of their address with `z` (`qb1z…` on mainnet).

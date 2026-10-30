@@ -394,10 +394,114 @@ describe.each([
     }
     for (const baseUrl of [
       'https://esplora.example/regtest/api/',
-      'https://b\u00fccher.example/api',
+      'https://xn--bcher-kva.example/api',
       'http://127.0.0.1:3002',
     ]) {
       expect(() => new EsploraClient({ baseUrl, fetchFn }), baseUrl).not.toThrow()
     }
+  })
+
+  it('refuses a non-ASCII host, which the native stack would answer from its punycode form', async () => {
+    vi.stubGlobal('URL', RNURL)
+    // The platform requests and reports the punycode host, so before this check
+    // every reply was refused as a followed redirect, and a broadcast was unknown_outcome.
+    const { fetchFn, calls } = followingFetch(url => url.replace('b\u00fccher', 'xn--bcher-kva'), { body: '7' })
+    for (const baseUrl of [
+      'https://b\u00fccher.example/api',
+      'https://B\u00dcCHER.example/api',
+      'https://xn--bcher-kva.b\u00fccher.example',
+    ]) {
+      for (const Client of [EsploraClient, MempoolQbitClient]) {
+        expect(() => new Client({ baseUrl, fetchFn }), baseUrl).toThrow(
+          expect.objectContaining({
+            kind: 'http',
+            message:
+              'baseUrl host must be ASCII where the runtime has no standard URL parser (React Native); pass its punycode (xn--) form',
+          })
+        )
+      }
+    }
+    expect(calls).toHaveLength(0)
+
+    // Its punycode form works.
+    const client = new EsploraClient({ baseUrl: 'https://xn--bcher-kva.example/api', fetchFn, sleepFn: noSleep })
+    await expect(client.getTipHeight()).resolves.toBe(7)
+  })
+
+  it('refuses a path character the native stack would percent-encode, and accepts its encoded form', async () => {
+    vi.stubGlobal('URL', RNURL)
+    // The platform requests and reports the encoded path, as a URL Standard
+    // parser would; before this check every reply looked redirected.
+    const encode = (url: string) =>
+      url.replace('b\u00fccher', 'b%C3%BCcher').replace('a^b', 'a%5Eb').replace('{v}', '%7Bv%7D')
+    const { fetchFn, calls } = followingFetch(encode, { body: '7' })
+    const message =
+      "baseUrl must be percent-encoded where the runtime has no standard URL parser (React Native): escape each character other than ASCII letters, digits and -._~!$&'()*+,;=:@/ as the %XX of its UTF-8 bytes, as encodeURIComponent does for a path segment"
+    for (const baseUrl of [
+      'https://esplora.example/b\u00fccher/api',
+      'https://esplora.example/api/\u{1f600}',
+      'https://esplora.example/a^b',
+      'https://esplora.example/{v}/api',
+      'https://esplora.example/a|b',
+      'https://esplora.example/a`b',
+      'https://esplora.example/a"b',
+      'https://esplora.example/a<b>',
+      'https://esplora.example/a[0]',
+      'https://esplora.example/100%',
+      'https://esplora.example/%zz/api',
+    ]) {
+      for (const Client of [EsploraClient, MempoolQbitClient]) {
+        expect(() => new Client({ baseUrl, fetchFn }), baseUrl).toThrow(
+          expect.objectContaining({ kind: 'http', message })
+        )
+      }
+    }
+    // A query is refused on every runtime, encoded or not.
+    for (const baseUrl of ['https://esplora.example/api?k=b\u00fccher', 'https://esplora.example/api?k=b%C3%BCcher']) {
+      expect(() => new EsploraClient({ baseUrl, fetchFn }), baseUrl).toThrow(
+        'baseUrl must be an absolute http(s) URL without whitespace, control or format characters, backslashes, credentials, query or fragment'
+      )
+    }
+    expect(calls).toHaveLength(0)
+
+    // The encoded forms, an IPv6 host and the characters RFC 3986 allows raw all work.
+    for (const baseUrl of [
+      'https://esplora.example/b%C3%BCcher/api',
+      'https://esplora.example/a%5Eb',
+      'https://esplora.example/%7Bv%7D/api',
+      "https://esplora.example/-._~!$&'()*+,;=:@/api",
+    ]) {
+      const client = new EsploraClient({ baseUrl, fetchFn, sleepFn: noSleep })
+      await expect(client.getTipHeight(), baseUrl).resolves.toBe(7)
+    }
+    expect(() => new EsploraClient({ baseUrl: 'http://[::1]:3002/api', fetchFn })).not.toThrow()
+
+    // A standard URL parser encodes the configured path too, so there the raw form works.
+    vi.unstubAllGlobals()
+    const standard = new EsploraClient({
+      baseUrl: 'https://esplora.example/b\u00fccher/api',
+      fetchFn,
+      sleepFn: noSleep,
+    })
+    await expect(standard.getTipHeight()).resolves.toBe(7)
+  })
+})
+
+describe('with a standard URL parser', () => {
+  it('still accepts a non-ASCII host, which it maps to punycode', async () => {
+    // A standard runtime requests and reports the punycode host, so the reply
+    // matches only because schemeAndHost maps the configured host to it too.
+    const { fetchFn, calls, responses } = followingFetch(url => url.replace('b\u00fccher', 'xn--bcher-kva'), {
+      body: '7',
+    })
+    const client = new EsploraClient({ baseUrl: 'https://b\u00fccher.example/api', fetchFn, sleepFn: noSleep })
+    await expect(client.getTipHeight()).resolves.toBe(7)
+    expect(calls.map(call => call.url)).toEqual(['https://b\u00fccher.example/api/blocks/tip/height'])
+    expect(responses.map(response => response.url)).toEqual(['https://xn--bcher-kva.example/api/blocks/tip/height'])
+
+    // And it still refuses a reply from another host.
+    const other = followingFetch(url => url.replace('b\u00fccher', 'xn--other-kva'), { body: '7' })
+    const refused = new EsploraClient({ baseUrl: 'https://b\u00fccher.example/api', fetchFn: other.fetchFn })
+    expect((await rejection(refused.getTipHeight())).kind).toBe('http')
   })
 })

@@ -23,7 +23,7 @@ import {
   reserveAddressHistoryTransactions,
   verifiedAddressHistory,
 } from './validation'
-import { feeEstimatesFromMempoolRecommendedFees, resolveBroadcastTxid } from './adapters'
+import { feeEstimatesFromMempoolRecommendedFees, resolveBroadcastTxid, type feeTiersFromEstimates } from './adapters'
 import { shouldRetryBroadcastViaTxPush } from './broadcast'
 import { EsploraClient, type EsploraClientOptions } from './esplora-client'
 
@@ -156,9 +156,8 @@ export class MempoolQbitClient extends EsploraClient {
       const suffix = cursor ? `?after_txid=${encodeURIComponent(cursor)}` : ''
       const rows = reserveAddressHistoryTransactions(
         budget,
-        await this.getJson<unknown>(`/address/${encodeURIComponent(address)}/txs${suffix}`, {
-          signal,
-        }),
+        // Not joined to a GET in flight, whose reply can predate the stats read.
+        await this.getJson<unknown>(`/address/${encodeURIComponent(address)}/txs${suffix}`, { signal }, false),
         maxTransactions,
         address,
         'mempool-qbit',
@@ -199,18 +198,20 @@ export class MempoolQbitClient extends EsploraClient {
    *
    * @param address - The address, URL-encoded into the path.
    * @param afterTxid - The last txid of the previous page, which must be a
-   *   confirmed transaction in the address's history; omit it for the first
+   *   confirmed transaction in the address's history, in either case, as
+   *   {@link EsploraClient.getAddressTxs} takes it; omit it for the first
    *   page.
    * @param options - Cancellation and deadline for the call.
    * @returns Up to 25 confirmed transactions.
-   * @throws {@link QbitApiError} `invalid_cursor` when `afterTxid` is stale,
-   *   unrelated or unconfirmed, a cursor stops advancing, or the stats check
-   *   above fails. `pagination_limit` when the scan needs more than
+   * @throws {@link QbitApiError} `invalid_cursor` when `afterTxid` is not a
+   *   string (before any request), is stale, unrelated or unconfirmed, a
+   *   cursor stops advancing, or the stats check above fails.
+   *   `pagination_limit` when the scan needs more than
    *   `maxAddressHistoryPages` requests. `parse` when a reply is not JSON or
    *   cannot be read, or the stats lack a valid `tx_count`. Any kind a failed
    *   request has (`not_found`, `rate_limit`, `payload_too_large`, `http`,
-   *   `network`, `timeout`, `aborted`); qbit-electrs answers a cursor it finds
-   *   nowhere with `422` (`http`).
+   *   `network`, `timeout`, `aborted`, `response_too_large`); qbit-electrs
+   *   answers a cursor it finds nowhere with `422` (`http`).
    */
   override getAddressTxs(address: string, afterTxid?: string, options?: RequestOptions): Promise<EsploraTx[]> {
     return this.runOperation(options, signal => this.scanAddressTxs(address, afterTxid, signal))
@@ -221,7 +222,18 @@ export class MempoolQbitClient extends EsploraClient {
     afterTxid: string | undefined,
     signal: AbortSignal
   ): Promise<EsploraTx[]> {
+    // A caller without types can pass anything, and no other value names a
+    // transaction: it could never match, so the scan would end in this error.
+    if (afterTxid !== undefined && typeof afterTxid !== 'string') {
+      throw new QbitApiError(
+        'invalid_cursor',
+        `mempool-qbit address history cursor is not a txid string but ${afterTxid === null ? 'null' : typeof afterTxid} (${address})`
+      )
+    }
     const confirmedTxs: EsploraTx[] = []
+    // Txids compare case-insensitively, as qbit-electrs parses the parent's
+    // `/txs/chain/:afterTxid` cursor in either case; its txids are lowercase.
+    const afterTxidLower = afterTxid?.toLowerCase()
     let cursor: string | undefined
     let continuationFound = afterTxid === undefined
     let cursorIsMempoolTx = false
@@ -247,9 +259,9 @@ export class MempoolQbitClient extends EsploraClient {
       for (const tx of txs) {
         if (!continuationFound) {
           if (isConfirmedTx(tx)) seenTxids.add(tx.txid)
-          if (tx.txid !== afterTxid) continue
+          if (typeof tx.txid !== 'string' || tx.txid.toLowerCase() !== afterTxidLower) continue
           if (!isConfirmedTx(tx)) {
-            throw this.invalidAddressHistoryCursorError(address, afterTxid)
+            throw this.invalidAddressHistoryCursorError(address, afterTxid!)
           }
           continuationFound = true
           continue
@@ -322,7 +334,8 @@ export class MempoolQbitClient extends EsploraClient {
    *   than `maxAddressHistoryPages` requests. `invalid_cursor` when a cursor
    *   stops advancing. `parse` when a reply is not JSON or cannot be read. Any
    *   kind a failed request has (`not_found`, `rate_limit`,
-   *   `payload_too_large`, `http`, `network`, `timeout`, `aborted`).
+   *   `payload_too_large`, `http`, `network`, `timeout`, `aborted`,
+   *   `response_too_large`).
    */
   override getAddressMempoolTxs(address: string, options?: RequestOptions): Promise<EsploraTx[]> {
     return this.runOperation(options, signal => this.scanAddressMempoolTxs(address, signal))
@@ -373,8 +386,9 @@ export class MempoolQbitClient extends EsploraClient {
    * @returns The parsed reply.
    * @throws {@link QbitApiError} when the request fails (`not_found`,
    *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
-   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
-   *   reply is not JSON or cannot be read.
+   *   refused redirect; `network`; `timeout`; `aborted`; `response_too_large`
+   *   for a reply over `maxResponseBytes`), or `parse` when the reply is not
+   *   JSON or cannot be read.
    */
   getMempoolRecommendedFees(options?: RequestOptions): Promise<MempoolRecommendedFees> {
     return this.getJson<MempoolRecommendedFees>('/fees/recommended', options)
@@ -393,7 +407,7 @@ export class MempoolQbitClient extends EsploraClient {
    *   read, or is not an object whose `fastestFee`, `halfHourFee` and `hourFee`
    *   are finite numbers above 0; any kind a failed request has (`not_found`,
    *   `rate_limit`, `payload_too_large`, `http`, `network`, `timeout`,
-   *   `aborted`).
+   *   `aborted`, `response_too_large`).
    */
   override async getFeeEstimates(options?: RequestOptions): Promise<EsploraFeeEstimates> {
     return feeEstimatesFromMempoolRecommendedFees(await this.getMempoolRecommendedFees(options))

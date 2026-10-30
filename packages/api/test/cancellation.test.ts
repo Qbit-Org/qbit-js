@@ -398,9 +398,10 @@ describe('caller cancellation (AbortSignal)', () => {
 describe('abortable backoff', () => {
   /**
    * A 429 whose body never arrives and never finishes cancelling; records each
-   * cancel request. A submission only retries a 429, which proves it was not
-   * processed. The body is read under the attempt timer, so a short
-   * `timeoutMs` ends the read and requests the cancel.
+   * cancel request. A read retries the attempt that timed out on it (a
+   * submission would not: its unread 429 body may have carried a verdict). The
+   * body is read under the attempt timer, so a short `timeoutMs` ends the read
+   * and requests the cancel.
    */
   function unsettlingCancelFetch(): { fetchFn: typeof fetch; calls: unknown[]; cancels: number[] } {
     const cancels: number[] = []
@@ -422,7 +423,7 @@ describe('abortable backoff', () => {
     const { fetchFn, calls, cancels } = unsettlingCancelFetch()
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs: 5, retries: 2, retryBaseDelayMs: 60_000 })
 
-    const outcome = track(client.broadcastTx('00', { signal: controller.signal }))
+    const outcome = track(client.getTipHash({ signal: controller.signal }))
     await vi.advanceTimersByTimeAsync(10)
     expect(calls).toHaveLength(1)
     // Cleanup was still requested, just not awaited.
@@ -440,7 +441,7 @@ describe('abortable backoff', () => {
     const { fetchFn, calls, cancels } = unsettlingCancelFetch()
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, retryBaseDelayMs: 60_000 })
 
-    const outcome = track(client.broadcastTx('00', { deadlineMs: 500 }))
+    const outcome = track(client.getTipHash({ deadlineMs: 500 }))
     await vi.advanceTimersByTimeAsync(499)
     expect(outcome.settled).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
@@ -469,7 +470,7 @@ describe('abortable backoff', () => {
     )
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs: 5, retries: 2, retryBaseDelayMs: 100 })
 
-    const outcome = track(client.broadcastTx('00'))
+    const outcome = track(client.getTipHash())
     await vi.advanceTimersByTimeAsync(105)
     expect(outcome.value).toBe('ab'.repeat(32))
     expect(cancels).toEqual([0])

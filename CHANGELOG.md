@@ -36,6 +36,37 @@ breaking changes bump MINOR.
   and `@noble/hashes` has no `sha2` entry point before 1.3.3, so this release
   fails to load with an override below 1.3.3. `@noble/hashes` 1.8.0 declares
   `engines` `node: ^14.21.3 || >=16`, where 1.3.0 declared none.
+- `serializeP2mrDescriptor`, `p2mrRootFromDescriptor`,
+  `p2mrAddressFromDescriptor` and `hasP2mrStandardSatisfaction` throw
+  `INVALID_DESCRIPTOR` for a descriptor object whose tree reaches one node
+  object twice, through a shared subtree or a cycle. They bounded their walk
+  of an object's tree by depth alone and followed every path, so 100 levels of
+  `{ type: 'branch', left: prev, right: prev }`, 101 objects with 2^100 paths,
+  passed the depth check and never finished. Each object is now visited once.
+  A cycle fails with this error instead of the depth one, and a tree that
+  places one leaf object at two positions is refused too: give each position
+  its own object. Trees from `parseP2mrDescriptor` never share nodes.
+- `createP2mrPsbt`, `validateP2mrSigningPlans` and `signP2mrPsbt` throw
+  `INVALID_PSBT` for a transaction without inputs or outputs, with two inputs
+  spending the same outpoint, or with an input spending the null outpoint,
+  which qbit Core's `CheckTransaction` rejects (`bad-txns-vin-empty`,
+  `bad-txns-vout-empty`, `bad-txns-inputs-duplicate`,
+  `bad-txns-prevout-null`; as the only input, a null outpoint makes a
+  coinbase, which Core rejects too). They built such a PSBT (one without
+  inputs then failed `parsePsbt`), and signing called the signer for every
+  plan, spending stateful SLH-DSA key uses on a transaction no node accepts.
+  The signing checks run before any signer call. `parsePsbt` and
+  `decodePsbt` still accept such a PSBT, as Core's PSBT decoder does, except
+  one without inputs, which `parsePsbt` already refused.
+- `parsePsbt`, `combinePsbts` and `decodePsbt` (and so `finalizeP2mrPsbt`,
+  `validateP2mrSigningPlans` and `signP2mrPsbt`) throw `INVALID_PSBT` for a
+  key with data after a type byte qbit Core requires alone, as Core does
+  ("key is more than one byte type"): global `0x00` and `0xfb`; input `0x00`,
+  `0x01`, `0x03`, `0x04`, `0x05`, `0x07`, `0x08`, `0x13`, `0x17` and `0x18`;
+  output `0x00`, `0x01`, `0x05` and `0x06`. Such keys were kept, and the
+  helpers match these types only as one-byte keys, so an input with an
+  `08 00` record decoded as not finalized, and `finalizeP2mrPsbt` appended a
+  real `0x08` beside it, producing a PSBT Core rejects.
 
 ### @qbit-oss/api
 
@@ -95,6 +126,75 @@ breaking changes bump MINOR.
   entry point instead of the deprecated `sha256` one, as `@qbit-oss/protocol`
   does, with the same effect on lockfiles and overrides. `@noble/hashes` 1.8.0
   declares `engines` `node: ^14.21.3 || >=16`, where 1.3.0 declared none.
+- New client option `maxResponseBytes`, new error kind `response_too_large`,
+  and a new export, `DEFAULT_MAX_RESPONSE_BYTES` (64 MiB), the option's
+  default. Response bodies were read without a size limit until the attempt
+  timed out (15 s by default, on each retry), so a hostile or broken backend
+  that streamed without end could push hundreds of MB into a browser or
+  mobile wallet, and every de-duplicated caller copied the reply again. The
+  client now counts each body's bytes as they arrive and cancels the body once
+  it passes the limit: a WHATWG `ReadableStream` body, or an async iterable
+  one such as node-fetch's Node `Readable`, which it destroys. A read over it
+  fails with `response_too_large` and is not retried, and de-duplicated reads
+  share one request, one limit and one copy of the body. A submission's reply
+  over it, a `429` included, is `unknown_outcome`, since the node may have
+  accepted the transaction, and is not re-sent; a custom `fetchFn`'s own
+  `response_too_large` on a submission is `unknown_outcome` too. Where the
+  response has no such body, the limit is checked in bytes on the whole body,
+  so it fails the call but cannot stop the download: on React Native's
+  `fetch`, against the `blob()`'s `size`, before its text is read (not with
+  `arrayBuffer()`, which React Native 0.71 and earlier cannot read), else
+  after `arrayBuffer()`. A Response-like object with only `text()` is
+  measured as its text's UTF-8 encoding. An error keeps at most 200 characters of a body, as
+  a copy that does not keep the body alive; so a JSON `parse` error's
+  `QbitApiError.unredactedCause` is now a copy of `JSON.parse`'s
+  `SyntaxError`, with its message and stack, since V8's own holds the whole
+  body. The default holds every reply
+  about one transaction, for any transaction a block can hold, and a full
+  history page of the largest standard spends; see
+  [Configuration](packages/api/docs/configuration.md#response-size-limit).
+  Code that switches on `kind` meets `response_too_large` in its default
+  branch.
+- `getAddressHistory`, on both clients, fetches its history pages in requests
+  of their own, as it already did its address-stats reads, instead of joining
+  an identical `GET` already in flight. A joined page could have been
+  answered before the first stats read, so after a replacement (RBF) that
+  paid the address the same, which leaves the stats unchanged, a verified
+  history could list the evicted transaction and miss its replacement.
+  `EsploraClient` still reads the pages through `getAddressMempoolTxs` and
+  `getAddressTxs`, so a subclass's overrides of them still apply.
+- `MempoolQbitClient.getAddressTxs` compares its `afterTxid` cursor with the
+  backend's txids case-insensitively, as `EsploraClient.getAddressTxs` takes
+  it. An uppercase or mixed-case cursor never matched qbit-electrs's lowercase
+  txids, so the call threw `invalid_cursor`. A cursor that is not a string
+  (from untyped input) still rejects as `invalid_cursor`, now before any
+  request.
+- Where the runtime's URL parser does not follow the URL Standard (React
+  Native), the client constructors throw an `http` `QbitApiError` for a
+  `baseUrl` whose host is not ASCII, asking for its punycode (`xn--`) form,
+  or that has any other character RFC 3986 allows only percent-encoded (a
+  non-ASCII path character, a space, `^`, `{`, `|`, a `%` that starts no
+  escape, say), asking for its `%XX` UTF-8 escapes. They accepted it, but the
+  native stack requests and reports the encoded URL, so every reply was
+  refused as a followed redirect, and every `broadcastTx` ended as
+  `unknown_outcome`.
+- **Behaviour change for submissions:** `broadcastTx`, on both clients, ends
+  as `unknown_outcome`, without re-sending, when a `429`'s body cannot be read
+  in full: it fails, stalls past `timeoutMs`, passes `maxResponseBytes`, or
+  an abort or the deadline cuts it short. Such a `429` was taken as proof that
+  nothing was processed: it was re-sent while retries remained, and then
+  rejected as `rate_limit`, or as `aborted` / `timeout`. But the outcome table
+  lets a `429`'s body overrule its status (an already-known body resolves, a
+  relayed transport failure is `unknown_outcome`), so an unread one may have
+  reported that the node has, or may have, the transaction. See the
+  [outcome table](packages/api/docs/broadcasting.md#outcomes).
+- **Behaviour change for submissions:** `broadcastTx`, on both clients, judges
+  a `429`'s body before re-sending it. An already-known body resolves with
+  the known txid (`unknown_outcome` without one), and a relayed transport
+  failure is `unknown_outcome`, both at once; only a `429` whose body is
+  neither is re-sent, as before. Such a `429` was re-sent while retries
+  remained, so a later `rate_limit`, `aborted` or `timeout` could hide that
+  the first attempt reached the node.
 
 ## 0.1.0 (2026-10-26)
 

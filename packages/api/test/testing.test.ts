@@ -1477,7 +1477,7 @@ describe('createMockEsplora faults', () => {
     expect(mock.hasTx(LEGACY_TXID)).toBe(false)
   })
 
-  it('re-sends a submission after a stalled 429, which proves nothing was processed', async () => {
+  it('ends a submission whose 429 stalls as unknown_outcome, never re-sent: its body could have said the node has it', async () => {
     const mock = createMockEsplora({
       backend: 'esplora',
       txs: P2MR_FUNDING,
@@ -1490,8 +1490,15 @@ describe('createMockEsplora faults', () => {
       timeoutMs: 20,
       sleepFn: async ms => void sleeps.push(ms),
     })
-    await expect(client.broadcastTx(P2MR_TX.rawTxHex)).resolves.toBe(P2MR_TX.txid)
-    expect(sleeps).toEqual([1_000])
+    const error = await rejection(client.broadcastTx(P2MR_TX.rawTxHex))
+    expect(error).toMatchObject({
+      kind: 'unknown_outcome',
+      status: 429,
+      txid: P2MR_TX.txid,
+      cause: { kind: 'timeout' },
+    })
+    expect(sleeps).toEqual([])
+    expect(mock.requests.filter(request => request.method === 'POST')).toHaveLength(1)
   })
 
   it('ends a stalled read at the call deadline', async () => {

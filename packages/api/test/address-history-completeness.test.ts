@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { EsploraClient, MempoolQbitClient, QbitApiError } from '../src/index'
+import { EsploraClient, MempoolQbitClient, QbitApiError, type RequestOptions } from '../src/index'
 import { createMockEsplora, type MockBackend, type MockFault, type MockTx } from '../src/testing'
 
 // getAddressHistory must not return a history the backend cut short as if it
@@ -409,6 +409,91 @@ describe('EsploraClient.getAddressHistory against the address stats', () => {
     await expect(polled).resolves.toMatchObject({ chain_stats: { tx_count: 2 } })
   })
 
+  it('fetches the pages in requests of their own, so a replacement is not hidden by an earlier GET', async () => {
+    // A replacement (RBF) evicts one mempool transaction for another that pays
+    // the address the same, so the stats read before and after the scan agree.
+    const evicted = txid(0xaa, 0)
+    const replacement = txid(0xab, 0)
+    const state: Node = { chain: [txid(0xcc, 0)], mempool: [evicted] }
+    const held = deferred()
+    // The first reply, answered before the replacement, is held back until the test releases it.
+    const { fetchFn, calls } = makeFetch(async (index, url) => {
+      const reply = electrs(state, url)
+      if (index === 0) await held.promise
+      return reply
+    })
+    const client = esplora(fetchFn)
+
+    // A poller's mempool page is still waiting for its reply.
+    const polled = client.getAddressMempoolTxs(ADDR)
+    state.mempool = [replacement]
+    await expect(client.getAddressHistory(ADDR)).resolves.toEqual(expected(state))
+    expect(calls).toEqual([
+      `${BASE}/address/${ADDR}/txs/mempool`,
+      STATS_URL,
+      `${BASE}/address/${ADDR}/txs/mempool`,
+      `${BASE}/address/${ADDR}/txs/chain`,
+      `${BASE}/address/${ADDR}/txs/chain/${state.chain[0]}`,
+      STATS_URL,
+    ])
+
+    held.resolve()
+    await expect(polled).resolves.toEqual([tx(evicted, false)])
+
+    // A confirmed page in flight is not joined either.
+    const chainHeld = deferred()
+    const chain = makeFetch(async (index, url) => {
+      const reply = electrs(state, url)
+      if (index === 0) await chainHeld.promise
+      return reply
+    })
+    const chainClient = esplora(chain.fetchFn)
+    const polledChain = chainClient.getAddressTxs(ADDR)
+    state.chain = [txid(0xcd, 0)]
+    await expect(chainClient.getAddressHistory(ADDR)).resolves.toEqual(expected(state))
+    expect(chain.calls.filter(url => url === `${BASE}/address/${ADDR}/txs/chain`)).toHaveLength(2)
+    chainHeld.resolve()
+    await expect(polledChain).resolves.toEqual([tx(txid(0xcc, 0), true)])
+  })
+
+  it("reads its pages through a subclass's getAddressMempoolTxs and getAddressTxs, still unshared", async () => {
+    const state: Node = { chain: [txid(0xcc, 0), txid(0xcc, 1)], mempool: [txid(0xaa, 0)] }
+    const held = deferred()
+    const { fetchFn, calls } = makeFetch(async (index, url) => {
+      const reply = electrs(state, url)
+      if (index === 0) await held.promise
+      return reply
+    })
+    const seen: string[] = []
+    class Logging extends EsploraClient {
+      override getAddressMempoolTxs(address: string, options?: RequestOptions) {
+        seen.push('mempool')
+        return super.getAddressMempoolTxs(address, options)
+      }
+
+      override getAddressTxs(address: string, afterTxid?: string, options?: RequestOptions) {
+        seen.push(`chain ${afterTxid ?? 'first'}`)
+        // A spread copy of the options still carries the scan's signal.
+        return super.getAddressTxs(address, afterTxid, { ...options })
+      }
+    }
+    const client = new Logging({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
+
+    // A poller's mempool page is in flight; the scan must not join it.
+    const polled = client.getAddressMempoolTxs(ADDR)
+    seen.length = 0
+    await expect(client.getAddressHistory(ADDR)).resolves.toEqual(expected(state))
+    expect(seen).toEqual(['mempool', 'chain first', `chain ${state.chain[1]}`])
+    expect(calls.filter(url => url === `${BASE}/address/${ADDR}/txs/mempool`)).toHaveLength(2)
+
+    held.resolve()
+    await expect(polled).resolves.toEqual([tx(txid(0xaa, 0), false)])
+    // Outside a scan, identical reads are joined as before.
+    const [a, b] = await Promise.all([client.getAddressMempoolTxs(ADDR), client.getAddressMempoolTxs(ADDR)])
+    expect(a).toEqual(b)
+    expect(calls.filter(url => url === `${BASE}/address/${ADDR}/txs/mempool`)).toHaveLength(3)
+  })
+
   it('stops at an abort during the final stats read', async () => {
     const state = node(2, 0)
     const controller = new AbortController()
@@ -488,6 +573,29 @@ describe('MempoolQbitClient.getAddressHistory against the address stats', () => 
     expect(history).toEqual(expected(state))
     expect(history.mempool).toEqual([tx(arrival, false)])
     expect(statsReads(calls)).toBe(3)
+  })
+
+  it('fetches the pages in requests of their own, so a replacement is not hidden by an earlier GET', async () => {
+    // A replacement (RBF) that pays the address the same leaves the stats unchanged.
+    const evicted = txid(0xaa, 0)
+    const replacement = txid(0xab, 0)
+    const state: Node = { chain: [txid(0xcc, 0)], mempool: [evicted] }
+    const held = deferred()
+    const { fetchFn, calls } = makeFetch(async (index, url) => {
+      const reply = electrs(state, url)
+      if (index === 0) await held.promise
+      return reply
+    })
+    const client = mempoolQbit(fetchFn)
+
+    // A poller's first combined page, answered before the replacement, is still in flight.
+    const polled = client.getAddressMempoolTxs(ADDR)
+    state.mempool = [replacement]
+    await expect(client.getAddressHistory(ADDR)).resolves.toEqual(expected(state))
+    expect(calls.filter(url => url === `${BASE}/address/${ADDR}/txs`)).toHaveLength(2)
+
+    held.resolve()
+    await expect(polled).resolves.toEqual([tx(evicted, false)])
   })
 
   it('counts the rescan against the per-call page ceiling', async () => {

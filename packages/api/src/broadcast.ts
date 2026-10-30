@@ -109,6 +109,19 @@ function isRelayedTransportFailure(reply: BroadcastReply): boolean {
 }
 
 /**
+ * Whether a submission reply's body carries a verdict a `429` status cannot
+ * override: the node already has the transaction, or the backend's call to
+ * the node failed in transit, so the node may have it. Such a 429 is judged
+ * by the outcome table, never re-sent. `undefined`, a body that was never
+ * read, may have said either.
+ */
+function isBroadcastVerdictReply(body: string | undefined): boolean {
+  if (body === undefined) return true
+  const reply = parseBroadcastReply(body.trim())
+  return isAlreadyKnownBroadcastReply(reply) || isRelayedTransportFailure(reply)
+}
+
+/**
  * JSON-RPC request-level codes: the server refused the request before running
  * any method (qbit Core src/rpc/protocol.h). `-32602` is left out because a
  * relaying backend reuses it for an unreadable non-200 node reply; see
@@ -271,6 +284,7 @@ function normalizeReplyText(text: string): string {
 
 export {
   isAlreadyKnownBroadcastReply,
+  isBroadcastVerdictReply,
   isDefiniteNodeRejection,
   isPreConnectionFailure,
   isRelayedTransportFailure,

@@ -1,5 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2'
 import { QbitProtocolError } from './errors'
+import type { P2mrOutpoint } from './transaction'
 
 const textEncoder = new TextEncoder()
 

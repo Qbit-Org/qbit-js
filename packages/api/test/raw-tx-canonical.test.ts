@@ -149,9 +149,14 @@ function withOversizedWitnessItem(): string {
   )
 }
 
-function serving(Client: typeof EsploraClient, body: string): EsploraClient {
+function serving(Client: typeof EsploraClient, body: string, maxResponseBytes?: number): EsploraClient {
   const fetchFn = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
-  return new Client({ baseUrl: BASE, fetchFn, retries: 0 })
+  return new Client({
+    baseUrl: BASE,
+    fetchFn,
+    retries: 0,
+    ...(maxResponseBytes === undefined ? {} : { maxResponseBytes }),
+  })
 }
 
 describe('raw transaction fixture re-encoding', () => {
@@ -218,7 +223,10 @@ describe.each(CLIENTS)('%s.getTxHex: qbit Core decoding rules', { timeout: SCALE
   })
 
   it('rejects a canonical CompactSize above MAX_SIZE as not well-formed', async () => {
-    await expect(serving(Client, withOversizedWitnessItem()).getTxHex(P2MR_TX.txid)).rejects.toMatchObject({
+    // Its 64 MiB of hex is far over the default maxResponseBytes, which refuses it first.
+    const hex = withOversizedWitnessItem()
+    await expect(serving(Client, hex).getTxHex(P2MR_TX.txid)).rejects.toMatchObject({ kind: 'response_too_large' })
+    await expect(serving(Client, hex, hex.length).getTxHex(P2MR_TX.txid)).rejects.toMatchObject({
       kind: 'parse',
       message: 'transaction hex reply is not a well-formed transaction',
     })

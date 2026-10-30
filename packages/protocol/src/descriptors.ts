@@ -4,8 +4,14 @@ import { P2MR_PROGRAM_BYTES, P2MR_LEAF_VERSION_V1, P2MR_CONTROL_MAX_NODE_COUNT }
 import { P2MR_V1_MAX_MULTI_A_THRESHOLD, P2MR_MAX_MULTI_A_PUBKEYS } from './consensus'
 import { bytesToHex, hexToBytes, isBytesOfLength, readUint32Be, compareBytes, isRecord } from './bytes'
 import { decodeBase58Check, Base58LengthError } from './base58'
-import { p2mrAddressFromRoot } from './addresses'
-import { singleKeyLeafScript, buildMultiALeafScript, p2mrLeafHash, p2mrBranchHash } from './scripts'
+import { type encodeP2mrAddress, p2mrAddressFromRoot } from './addresses'
+import {
+  singleKeyLeafScript,
+  buildMultiALeafScript,
+  type multiALeafScript,
+  p2mrLeafHash,
+  p2mrBranchHash,
+} from './scripts'
 
 const BIP32_EXTENDED_KEY_PAYLOAD_LENGTH = 78
 const EXTENDED_KEY_VERSION_PREFIXES = new Map<number, string>([
@@ -110,7 +116,7 @@ export type P2mrDescriptorLeaf =
 
 /**
  * An `mr(...)` script tree: a leaf, or a `{left,right}` branch. No leaf is
- * more than 128 branches deep.
+ * more than 128 branches deep, and every node is a distinct object.
  *
  * @category Descriptors
  */
@@ -130,7 +136,8 @@ export type P2mrDescriptorTree =
  *
  * @remarks
  * Functions that take a descriptor object check its node types, byte
- * lengths, `multi_a` bounds and tree depth, and for a `pqc` key that the
+ * lengths, `multi_a` bounds and tree depth, that no node object appears twice
+ * in the tree (a shared subtree or a cycle), and for a `pqc` key that the
  * expression formatted from `origin`, `key` and `path` parses as
  * {@link parseP2mrDescriptor} parses a string. They do not compare the key's
  * `expression`, `wildcard` or `fingerprint` case with those fields. See
@@ -334,11 +341,14 @@ export function parseP2mrDescriptor(input: string, options: ParseP2mrDescriptorO
  * have returned: `null`, `undefined` or another non-object; a `type` other than
  * `mr`/`rawmr` or an unknown tree node type; a `rawmr` root or `pk`/`multi_a`
  * pubkey that is not a 32-byte `Uint8Array`; a threshold outside
- * `1 <= k <= n <= 999`; a malformed `pqc()` key; or a tree deeper than 128.
- * Such objects were previously serialized as given (for example
+ * `1 <= k <= n <= 999`; a malformed `pqc()` key; a tree deeper than 128; or a
+ * tree that reaches one node object twice, through a shared subtree or a
+ * cycle. Such objects were previously serialized as given (for example
  * `multi_a(0,...)` or a 31-byte root) or failed with a `TypeError`, or a
- * `RangeError` stack overflow for very deep or cyclic trees. Thresholds above
- * 35 still serialize, as qbit Core's parser accepts them.
+ * `RangeError` stack overflow for very deep or cyclic trees. Until 0.1.1 a
+ * tree that shared subtrees was walked once per path, which takes time
+ * exponential in its depth. Thresholds above 35 still serialize, as qbit
+ * Core's parser accepts them.
  *
  * @param descriptor - The descriptor object.
  * @param includeChecksum - Whether to append a checksum. Default: whether
@@ -674,8 +684,12 @@ function p2mrTreeHasStandardSatisfaction(tree: P2mrDescriptorTree): boolean {
 }
 
 // Descriptor objects skip parseP2mrDescriptor, so re-check what it guarantees.
-// Iterative, so a deep or cyclic object fails on depth instead of overflowing
-// the call stack.
+// Iterative, so a deep object fails on depth instead of overflowing the call
+// stack. Every node must be its own object, as the parser builds them: depth
+// alone does not bound the walk, since 100 levels of
+// { type: 'branch', left: prev, right: prev } is 2^100 paths through 101
+// objects. Refusing a node seen before (a shared subtree or a cycle) visits
+// each object once, and the walks that follow see a tree.
 function assertParsedP2mrDescriptor(descriptor: unknown): asserts descriptor is ParsedP2mrDescriptor {
   if (!isRecord(descriptor)) {
     throw new QbitProtocolError('INVALID_DESCRIPTOR', 'descriptor must be an object')
@@ -690,6 +704,7 @@ function assertParsedP2mrDescriptor(descriptor: unknown): asserts descriptor is 
     throw new QbitProtocolError('INVALID_DESCRIPTOR', 'descriptor type must be mr or rawmr')
   }
 
+  const seen = new Set<object>()
   const pending: Array<{ node: unknown; depth: number }> = [{ node: descriptor['tree'], depth: 0 }]
   for (let item = pending.pop(); item !== undefined; item = pending.pop()) {
     const { node, depth } = item
@@ -701,6 +716,10 @@ function assertParsedP2mrDescriptor(descriptor: unknown): asserts descriptor is 
     if (!isRecord(node)) {
       throw new QbitProtocolError('INVALID_DESCRIPTOR', 'mr descriptor tree node must be an object')
     }
+    if (seen.has(node)) {
+      throw new QbitProtocolError('INVALID_DESCRIPTOR', 'mr descriptor tree node appears more than once')
+    }
+    seen.add(node)
     const type = node['type']
     if (type === 'branch') {
       pending.push({ node: node['left'], depth: depth + 1 }, { node: node['right'], depth: depth + 1 })

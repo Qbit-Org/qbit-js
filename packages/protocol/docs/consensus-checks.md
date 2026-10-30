@@ -1,7 +1,8 @@
 # Consensus checks
 
-The consensus range checks and the restricted-output rule this package applies
-to the transactions it builds and signs.
+The consensus range checks, the transaction-shape checks and the
+restricted-output rule this package applies to the transactions it builds and
+signs.
 
 - consensus range checks: amounts must satisfy qbit Core `MoneyRange`
   (`0 ≤ value ≤ QBIT_MAX_MONEY`), `version`/`locktime`/`vout`/`sequence`/
@@ -22,3 +23,15 @@ to the transactions it builds and signs.
   default node relays. Pass `restrictedOutputMode: false` only for a regtest
   node run with `-p2mronly=0`. Relay policy (`OP_RETURN` push-only data,
   `-datacarriersize`, dust) is not checked
+- qbit Core's `CheckTransaction` shape rules (`src/consensus/tx_check.cpp`):
+  `createP2mrPsbt`, `validateP2mrSigningPlans` and `signP2mrPsbt` throw
+  `INVALID_PSBT` before any signer call for a transaction without inputs
+  (`bad-txns-vin-empty`) or outputs (`bad-txns-vout-empty`), with two inputs
+  spending the same outpoint (`bad-txns-inputs-duplicate`), or with an input
+  spending the null outpoint (an all-zero txid and vout `0xffffffff`;
+  `bad-txns-prevout-null`). As the only input, a null outpoint makes the
+  transaction a coinbase, which Core rejects as `bad-cb-length`, or as
+  `coinbase` outside a block. `parsePsbt` and `decodePsbt` still accept such
+  a PSBT, as Core's PSBT decoder does: it does not run `CheckTransaction`
+  (`DecodeRawPSBT`, `src/psbt.cpp`). The exception is a transaction without
+  inputs, which `parsePsbt` refuses

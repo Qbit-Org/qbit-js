@@ -49,8 +49,9 @@ Caveats:
   the reply, but the redirected request has already been sent, on Android with
   your custom `headers`; see
   [Redirects and transport security](docs/transport-security.md). Without a
-  standard `URL` implementation, give `baseUrl` in its ASCII form
-  ([Configuration](docs/configuration.md)).
+  standard `URL` implementation, give `baseUrl` in its ASCII form; the client
+  refuses a non-ASCII host, or a character it should have percent-encoded,
+  there ([Configuration](docs/configuration.md)).
 - A custom `fetchFn` (node-fetch, a React Native polyfill) only needs to return
   a Response-like object, but its `url` must be the URL it was given, or empty,
   and it should honour `init.signal` and `redirect: 'manual'`
@@ -105,7 +106,7 @@ A whole payment, recovering from `unknown_outcome` as below, is in [examples/src
 | Compute a transaction's txid | `txidFromRawTx` | [Broadcasting](docs/broadcasting.md) |
 | Read the chain tip | `getTipHeight`, `getTipHash` | [Endpoints](docs/endpoints.md#endpoints) |
 | Cancel a call or bound its duration | `{ signal, deadlineMs }` | [Resilience](docs/resilience.md) |
-| Set timeouts, retries, headers or `fetchFn` | `new EsploraClient({ ... })` | [Configuration](docs/configuration.md) |
+| Set timeouts, retries, the response size limit, headers or `fetchFn` | `new EsploraClient({ ... })` | [Configuration](docs/configuration.md) |
 | Classify an error | `QbitApiError.is`, `error.kind` | [Resilience](docs/resilience.md) |
 | Log errors without leaking the base URL | `QbitApiError` `url`, `message`, `cause` | [Logging errors](docs/logging-and-redaction.md) |
 
@@ -134,7 +135,8 @@ A whole payment, recovering from `unknown_outcome` as below, is in [examples/src
 - **`QbitApiError.is(error)`, not `instanceof`**: an app that loads both the
   CommonJS and the ESM build, or two versions, has two `QbitApiError` classes,
   and `instanceof` is false for the other one's errors. Keep a default branch
-  for kinds this version does not list. [Resilience](docs/resilience.md)
+  for kinds this version does not list, such as `response_too_large` (new in
+  0.1.1) in code written for 0.1.0. [Resilience](docs/resilience.md)
 
 ## Testing
 

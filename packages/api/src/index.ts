@@ -6,6 +6,10 @@
 // no device-id / channel / client telemetry headers. The test suite enforces
 // this by construction (see the guard in test/).
 
+import type { addressBalanceFromStats, FeeRateTier, feeTiersFromEstimates } from './adapters'
+import type { EsploraClient } from './esplora-client'
+import type { MempoolQbitClient } from './mempool-qbit-client'
+
 export { QbitApiError } from './errors'
 export type { QbitApiErrorKind, QbitApiErrorOptions } from './errors'
 export {
@@ -16,7 +20,7 @@ export {
   txidFromRawTx,
 } from './adapters'
 export type { AddressBalance, FeeRateTier } from './adapters'
-export { EsploraClient } from './esplora-client'
+export { DEFAULT_MAX_RESPONSE_BYTES, EsploraClient } from './esplora-client'
 export type { EsploraClientOptions, QbitFetchCredentials } from './esplora-client'
 export { MempoolQbitClient } from './mempool-qbit-client'
 export type { MempoolQbitClientOptions } from './mempool-qbit-client'
