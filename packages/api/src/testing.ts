@@ -257,9 +257,11 @@ export interface MockStallFault {
  * - `accepted`: the reply is the transaction's txid, whatever the node would
  *   answer without the fault. A transaction the node does not have joins its
  *   mempool, even one that spends outputs it does not have or that Core's
- *   script check refuses, or one that conflicts with a mempool transaction,
- *   which stays. One it has stays where it is: a transaction in a block stays
- *   confirmed.
+ *   script check refuses, one that conflicts with a mempool transaction,
+ *   which stays, or a coinbase. But one that a transaction in a block spends
+ *   from is in the chain, so it joins that block, with the mempool
+ *   transactions it spends from. One the node has stays where it is: a
+ *   transaction in a block stays confirmed.
  * - `rejected`: the node refuses it with RPC error `code` and `message`,
  *   relayed as a `400` reply in qbit-electrs's and mempool-qbit's
  *   `sendrawtransaction RPC error: {...}` form. `-27` is the node's
@@ -381,10 +383,13 @@ export interface MockEsplora {
    */
   hasTx(txid: string): boolean
   /**
-   * Mine a block on the tip: every mempool transaction, from the fixture or a
-   * submission, confirms in it, and the tip moves to it. The block holds them
-   * in arrival order, except that each follows the transactions it spends
-   * from, as in a block qbit Core mines.
+   * Mine a block on the tip: the mempool transactions, from the fixture or a
+   * submission, confirm in it, and the tip moves to it. As in a block qbit
+   * Core mines, the block holds them in arrival order, except that each
+   * follows the transactions it spends from and a coinbase comes first, and
+   * it holds none that spends an output the mock does not know, or an output
+   * of one it leaves out: those stay in the mempool. Only a fault takes such
+   * a transaction, or a coinbase, into the mempool.
    *
    * @returns The new block.
    */
@@ -420,7 +425,8 @@ export interface MockEsplora {
  * inputs or no outputs, oversized, an output value or the output total out of
  * range, an output spent twice, a malformed coinbase input) and for a
  * coinbase; `-25 bad-txns-inputs-missingorspent` for one that spends an
- * output that is not a coin; `-26` for one that breaks a `CheckTxInputs` rule
+ * output that is not a coin, and for one that a transaction in a block spends
+ * from, which is in the chain; `-26` for one that breaks a `CheckTxInputs` rule
  * (an immature coinbase output, input values out of range, outputs worth more
  * than its inputs); `-26 bad-txns-spends-conflicting-tx` for one that spends
  * an output of a mempool transaction it conflicts with;
@@ -708,11 +714,14 @@ function createState(options: MockEsploraOptions): State {
 /**
  * How deep a spend at `spendHeight` finds the coinbase output `input` spends,
  * as `CheckTxInputs` measures it (src/consensus/tx_verify.cpp:178-182), or
- * undefined when the output is not a known coinbase's.
+ * undefined when the output is not a known coinbase's. A coinbase in the
+ * mempool, which only a fault puts there, counts from the next block, where
+ * {@link mineBlock} confirms it.
  */
 function coinbaseDepth(state: State, input: { txid: string }, spendHeight: number): number | undefined {
   const funding = state.txs.get(input.txid)
-  return funding?.coinbase === true ? spendHeight - funding.block!.height : undefined
+  if (funding?.coinbase !== true) return undefined
+  return spendHeight - (funding.block?.height ?? state.tipHeight + 1)
 }
 
 function addFixtureTx(state: State, value: unknown, where: string, blocks: Map<number, Required<MockBlock>>): void {
@@ -821,15 +830,15 @@ function addFixtureTx(state: State, value: unknown, where: string, blocks: Map<n
     weight: parsed?.weight ?? 0,
     block,
     coinbase,
-    coinbaseInput: coinbase
-      ? {
-          scriptsig: parsed?.vin[0]?.scriptsig ?? '',
-          witness: parsed?.vin[0]?.witness ?? [],
-          sequence: parsed?.vin[0]?.sequence ?? MAX_UINT32,
-        }
-      : undefined,
+    coinbaseInput: coinbase ? coinbaseInput(parsed) : undefined,
     arrivedWithPrevouts: true,
   })
+}
+
+/** A coinbase's input, from its decoded hex when there is one. */
+function coinbaseInput(parsed: ParsedTx | undefined): CoinbaseInput {
+  const input = parsed?.vin[0]
+  return { scriptsig: input?.scriptsig ?? '', witness: input?.witness ?? [], sequence: input?.sequence ?? MAX_UINT32 }
 }
 
 function checkOutput(value: unknown, where: string): OutputRecord {
@@ -1113,12 +1122,17 @@ function defaultBlockTime(height: number): number {
 }
 
 /**
- * Confirm every mempool transaction in a block on the tip. qbit Core's miner
+ * Confirm the mempool transactions in a block on the tip. qbit Core's miner
  * puts a transaction after those it spends from (src/node/miner.cpp:288-296,
  * :434-438), as its consensus rules require (src/validation.cpp:2847-2932),
  * so the block holds the mempool in arrival order, except that a transaction
- * that arrived after one spending from it goes just before that one. Only a
- * fault takes a transaction before one it spends from. The views order a
+ * that arrived after one spending from it goes just before that one, and a
+ * coinbase goes first (:4481-4486). No block holds a transaction whose inputs
+ * are missing, as the miner's `TestBlockValidity` checks
+ * (src/node/miner.cpp:189-191), so one that spends an output the mock does
+ * not know stays in the mempool, and so does each that spends from one that
+ * stays. Only a fault takes a transaction before one it spends from, one that
+ * spends an output the mock does not know, or a coinbase. The views order a
  * block's transactions as `state.txs` holds them, so the mined ones fill the
  * places they held there in the block's order.
  */
@@ -1127,14 +1141,20 @@ function mineBlock(state: State): Required<MockBlock> {
   const block = { height, hash: defaultBlockHash(height), time: defaultBlockTime(height) }
   const known = [...state.txs.values()]
   const pending = known.filter(tx => tx.block === undefined)
-  const mined = parentsFirst(pending)
+  // In block order, so each transaction is judged after those it spends from.
+  const mined: TxRecord[] = []
+  const stays = new Set<string>()
+  for (const tx of parentsFirst([...pending.filter(tx => tx.coinbase), ...pending.filter(tx => !tx.coinbase)])) {
+    if (tx.vin.some(input => input.prevout === undefined || stays.has(input.txid))) stays.add(tx.txid)
+    else mined.push(tx)
+  }
   state.txs.clear()
   let next = 0
   for (const tx of known) {
-    const placed = tx.block === undefined ? mined[next++]! : tx
+    const placed = tx.block === undefined && !stays.has(tx.txid) ? mined[next++]! : tx
     state.txs.set(placed.txid, placed)
   }
-  for (const tx of pending) tx.block = block
+  for (const tx of mined) tx.block = block
   state.tipHeight = height
   state.tipHash = block.hash
   return { ...block }
@@ -1645,9 +1665,11 @@ function broadcast(
  * 5. -25 `bad-txns-inputs-missingorspent` for a spend of an output that is
  *    not a coin (:893-916): unknown, spent in a block, or an unspendable
  *    output of a confirmed transaction. A confirmed transaction whose outputs
- *    are all spent gets it too, since its own inputs are spent. Core's
- *    `txn-already-known` there needs an output of the transaction itself to
- *    be a coin, which step 2 answers first.
+ *    are all spent gets it too, since its own inputs are spent, and so does
+ *    one the mock does not have whose output a confirmed transaction spends,
+ *    which is in the chain (see {@link chainSpender}) though the mock holds
+ *    no coin of it. Core's `txn-already-known` there needs an output of the
+ *    transaction itself to be a coin, which step 2 answers first.
  * 6. `CheckTxInputs` (src/consensus/tx_verify.cpp:164-205, called at
  *    src/validation.cpp:939-942), in its order: -26 for a coinbase output
  *    below COINBASE_MATURITY deep in the next block, an input value or the
@@ -1765,7 +1787,7 @@ function nodeVerdict(state: State, parsed: ParsedTx): Response | undefined {
   }
   if (coinbase) return reject('coinbase')
 
-  if (!parsed.vin.every(input => isCoin(input.txid, input.vout))) {
+  if (chainSpender(state, parsed.txid) !== undefined || !parsed.vin.every(input => isCoin(input.txid, input.vout))) {
     return rpcError(-25, 'bad-txns-inputs-missingorspent')
   }
 
@@ -1813,10 +1835,10 @@ function nodeVerdict(state: State, parsed: ParsedTx): Response | undefined {
   return undefined
 }
 
-/** The mempool transactions `parsed` spends from, and theirs, recursively. */
-function mempoolAncestors(state: State, parsed: ParsedTx): string[] {
+/** The mempool transactions `spender` spends from, and theirs, recursively. */
+function mempoolAncestors(state: State, spender: { vin: readonly { txid: string }[] }): string[] {
   const found = new Set<string>()
-  const pending = parsed.vin.map(input => input.txid)
+  const pending = spender.vin.map(input => input.txid)
   while (pending.length > 0) {
     const tx = state.txs.get(pending.pop()!)
     if (tx === undefined || tx.block !== undefined || found.has(tx.txid)) continue
@@ -1864,7 +1886,11 @@ function submittedTx(state: State, parsed: ParsedTx, hex: string): TxRecord {
       if (output.address !== undefined && output.scriptPubKey !== '') addresses.set(output.scriptPubKey, output.address)
     })
   }
-  const vin = parsed.vin.map(input => ({ ...input, prevout: outputs.get(`${input.txid}:${input.vout}`) }))
+  // As for a fixture transaction, the hex decides whether it is a coinbase, which only a fault takes.
+  const coinbase = isCoinbase(parsed)
+  const vin = coinbase
+    ? []
+    : parsed.vin.map(input => ({ ...input, prevout: outputs.get(`${input.txid}:${input.vout}`) }))
   const vout = parsed.vout.map(output => ({ ...output, address: addresses.get(output.scriptPubKey) }))
   return {
     txid: parsed.txid,
@@ -1877,8 +1903,8 @@ function submittedTx(state: State, parsed: ParsedTx, hex: string): TxRecord {
     size: parsed.size,
     weight: parsed.weight,
     block: undefined,
-    coinbase: false,
-    coinbaseInput: undefined,
+    coinbase,
+    coinbaseInput: coinbase ? coinbaseInput(parsed) : undefined,
     arrivedWithPrevouts: vin.every(input => input.prevout !== undefined),
   }
 }
@@ -1892,15 +1918,55 @@ function submissionFee(vin: InputRecord[], vout: OutputRecord[]): number {
 }
 
 /**
+ * The first transaction of the lowest block that spends an output of `txid`,
+ * or undefined when no transaction in a block does. A block spends only
+ * outputs of the chain (src/validation.cpp:2847-2932), so when there is one,
+ * the transaction `txid` is in the chain, in that block or below, even when
+ * the mock does not have it: a fixture transaction in a block can spend an
+ * output outside the fixture.
+ */
+function chainSpender(state: State, txid: string): TxRecord | undefined {
+  let first: TxRecord | undefined
+  for (const tx of state.txs.values()) {
+    if (tx.block === undefined || !tx.vin.some(input => input.txid === txid)) continue
+    if (first === undefined || tx.block.height < first.block!.height) first = tx
+  }
+  return first
+}
+
+/**
  * Add a submission the node took, and give the inputs that spend its outputs,
  * of transactions only a fault can have taken before it, their prevouts and
  * their transactions' fees. qbit-electrs looks a transaction's prevouts up
  * each time it serves it (src/rest.rs:618-637), so `GET /tx/:txid` shows them
  * at once, and the address views count them once a block confirms the
  * spending transaction (see {@link indexedMempool}).
+ *
+ * A submission that a transaction in a block spends from is in the chain
+ * (see {@link chainSpender}), so only a fault takes it, and it joins that
+ * block, just before that transaction, or first in the block for a coinbase,
+ * with the mempool transactions it spends from, recursively, parents first.
+ * So no transaction in a block spends an output of one in the mempool, and
+ * the views count a spend in the part, `chain_stats` or `mempool_stats`, that
+ * counts the output it spends.
  */
 function addSubmission(state: State, tx: TxRecord): void {
-  state.txs.set(tx.txid, tx)
+  const chained = chainSpender(state, tx.txid)
+  if (chained === undefined) {
+    state.txs.set(tx.txid, tx)
+  } else {
+    const known = [...state.txs.values()]
+    const ancestors = new Set(mempoolAncestors(state, tx))
+    const joining = parentsFirst([...known.filter(other => ancestors.has(other.txid)), tx])
+    const first = known.find(other => other.block?.height === chained.block!.height)!
+    state.txs.clear()
+    for (const other of known) {
+      if (other === first) for (const joined of joining) if (joined.coinbase) state.txs.set(joined.txid, joined)
+      if (other === chained) for (const joined of joining) if (!joined.coinbase) state.txs.set(joined.txid, joined)
+      if (!ancestors.has(other.txid)) state.txs.set(other.txid, other)
+    }
+    for (const joined of joining) joined.block = chained.block
+  }
   for (const spender of state.txs.values()) {
     const inputs = spender.vin.filter(input => input.txid === tx.txid && input.prevout === undefined)
     if (inputs.length === 0) continue

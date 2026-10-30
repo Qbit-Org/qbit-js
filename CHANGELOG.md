@@ -55,7 +55,8 @@ breaking changes bump MINOR.
   for hex Core cannot decode, `-25` for an unspendable output with a value
   (`maxburnamount`), `-27` for a transaction in a block while one of its
   outputs is unspent, `-26` for a broken `CheckTransaction` rule, `-25` for a
-  spend of an output that is not a coin, `-26` for a broken `CheckTxInputs`
+  spend of an output that is not a coin and for a transaction a block spends
+  from, which is in the chain, `-26` for a broken `CheckTxInputs`
   rule (an immature coinbase output, input values out of range, outputs worth
   more than the inputs), `-26` for a conflict with a mempool transaction,
   which the mock never takes as a replacement, `-26` for a spend of a mempool
@@ -67,9 +68,12 @@ breaking changes bump MINOR.
   until `mine()` confirms it; they follow qbit-electrs, which lists the
   mempool oldest first and by default indexes no provably unspendable output,
   such as an `OP_RETURN` one, and matches a qbit bech32 address in lowercase
-  or uppercase alike, refusing one in mixed case. A coinbase fixture, declared
-  or found from its hex, is served with its coinbase input. Its options are
-  validated up front:
+  or uppercase alike, refusing one in mixed case. A coinbase, in the fixture
+  (declared or found from its hex) or taken through a fault, is served with
+  its coinbase input. Where a fault makes the node take what qbit Core never
+  would, such as a coinbase, a spend of an output it does not know, or a
+  transaction a block spends from, the mock places it so that no block spends
+  from the mempool. Its options are validated up front:
   `null`, a `Retry-After` that `Headers` refuses, and a fixture qbit Core could
   not hold, such as a spend of an unspendable or immature coinbase output or a
   block with two coinbases, are refused, not taken. It ships in both builds

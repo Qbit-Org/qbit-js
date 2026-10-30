@@ -1247,6 +1247,137 @@ describe('createMockEsplora address views after a submission', () => {
     ])
   })
 
+  it('mines a fault-taken spend only once the output it spends arrives, so no block spends from the mempool', async () => {
+    // A fault takes CHILD, which spends SPEND:0, before the node has SPEND, and the node takes GRANDCHILD, which
+    // spends CHILD's output, without one.
+    const { mock, client } = esplora({ txs, faults: [{ route: 'POST /tx', kind: 'broadcast', outcome: 'accepted' }] })
+    const child = legacyTx([{ txid: SPEND, vout: 0 }], [{ value: 59_000 }])
+    const CHILD = txidFromRawTx(child)
+    const grandchild = legacyTx([{ txid: CHILD, vout: 0 }], [{ value: 58_000 }])
+    const GRANDCHILD = txidFromRawTx(grandchild)
+    await expect(client.broadcastTx(child)).resolves.toBe(CHILD)
+    await expect(client.broadcastTx(grandchild)).resolves.toBe(GRANDCHILD)
+
+    // No block holds a transaction whose inputs are missing (src/node/miner.cpp:189-191), nor one spending from it.
+    expect(mock.mine()).toMatchObject({ height: 6 })
+    await expect(client.getTxStatus(CHILD)).resolves.toEqual({ confirmed: false })
+    await expect(client.getTxStatus(GRANDCHILD)).resolves.toEqual({ confirmed: false })
+
+    // No block spends from SPEND, so the node takes it, and the next block confirms the three, parents first.
+    await expect(client.broadcastTx(spend)).resolves.toBe(SPEND)
+    await expect(client.getAddressBalance(OTHER)).resolves.toEqual({
+      address: OTHER,
+      confirmedSats: 1,
+      mempoolSats: 60_000,
+      totalSats: 60_001,
+    })
+    expect(mock.mine()).toMatchObject({ height: 7 })
+    await expect(client.getAddressStats(OTHER)).resolves.toEqual({
+      address: OTHER,
+      chain_stats: {
+        funded_txo_count: 2,
+        funded_txo_sum: 60_001,
+        spent_txo_count: 1,
+        spent_txo_sum: 60_000,
+        tx_count: 3,
+      },
+      mempool_stats: { funded_txo_count: 0, funded_txo_sum: 0, spent_txo_count: 0, spent_txo_sum: 0, tx_count: 0 },
+    })
+    await expect(client.getAddressUtxos(OTHER)).resolves.toEqual([{ txid: FUND, vout: 1, value: 1, status: block(5) }])
+    const { confirmed } = await client.getAddressHistory(OTHER)
+    expect(confirmed.map(tx => tx.txid)).toEqual([CHILD, SPEND, FUND])
+    await expect(client.getTxStatus(GRANDCHILD)).resolves.toEqual(block(7))
+  })
+
+  describe('a transaction that a fixture transaction in a block spends from', () => {
+    // S, in block 6, spends X:0, an output outside the fixture; X spends FUND:0.
+    const x = legacyTx(
+      [{ txid: FUND, vout: 0 }],
+      [
+        { value: 60_000, script: ADDR_SCRIPT },
+        { value: 39_000, script: OTHER_SCRIPT },
+      ]
+    )
+    const X = txidFromRawTx(x)
+    const S = txid(0xe2, 0)
+    const spender = (funding: string, value: number): MockTx => ({
+      txid: S,
+      vin: [{ txid: funding, vout: 0, address: ADDR, value }],
+      vout: [{ value: value - 1_000 }],
+      block: { height: 6 },
+    })
+    const respend = legacyTx([{ txid: X, vout: 0 }], [{ value: 59_000 }])
+
+    it('is in the chain, so the node refuses it, and the output S spends is never a coin', async () => {
+      const { mock, client } = esplora({ txs: [...txs, spender(X, 60_000)] })
+      // Its own inputs are spent in the chain: Core's missing-inputs reply (src/validation.cpp:893-916). The mock
+      // holds no output of it, so BroadcastTransaction's check for one in the UTXO set (-27) finds none
+      // (src/node/transaction.cpp:51-58).
+      expect(await submit(mock, x)).toEqual([400, rpcError(-25, 'bad-txns-inputs-missingorspent')])
+      expect(mock.hasTx(X)).toBe(false)
+      expect((await client.getAddressUtxos(ADDR)).map(utxo => utxo.txid)).not.toContain(X)
+      expect(await submit(mock, respend)).toEqual([400, rpcError(-25, 'bad-txns-inputs-missingorspent')])
+    })
+
+    it('joins that block when a fault takes it, so S spends it there in every view', async () => {
+      const { mock, client } = esplora({
+        txs: [...txs, spender(X, 60_000)],
+        faults: [{ route: 'POST /tx', kind: 'broadcast', outcome: 'accepted' }],
+      })
+      await expect(client.broadcastTx(x)).resolves.toBe(X)
+      await expect(client.getTxStatus(X)).resolves.toEqual(block(6))
+      await expect(client.getAddressStats(ADDR)).resolves.toEqual({
+        address: ADDR,
+        chain_stats: {
+          funded_txo_count: 2,
+          funded_txo_sum: 160_000,
+          spent_txo_count: 2,
+          spent_txo_sum: 160_000,
+          tx_count: 3,
+        },
+        mempool_stats: { funded_txo_count: 0, funded_txo_sum: 0, spent_txo_count: 0, spent_txo_sum: 0, tx_count: 0 },
+      })
+      await expect(client.getAddressUtxos(ADDR)).resolves.toEqual([])
+      await expect(client.getAddressUtxos(OTHER)).resolves.toEqual([
+        { txid: FUND, vout: 1, value: 1, status: block(5) },
+        { txid: X, vout: 1, value: 39_000, status: block(6) },
+      ])
+      // Just before S in its block, so the history, last in a block first, lists S first.
+      const { confirmed } = await client.getAddressHistory(ADDR)
+      expect(confirmed.map(tx => tx.txid)).toEqual([S, X, FUND])
+      // X:0 is spent in the chain, and X:1 is a coin, which makes a resubmission of X the already-known -27.
+      expect(await submit(mock, respend)).toEqual([400, rpcError(-25, 'bad-txns-inputs-missingorspent')])
+      expect(await submit(mock, x)).toEqual([400, rpcError(-27, 'Transaction outputs already in utxo set')])
+    })
+
+    it('brings the mempool transactions it spends from into that block with it', async () => {
+      // X2 spends SPEND:1, and S spends X2:0. Both submissions take the fault.
+      const x2 = legacyTx([{ txid: SPEND, vout: 1 }], [{ value: 38_000, script: ADDR_SCRIPT }])
+      const X2 = txidFromRawTx(x2)
+      const { client } = esplora({
+        txs: [...txs, spender(X2, 38_000)],
+        faults: [{ route: 'POST /tx', kind: 'broadcast', outcome: 'accepted', times: 2 }],
+      })
+      await expect(client.broadcastTx(spend)).resolves.toBe(SPEND)
+      await expect(client.getTxStatus(SPEND)).resolves.toEqual({ confirmed: false })
+      await expect(client.broadcastTx(x2)).resolves.toBe(X2)
+      await expect(client.getTxStatus(SPEND)).resolves.toEqual(block(6))
+      await expect(client.getTxStatus(X2)).resolves.toEqual(block(6))
+      await expect(client.getAddressBalance(ADDR)).resolves.toEqual({
+        address: ADDR,
+        confirmedSats: 0,
+        mempoolSats: 0,
+        totalSats: 0,
+      })
+      await expect(client.getAddressUtxos(OTHER)).resolves.toEqual([
+        { txid: FUND, vout: 1, value: 1, status: block(5) },
+        { txid: SPEND, vout: 0, value: 60_000, status: block(6) },
+      ])
+      const { confirmed } = await client.getAddressHistory(ADDR)
+      expect(confirmed.map(tx => tx.txid)).toEqual([S, X2, SPEND, FUND])
+    })
+  })
+
   it('looks a combined-history cursor up among every transaction, and ignores an unparseable one', async () => {
     const { mock } = esplora({
       txs: [...history(3, 2), { txid: txid(0xbb, 0), vout: [{ address: OTHER, value: 1 }], block: { height: 9 } }],
@@ -1973,6 +2104,93 @@ describe('createMockEsplora coinbase fixtures', () => {
         tip: { height: 1_010 },
       })
     ).not.toThrow()
+  })
+})
+
+describe('createMockEsplora coinbase submissions', () => {
+  // The genesis coinbase's only output script, which the fixture pairs with ADDR.
+  const GENESIS_SCRIPT = LEGACY_TX_HEX.slice(-8 - 2 * 0x43, -8)
+  const spendGenesis = legacyTx([{ txid: LEGACY_TXID, vout: 0 }], [{ value: 4_999_000_000 }])
+  const block = (height: number) => ({
+    confirmed: true,
+    block_height: height,
+    block_hash: height.toString(16).padStart(64, '0'),
+    block_time: 1_700_000_000 + 600 * height,
+  })
+
+  it.each(['accepted', 'lost-reply'] as const)(
+    'serves a coinbase a fault takes (%s) as one, puts it first in the block mine() makes, and matures it from there',
+    async outcome => {
+      // A mempool transaction that arrived before the coinbase, paying ADDR as the coinbase does.
+      const earlier: MockTx = {
+        txid: txid(0xa0, 0),
+        vin: [{ txid: txid(0xee, 0), vout: 0, value: 2_000 }],
+        vout: [{ address: ADDR, value: 1_000, scriptPubKey: GENESIS_SCRIPT }],
+      }
+      const { mock, client } = esplora({ txs: [earlier], faults: [{ route: 'POST /tx', kind: 'broadcast', outcome }] })
+      if (outcome === 'accepted') {
+        await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(LEGACY_TXID)
+      } else {
+        await expect(rejection(client.broadcastTx(LEGACY_TX_HEX))).resolves.toMatchObject({
+          kind: 'unknown_outcome',
+          txid: LEGACY_TXID,
+        })
+      }
+      await expect(client.getTx(LEGACY_TXID)).resolves.toMatchObject({
+        fee: 0,
+        vin: [{ txid: '00'.repeat(32), vout: 0xffff_ffff, prevout: null, is_coinbase: true, sequence: 0xffff_ffff }],
+        status: { confirmed: false },
+      })
+      await expect(client.getAddressBalance(ADDR)).resolves.toMatchObject({ mempoolSats: 5_000_001_000 })
+      // In the mempool it counts as the coinbase of the next block, where mine() confirms it.
+      expect(await submit(mock, spendGenesis)).toEqual([
+        400,
+        rpcError(-26, 'bad-txns-premature-spend-of-coinbase, tried to spend coinbase at depth 0'),
+      ])
+
+      expect(mock.mine()).toMatchObject({ height: 1 })
+      await expect(client.getTxStatus(LEGACY_TXID)).resolves.toEqual(block(1))
+      // First in its block, so the chain history, last in a block first, lists it after the earlier transaction.
+      const { confirmed } = await client.getAddressHistory(ADDR)
+      expect(confirmed.map(tx => tx.txid)).toEqual([txid(0xa0, 0), LEGACY_TXID])
+      expect(await submit(mock, spendGenesis)).toEqual([
+        400,
+        rpcError(-26, 'bad-txns-premature-spend-of-coinbase, tried to spend coinbase at depth 1'),
+      ])
+      expect(await submit(mock, LEGACY_TX_HEX)).toEqual([400, rpcError(-27, 'Transaction outputs already in utxo set')])
+    }
+  )
+
+  it('puts a fault-taken coinbase that a block spends from first in that block', async () => {
+    const { client } = esplora({
+      txs: [
+        {
+          txid: txid(0x07, 0),
+          vout: [{ address: ADDR, value: 1, scriptPubKey: GENESIS_SCRIPT }],
+          block: { height: 1_500 },
+        },
+        {
+          txid: txid(0x5e, 0),
+          vin: [{ txid: LEGACY_TXID, vout: 0, address: ADDR, value: 5_000_000_000 }],
+          vout: [{ address: OTHER, value: 4_999_000_000 }],
+          block: { height: 1_500 },
+        },
+      ],
+      faults: [{ route: 'POST /tx', kind: 'broadcast', outcome: 'accepted' }],
+    })
+    await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(LEGACY_TXID)
+    await expect(client.getTx(LEGACY_TXID)).resolves.toMatchObject({
+      vin: [{ is_coinbase: true }],
+      status: block(1_500),
+    })
+    await expect(client.getAddressBalance(ADDR)).resolves.toEqual({
+      address: ADDR,
+      confirmedSats: 1,
+      mempoolSats: 0,
+      totalSats: 1,
+    })
+    const { confirmed } = await client.getAddressHistory(ADDR)
+    expect(confirmed.map(tx => tx.txid)).toEqual([txid(0x5e, 0), txid(0x07, 0), LEGACY_TXID])
   })
 })
 

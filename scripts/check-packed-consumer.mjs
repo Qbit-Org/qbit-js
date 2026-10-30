@@ -234,6 +234,7 @@ for (const testing of [testingEsm, testingCjs]) {
       error => client.QbitApiError.is(error) && error.kind === 'unknown_outcome' && error.txid === TXID
     )
     assert.deepEqual(await mempool.getTxStatus(TXID), { confirmed: false })
+    assert.equal((await mempool.getTx(TXID)).vin[0].is_coinbase, true, 'the mock serves the coinbase it took as a spend')
   }
 }
 // esbuild emits the class as \`var QbitApiError = class extends Error\`, names it
