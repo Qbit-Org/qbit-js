@@ -4,31 +4,44 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 
 import { EsploraClient, MempoolQbitClient, QbitApiError, txidFromRawTx } from '../src/index'
+import { createMockEsplora, type MockBackend, type MockFault } from '../src/testing'
 
-interface MockReply {
+/** One scripted reply, as a testing-kit status fault: status 200 and an empty body unless given. */
+interface Reply {
   status?: number
-  body?: BodyInit
-  headers?: Record<string, string>
+  body?: string
+  retryAfter?: string
 }
 
-type Handler = (callIndex: number, url: string, init: RequestInit | undefined) => MockReply | Promise<MockReply>
+/**
+ * A testing-kit backend whose `POST /tx` answers `tx` and whose `POST /tx/push`
+ * answers `push`, each in order, the last reply of each repeating.
+ */
+function backend(kind: MockBackend, { tx = [], push = [] }: { tx?: Reply[]; push?: Reply[] }) {
+  const script = (route: 'POST /tx' | 'POST /tx/push', replies: Reply[]): MockFault[] =>
+    replies.map(({ status = 200, ...reply }, i) => ({
+      route,
+      kind: 'status' as const,
+      status,
+      ...reply,
+      ...(i === replies.length - 1 ? { times: Infinity } : {}),
+    }))
+  const mock = createMockEsplora({
+    backend: kind,
+    baseUrl: BASE,
+    faults: [...script('POST /tx', tx), ...script('POST /tx/push', push)],
+  })
+  return { fetchFn: mock.fetchFn, calls: mock.requests }
+}
 
-function makeFetch(handler: Handler): {
-  fetchFn: typeof fetch
-  calls: { url: string; init?: RequestInit | undefined }[]
-} {
-  const calls: { url: string; init?: RequestInit | undefined }[] = []
-  const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input)
-    const index = calls.length
-    calls.push({ url, init })
-    const reply = await handler(index, url, init)
-    return new Response(reply.body ?? '', {
-      status: reply.status ?? 200,
-      ...(reply.headers ? { headers: reply.headers } : {}),
-    })
-  }) as typeof fetch
-  return { fetchFn, calls }
+/** A testing-kit backend that answers every submission, to `/tx` or `/tx/push`, with `reply`. */
+function replying(reply: Reply, kind: MockBackend = 'esplora') {
+  return backend(kind, { tx: [reply], push: [reply] })
+}
+
+/** A body that fails mid-read; the testing kit models stalled bodies, not failing ones. */
+function unreadableReply(status: number): Response {
+  return new Response(unreadableBody(), { status })
 }
 
 const BASE = 'https://esplora.example/regtest/api'
@@ -175,9 +188,12 @@ describe('txidFromRawTx', () => {
 describe('EsploraClient.broadcastTx submission policy', () => {
   it('sends exactly one POST and reports an unknown outcome when the gateway times out after the node accepted', async () => {
     const sleep = vi.fn(noSleep)
-    const { fetchFn, calls } = makeFetch(i =>
-      i === 0 ? { status: 504, body: 'upstream request timeout' } : { status: 400, body: ALREADY_IN_CHAIN }
-    )
+    const { fetchFn, calls } = backend('esplora', {
+      tx: [
+        { status: 504, body: 'upstream request timeout' },
+        { status: 400, body: ALREADY_IN_CHAIN },
+      ],
+    })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: sleep })
 
     const error = await rejection(client.broadcastTx(LEGACY_TX_HEX))
@@ -190,12 +206,12 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     })
     expect(error.message).toContain(TXID)
     expect(calls).toHaveLength(1)
-    expect(calls[0]!.init?.method).toBe('POST')
+    expect(calls[0]!.method).toBe('POST')
     expect(sleep).not.toHaveBeenCalled()
   })
 
   it.each([500, 502, 503, 599])('does not resend after a %i reply', async status => {
-    const { fetchFn, calls } = makeFetch(() => ({ status, body: 'server error' }))
+    const { fetchFn, calls } = replying({ status, body: 'server error' })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
@@ -207,7 +223,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
   })
 
   it.each([501, 505])('fails closed on a %i reply that the server never processed', async status => {
-    const { fetchFn, calls } = makeFetch(() => ({ status, body: 'nope' }))
+    const { fetchFn, calls } = replying({ status, body: 'nope' })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({ kind: 'http', status })
@@ -342,9 +358,9 @@ describe('EsploraClient.broadcastTx submission policy', () => {
 
   it('retries 429 honoring Retry-After because the server did not process the submission', async () => {
     const sleep = vi.fn(noSleep)
-    const { fetchFn, calls } = makeFetch(i =>
-      i === 0 ? { status: 429, body: 'slow down', headers: { 'retry-after': '2' } } : { body: TXID }
-    )
+    const { fetchFn, calls } = backend('esplora', {
+      tx: [{ status: 429, body: 'slow down', retryAfter: '2' }, { body: TXID }],
+    })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 1, sleepFn: sleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(TXID)
@@ -359,11 +375,10 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     'rejects at once as rate_limit when a 429 asks to wait past maxRetryAfterMs (%s)',
     async (_name, Client) => {
       const sleep = vi.fn(noSleep)
-      const { fetchFn, calls } = makeFetch(() => ({
-        status: 429,
-        body: 'slow down',
-        headers: { 'retry-after': '3600' },
-      }))
+      const { fetchFn, calls } = replying(
+        { status: 429, body: 'slow down', retryAfter: '3600' },
+        Client === EsploraClient ? 'esplora' : 'mempool-qbit'
+      )
       const client = new Client({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: sleep })
 
       await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
@@ -380,7 +395,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['plain text', 'slow down'],
     ['gateway JSON code', JSON.stringify({ code: 'RATE_LIMITED', message: 'slow down' })],
   ])('surfaces an exhausted 429 as rate_limit rather than an unknown outcome (%s)', async (_case, body) => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 429, body }))
+    const { fetchFn, calls } = replying({ status: 429, body })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 0, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({ kind: 'rate_limit', status: 429 })
@@ -388,9 +403,12 @@ describe('EsploraClient.broadcastTx submission policy', () => {
   })
 
   it('stops at the first uncertain attempt after a safe retry', async () => {
-    const { fetchFn, calls } = makeFetch(i =>
-      i === 0 ? { status: 429, body: 'slow down' } : { status: 504, body: 'gateway timeout' }
-    )
+    const { fetchFn, calls } = backend('esplora', {
+      tx: [
+        { status: 429, body: 'slow down' },
+        { status: 504, body: 'gateway timeout' },
+      ],
+    })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 5, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
@@ -420,7 +438,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
       JSON.stringify({ error: { code: -26, message: 'txn-already-in-mempool' } }),
     ],
   ])('resolves with the txid when the node already has the transaction (%s)', async (_case, body) => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+    const { fetchFn, calls } = replying({ status: 400, body })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(TXID)
@@ -442,7 +460,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['bare validity rejection', 'bad-txns-inputs-missingorspent'],
     ['generic backend failure', GENERIC_BACKEND_FAILURE],
   ])('fails closed on a coded rejection (%s)', async (_case, body) => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+    const { fetchFn, calls } = replying({ status: 400, body })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     const error = await rejection(client.broadcastTx(LEGACY_TX_HEX))
@@ -467,7 +485,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['lower-case transport code in a JSON-RPC envelope', JSON.stringify({ error: { code: 'econnreset' } })],
     ['qbit-electrs daemon connection loss', 'Connection error'],
   ])('reports an unknown outcome when the backend relays its own transport failure (%s)', async (_case, body) => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+    const { fetchFn, calls } = replying({ status: 400, body })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     const error = await rejection(client.broadcastTx(LEGACY_TX_HEX))
@@ -485,7 +503,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
       JSON.stringify({ code: 400, error: { code: 'INVALID_ARGUMENT', message: 'invalid transaction hex' } }),
     ],
   ])('fails closed when the backend never reached the node (%s)', async (_case, body) => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+    const { fetchFn, calls } = replying({ status: 400, body })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     const error = await rejection(client.broadcastTx(LEGACY_TX_HEX))
@@ -496,7 +514,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
 
   it.each(RPC_ERROR_SHAPES)('resolves on RPC error -27 whatever the message says (%s)', async (_shape, build) => {
     const body = build(-27, LOCALIZED_MESSAGE)
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+    const { fetchFn, calls } = replying({ status: 400, body })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(TXID)
@@ -505,7 +523,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
 
   it.each(RPC_ERROR_SHAPES)('reports an unknown outcome on a relayed ETIMEDOUT (%s)', async (_shape, build) => {
     const body = build('ETIMEDOUT', LOCALIZED_MESSAGE)
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+    const { fetchFn, calls } = replying({ status: 400, body })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     const error = await rejection(client.broadcastTx(LEGACY_TX_HEX))
@@ -515,7 +533,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
 
   it.each(CODED_REJECTION_SHAPES)('fails closed on a %s reply with code %s', async (_shape, code, build) => {
     const body = build(code, LOCALIZED_MESSAGE)
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+    const { fetchFn, calls } = replying({ status: 400, body })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     const error = await rejection(client.broadcastTx(LEGACY_TX_HEX))
@@ -530,7 +548,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['a different txid', OTHER_TXID],
     ['JSON-wrapped txid', JSON.stringify(TXID)],
   ])('reports an unknown outcome when a 2xx reply does not echo the txid (%s)', async (_case, body) => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 200, body }))
+    const { fetchFn, calls } = replying({ status: 200, body })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     const error = await rejection(client.broadcastTx(WITNESS_TX_HEX))
@@ -540,14 +558,14 @@ describe('EsploraClient.broadcastTx submission policy', () => {
   })
 
   it('accepts a 2xx reply that echoes the txid in any case or with surrounding whitespace', async () => {
-    const { fetchFn } = makeFetch(() => ({ status: 200, body: `  ${TXID.toUpperCase()}\n` }))
+    const { fetchFn } = replying({ status: 200, body: `  ${TXID.toUpperCase()}\n` })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(TXID)
   })
 
   it('returns a bare txid from a 2xx reply, lowercased and trimmed, when no txid is available to check it against', async () => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 200, body: `  ${OTHER_TXID.toUpperCase()}\n` }))
+    const { fetchFn, calls } = replying({ status: 200, body: `  ${OTHER_TXID.toUpperCase()}\n` })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.broadcastTx('0200000000ffff')).resolves.toBe(OTHER_TXID)
@@ -564,7 +582,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
   ])(
     'reports an unknown outcome when a 2xx reply is not a txid and none is available to check it against (%s)',
     async (_case, body) => {
-      const { fetchFn, calls } = makeFetch(() => ({ status: 200, body }))
+      const { fetchFn, calls } = replying({ status: 200, body })
       const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
       const error = await rejection(client.broadcastTx('0200000000ffff'))
@@ -580,7 +598,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['success reply', 200, LEGACY_TX_HEX, TXID],
     ['rejection reply', 400, LEGACY_TX_HEX, TXID],
   ])('reports an unknown outcome when a %s cannot be read', async (_case, status, hex, txid) => {
-    const { fetchFn } = makeFetch(() => ({ status, body: unreadableBody() }))
+    const fetchFn = (async () => unreadableReply(status)) as typeof fetch
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     const error = await rejection(client.broadcastTx(hex))
@@ -589,9 +607,12 @@ describe('EsploraClient.broadcastTx submission policy', () => {
   })
 
   it('carries the caller-supplied txid when the hex cannot be parsed', async () => {
-    const { fetchFn, calls } = makeFetch(i =>
-      i === 0 ? { status: 502, body: 'bad gateway' } : { status: 400, body: 'txn-already-known' }
-    )
+    const { fetchFn, calls } = backend('esplora', {
+      tx: [
+        { status: 502, body: 'bad gateway' },
+        { status: 400, body: 'txn-already-known' },
+      ],
+    })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx('0200000000ffff', { txid: OTHER_TXID.toUpperCase() })).rejects.toMatchObject({
@@ -600,13 +621,13 @@ describe('EsploraClient.broadcastTx submission policy', () => {
       txid: OTHER_TXID,
     })
     expect(calls).toHaveLength(1)
-    expect(calls[0]!.init?.body).toBe('0200000000ffff')
+    expect(calls[0]!.body).toBe('0200000000ffff')
 
     await expect(client.broadcastTx('0200000000ffff', { txid: OTHER_TXID })).resolves.toBe(OTHER_TXID)
   })
 
   it('reports an already-known reply as an unknown outcome when no txid is available', async () => {
-    const { fetchFn } = makeFetch(() => ({ status: 400, body: 'txn-already-in-mempool' }))
+    const { fetchFn } = replying({ status: 400, body: 'txn-already-in-mempool' })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     const error = await rejection(client.broadcastTx('0200000000ffff'))
@@ -620,7 +641,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['non-hex', `g${TXID.slice(1)}`, /options\.txid must be a 64-character hex/],
     ['non-string', 123 as unknown as string, /options\.txid must be a 64-character hex/],
   ])('rejects a %s txid option with a TypeError before sending anything', async (_case, txid, message) => {
-    const { fetchFn, calls } = makeFetch(() => ({ body: TXID }))
+    const { fetchFn, calls } = replying({ body: TXID })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     const promise = client.broadcastTx(LEGACY_TX_HEX, { txid })
@@ -633,14 +654,14 @@ describe('EsploraClient.broadcastTx submission policy', () => {
     ['null', null],
     ['undefined', undefined],
   ])('treats %s options like no options', async (_case, options) => {
-    const { fetchFn } = makeFetch(() => ({ body: TXID }))
+    const { fetchFn } = replying({ body: TXID })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX, options as undefined)).resolves.toBe(TXID)
   })
 
   it('rejects a non-string rawTxHex with a TypeError before sending anything', async () => {
-    const { fetchFn, calls } = makeFetch(() => ({ body: TXID }))
+    const { fetchFn, calls } = replying({ body: TXID })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.broadcastTx(undefined as unknown as string)).rejects.toThrow(TypeError)
@@ -651,15 +672,21 @@ describe('EsploraClient.broadcastTx submission policy', () => {
   })
 
   it('accepts a matching txid option in either case', async () => {
-    const { fetchFn } = makeFetch(() => ({ body: TXID }))
+    const { fetchFn } = replying({ body: TXID })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX, { txid: TXID.toUpperCase() })).resolves.toBe(TXID)
   })
 
   it('keeps retrying transient failures for reads', async () => {
-    const { fetchFn, calls } = makeFetch(i => (i < 2 ? { status: 504, body: 'busy' } : { body: '10' }))
-    const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
+    const mock = createMockEsplora({
+      backend: 'esplora',
+      baseUrl: BASE,
+      tip: { height: 10 },
+      faults: [{ route: 'GET /blocks/tip/height', kind: 'status', status: 504, body: 'busy', times: 2 }],
+    })
+    const calls = mock.requests
+    const client = new EsploraClient({ baseUrl: BASE, fetchFn: mock.fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.getTipHeight()).resolves.toBe(10)
     expect(calls).toHaveLength(3)
@@ -691,7 +718,7 @@ describe('EsploraClient.broadcastTx submission policy', () => {
 
 describe('MempoolQbitClient.broadcastTx submission policy', () => {
   it('does not fall back to /tx/push after an uncertain /tx attempt', async () => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 504, body: 'gateway timeout' }))
+    const { fetchFn, calls } = replying({ status: 504, body: 'gateway timeout' }, 'mempool-qbit')
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
@@ -720,14 +747,15 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
   })
 
   it('treats an already-known reply from /tx/push as success', async () => {
-    const { fetchFn, calls } = makeFetch(i =>
-      i === 0 ? { status: 400, body: GENERIC_BACKEND_FAILURE } : { status: 400, body: 'txn-already-in-mempool' }
-    )
+    const { fetchFn, calls } = backend('mempool-qbit', {
+      tx: [{ status: 400, body: GENERIC_BACKEND_FAILURE }],
+      push: [{ status: 400, body: 'txn-already-in-mempool' }],
+    })
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(WITNESS_TX_HEX)).resolves.toBe(TXID)
     expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`, `${BASE}/tx/push`])
-    expect(calls[1]!.init?.body).toBe(`txHash=${WITNESS_TX_HEX}`)
+    expect(calls[1]!.body).toBe(`txHash=${WITNESS_TX_HEX}`)
   })
 
   it.each([
@@ -740,7 +768,13 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
       undefined,
     ],
   ])('reports an unknown outcome with the txid when /tx/push hits a %s', async (_case, pushReply, status) => {
-    const { fetchFn, calls } = makeFetch(i => (i === 0 ? { status: 404, body: 'not found' } : pushReply()))
+    // Not the testing kit: a timeout here is an AbortError before any reply, which the kit does not model.
+    const calls: string[] = []
+    const fetchFn = (async (input: RequestInfo | URL) => {
+      calls.push(String(input))
+      const { status, body } = calls.length === 1 ? { status: 404, body: 'not found' } : pushReply()
+      return new Response(body, { status })
+    }) as typeof fetch
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     const error = await rejection(client.broadcastTx(LEGACY_TX_HEX))
@@ -750,7 +784,7 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
   })
 
   it('does not fall back to /tx/push when /tx relays a node transport failure', async () => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body: RELAYED_RPC_TIMEOUT }))
+    const { fetchFn, calls } = replying({ status: 400, body: RELAYED_RPC_TIMEOUT }, 'mempool-qbit')
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
@@ -763,11 +797,10 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
   })
 
   it('reports an unknown outcome when /tx/push relays a node transport failure', async () => {
-    const { fetchFn, calls } = makeFetch(i =>
-      i === 0
-        ? { status: 400, body: GENERIC_BACKEND_FAILURE }
-        : { status: 400, body: JSON.stringify({ error: RELAYED_RPC_TIMEOUT }) }
-    )
+    const { fetchFn, calls } = backend('mempool-qbit', {
+      tx: [{ status: 400, body: GENERIC_BACKEND_FAILURE }],
+      push: [{ status: 400, body: JSON.stringify({ error: RELAYED_RPC_TIMEOUT }) }],
+    })
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(P2MR_TX.rawTxHex)).rejects.toMatchObject({
@@ -781,7 +814,7 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
 
   it('fails closed without falling back when /tx reports the node refused the connection', async () => {
     const body = 'sendrawtransaction RPC error: {"code":"ECONNREFUSED"}'
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+    const { fetchFn, calls } = replying({ status: 400, body }, 'mempool-qbit')
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
@@ -793,10 +826,9 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
   })
 
   it('retries 429 on /tx/push and then succeeds', async () => {
-    const { fetchFn, calls } = makeFetch(i => {
-      if (i === 0) return { status: 405, body: 'method not allowed' }
-      if (i === 1) return { status: 429, body: 'slow down' }
-      return { body: TXID }
+    const { fetchFn, calls } = backend('mempool-qbit', {
+      tx: [{ status: 405, body: 'method not allowed' }],
+      push: [{ status: 429, body: 'slow down' }, { body: TXID }],
     })
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 1, sleepFn: noSleep })
 
@@ -805,9 +837,10 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
   })
 
   it('reports an unknown outcome when /tx/push answers a 2xx that is not a txid and none is available', async () => {
-    const { fetchFn, calls } = makeFetch(i =>
-      i === 0 ? { status: 404, body: 'Not Found' } : { status: 200, body: '<!doctype html><title>Login</title>' }
-    )
+    const { fetchFn, calls } = backend('mempool-qbit', {
+      tx: [{ status: 404, body: 'Not Found' }],
+      push: [{ status: 200, body: '<!doctype html><title>Login</title>' }],
+    })
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     const error = await rejection(client.broadcastTx('0200000000ffff'))
@@ -819,9 +852,10 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
 
   it('still fails closed when /tx/push rejects the transaction', async () => {
     const body = 'sendrawtransaction RPC error: {"code":-26,"message":"bad-txns-inputs-missingorspent"}'
-    const { fetchFn, calls } = makeFetch(i =>
-      i === 0 ? { status: 400, body: GENERIC_BACKEND_FAILURE } : { status: 400, body }
-    )
+    const { fetchFn, calls } = backend('mempool-qbit', {
+      tx: [{ status: 400, body: GENERIC_BACKEND_FAILURE }],
+      push: [{ status: 400, body }],
+    })
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
@@ -836,7 +870,7 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
     'does not fall back after a structured relayed ETIMEDOUT from /tx (%s)',
     async (_shape, build) => {
       const body = build('ETIMEDOUT', LOCALIZED_MESSAGE)
-      const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+      const { fetchFn, calls } = replying({ status: 400, body }, 'mempool-qbit')
       const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
       await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
@@ -852,7 +886,7 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
     'fails closed without falling back on a %s /tx reply with code %s',
     async (_shape, code, build) => {
       const body = build(code, LOCALIZED_MESSAGE)
-      const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+      const { fetchFn, calls } = replying({ status: 400, body }, 'mempool-qbit')
       const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
       await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
@@ -866,9 +900,10 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
 
   it.each(RPC_ERROR_SHAPES)('resolves a structured -27 from /tx/push (%s)', async (_shape, build) => {
     const body = build(-27, LOCALIZED_MESSAGE)
-    const { fetchFn, calls } = makeFetch(i =>
-      i === 0 ? { status: 400, body: GENERIC_BACKEND_FAILURE } : { status: 400, body }
-    )
+    const { fetchFn, calls } = backend('mempool-qbit', {
+      tx: [{ status: 400, body: GENERIC_BACKEND_FAILURE }],
+      push: [{ status: 400, body }],
+    })
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(TXID)
@@ -879,7 +914,7 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
     ['RPC code', JSON.stringify({ error: { code: -26, message: GENERIC_BACKEND_FAILURE } })],
     ['transport code', JSON.stringify({ code: 'ECONNREFUSED', message: GENERIC_BACKEND_FAILURE })],
   ])('does not fall back when a node-coded rejection carries the generic failure text (%s)', async (_case, body) => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+    const { fetchFn, calls } = replying({ status: 400, body }, 'mempool-qbit')
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({
@@ -897,7 +932,10 @@ describe('MempoolQbitClient.broadcastTx submission policy', () => {
   ])(
     'still falls back to /tx/push when only a gateway code accompanies a no-submit reply (%s)',
     async (_case, status, body) => {
-      const { fetchFn, calls } = makeFetch(i => (i === 0 ? { status, body } : { status: 200, body: TXID }))
+      const { fetchFn, calls } = backend('mempool-qbit', {
+        tx: [{ status, body }],
+        push: [{ status: 200, body: TXID }],
+      })
       const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
       await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(TXID)
@@ -982,35 +1020,41 @@ function serverErrorCases(outcome: ServerErrorOutcome): [number, string, string]
 interface SubmissionPath {
   name: string
   make: (fetchFn: typeof fetch) => EsploraClient
+  backend: MockBackend
   /** Replies before the one under test: `/tx` must decline before `/tx/push` is tried. */
-  prelude: MockReply[]
+  prelude: Reply[]
   urls: string[]
 }
 const SUBMISSION_PATHS: SubmissionPath[] = [
   {
     name: 'EsploraClient /tx',
     make: fetchFn => new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep }),
+    backend: 'esplora',
     prelude: [],
     urls: [`${BASE}/tx`],
   },
   {
     name: 'MempoolQbitClient /tx',
     make: fetchFn => new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep }),
+    backend: 'mempool-qbit',
     prelude: [],
     urls: [`${BASE}/tx`],
   },
   {
     name: 'MempoolQbitClient /tx/push',
     make: fetchFn => new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep }),
+    backend: 'mempool-qbit',
     prelude: [{ status: 404, body: 'Not Found' }],
     urls: [`${BASE}/tx`, `${BASE}/tx/push`],
   },
 ]
 
-for (const { name, make, prelude, urls } of SUBMISSION_PATHS) {
+for (const { name, make, backend: kind, prelude, urls } of SUBMISSION_PATHS) {
   describe(`${name} on a 5xx reply`, () => {
-    function submit(status: number, body: BodyInit, rawTxHex = LEGACY_TX_HEX) {
-      const { fetchFn, calls } = makeFetch(i => prelude[i] ?? { status, body })
+    function submit(status: number, body: string, rawTxHex = LEGACY_TX_HEX) {
+      // `/tx` gets the prelude, if any, and the reply under test goes to every later submission.
+      const replies = [...prelude, { status, body }]
+      const { fetchFn, calls } = backend(kind, { tx: replies.slice(0, 1), push: replies.slice(-1) })
       return { calls, result: make(fetchFn).broadcastTx(rawTxHex) }
     }
 
@@ -1062,7 +1106,15 @@ for (const { name, make, prelude, urls } of SUBMISSION_PATHS) {
     })
 
     it('reports an unknown outcome when a 5xx body cannot be read', async () => {
-      const { calls, result } = submit(500, unreadableBody())
+      const calls: { url: string }[] = []
+      const fetchFn = (async (input: RequestInfo | URL) => {
+        calls.push({ url: String(input) })
+        const reply = prelude[calls.length - 1]
+        return reply === undefined
+          ? unreadableReply(500)
+          : new Response(reply.body ?? '', { status: reply.status ?? 200 })
+      }) as typeof fetch
+      const result = make(fetchFn).broadcastTx(LEGACY_TX_HEX)
       const error = await rejection(result)
       expect(error).toMatchObject({
         kind: 'unknown_outcome',
@@ -1094,7 +1146,7 @@ for (const { name, make, prelude, urls } of SUBMISSION_PATHS) {
 describe('5xx replies the server never processed', () => {
   it.each([501, 505, 511])('keeps a %i reply an http error even when its body carries a node code', async status => {
     const body = JSON_RPC_ENVELOPE(-26, 'bad-txns-inputs-missingorspent')
-    const { fetchFn, calls } = makeFetch(() => ({ status, body }))
+    const { fetchFn, calls } = replying({ status, body })
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({ kind: 'http', status, responseBody: body })
@@ -1102,11 +1154,10 @@ describe('5xx replies the server never processed', () => {
   })
 
   it('still falls back to /tx/push after a 501 whose body carries a node code', async () => {
-    const { fetchFn, calls } = makeFetch(i =>
-      i === 0
-        ? { status: 501, body: JSON_RPC_ENVELOPE(-26, 'bad-txns-inputs-missingorspent') }
-        : { status: 200, body: TXID }
-    )
+    const { fetchFn, calls } = backend('mempool-qbit', {
+      tx: [{ status: 501, body: JSON_RPC_ENVELOPE(-26, 'bad-txns-inputs-missingorspent') }],
+      push: [{ status: 200, body: TXID }],
+    })
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(TXID)
@@ -1115,7 +1166,7 @@ describe('5xx replies the server never processed', () => {
 
   it('does not fall back to /tx/push after a definite 5xx rejection from /tx', async () => {
     const body = JSON_RPC_ENVELOPE(-26, 'bad-txns-inputs-missingorspent')
-    const { fetchFn, calls } = makeFetch(() => ({ status: 500, body }))
+    const { fetchFn, calls } = replying({ status: 500, body }, 'mempool-qbit')
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: noSleep })
 
     await expect(client.broadcastTx(LEGACY_TX_HEX)).rejects.toMatchObject({

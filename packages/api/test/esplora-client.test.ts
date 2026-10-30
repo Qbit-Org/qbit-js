@@ -11,6 +11,7 @@ import {
   feeEstimatesFromMempoolRecommendedFees,
   feeTiersFromEstimates,
 } from '../src/index'
+import { createMockEsplora, type MockBackend, type MockFault, type MockRoute } from '../src/testing'
 
 interface MockReply {
   status?: number
@@ -66,6 +67,27 @@ function withStats(handler: Handler, confirmed: number, mempool: number, address
     url === `${BASE}/address/${address}` ? { body: historyStats(confirmed, mempool) } : handler(i, url, init)
 }
 
+/**
+ * A testing-kit backend with no transactions, and `faults`. Tests of how the
+ * client takes a reply use it; those that hand-craft history pages (variable
+ * page sizes, repeated or malformed rows), or check the RequestInit the client
+ * sends or the Response objects it consumes, keep `makeFetch`.
+ */
+function kit(faults: MockFault[] = [], backend: MockBackend = 'esplora', options: { tipHeight?: number } = {}) {
+  const mock = createMockEsplora({
+    backend,
+    baseUrl: BASE,
+    faults,
+    ...(options.tipHeight === undefined ? {} : { tip: { height: options.tipHeight } }),
+  })
+  return { mock, fetchFn: mock.fetchFn, calls: mock.requests }
+}
+
+/** A status fault on `route` for every request. */
+function always(route: MockRoute, status: number, body?: string): MockFault {
+  return { route, kind: 'status', status, times: Infinity, ...(body === undefined ? {} : { body }) }
+}
+
 const noSleep = () => Promise.resolve()
 /** A one-input, one-output legacy transaction and its txid (getTxHex checks the reply). */
 const LEGACY_TX_HEX =
@@ -98,16 +120,20 @@ function historyTx(txid: string, confirmed: boolean) {
 
 describe('EsploraClient endpoints', () => {
   it('hits the right URLs and parses responses', async () => {
-    const { fetchFn, calls } = makeFetch((_i, url) => {
-      if (url.endsWith(`/address/${ADDR}`)) return { body: JSON.stringify(STATS) }
-      if (url.endsWith(`/address/${ADDR}/utxo`))
-        return { body: JSON.stringify([{ txid: 'aa', vout: 0, value: 100_000, status: { confirmed: true } }]) }
-      if (url.endsWith('/fee-estimates')) return { body: JSON.stringify({ '1': 12.5, '6': 4, '144': 1.1 }) }
-      if (url.endsWith('/blocks/tip/height')) return { body: '4321' }
-      if (url.endsWith(`/tx/${LEGACY_TXID}/hex`)) return { body: LEGACY_TX_HEX }
-      throw new Error(`unexpected url ${url}`)
+    const mock = createMockEsplora({
+      backend: 'esplora',
+      baseUrl: BASE,
+      // 150,000 sats received in two outputs, one of them still unspent.
+      txs: [
+        { hex: LEGACY_TX_HEX, vout: [{ address: ADDR, value: 100_000 }], block: { height: 4000 } },
+        { txid: 'aa'.repeat(32), vout: [{ address: ADDR, value: 50_000 }], block: { height: 4001 } },
+        { txid: 'bb'.repeat(32), vin: [{ txid: 'aa'.repeat(32), vout: 0 }], vout: [{ value: 49_000 }] },
+      ],
+      feeEstimates: { '1': 12.5, '6': 4, '144': 1.1 },
+      tip: { height: 4321 },
     })
-    const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
+    const calls = mock.requests
+    const client = new EsploraClient({ baseUrl: BASE, fetchFn: mock.fetchFn, sleepFn: noSleep })
 
     const stats = await client.getAddressStats(ADDR)
     expect(stats.chain_stats.funded_txo_sum).toBe(150_000)
@@ -161,7 +187,7 @@ describe('EsploraClient endpoints', () => {
   })
 
   it('uses the confirmed-only chain route for the first address-history page', async () => {
-    const { fetchFn, calls } = makeFetch(() => ({ body: '[]' }))
+    const { fetchFn, calls } = kit()
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await client.getAddressTxs(ADDR)
@@ -170,7 +196,7 @@ describe('EsploraClient endpoints', () => {
   })
 
   it('appends an encoded cursor to the confirmed-only chain route', async () => {
-    const { fetchFn, calls } = makeFetch(() => ({ body: '[]' }))
+    const { fetchFn, calls } = kit()
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await client.getAddressTxs(ADDR, 'last/txid')
@@ -306,16 +332,16 @@ describe('EsploraClient endpoints', () => {
   })
 
   it('broadcasts a raw tx via POST /tx and returns the txid', async () => {
-    const { fetchFn, calls } = makeFetch(() => ({ body: BROADCAST_TXID }))
+    const { fetchFn, calls } = kit([{ route: 'POST /tx', kind: 'status', status: 200, body: BROADCAST_TXID }])
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
     const txid = await client.broadcastTx('0200000000ffff')
     expect(txid).toBe(BROADCAST_TXID)
-    expect(calls[0]!.init?.method).toBe('POST')
-    expect(calls[0]!.init?.body).toBe('0200000000ffff')
+    expect(calls[0]!.method).toBe('POST')
+    expect(calls[0]!.body).toBe('0200000000ffff')
   })
 
   it('surfaces a broadcast rejection as an http error with the node message', async () => {
-    const { fetchFn } = makeFetch(() => ({ status: 400, body: 'sendrawtransaction RPC error: bad-txns' }))
+    const { fetchFn } = kit([always('POST /tx', 400, 'sendrawtransaction RPC error: bad-txns')])
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
     await expect(client.broadcastTx('00')).rejects.toMatchObject({ kind: 'http', status: 400 })
     await expect(client.broadcastTx('00')).rejects.toThrow(/bad-txns/)
@@ -647,7 +673,7 @@ describe('MempoolQbitClient endpoints', () => {
     [{ maxTransactions: -1 }, 'maxTransactions'],
     [{ maxTransactions: Number.MAX_SAFE_INTEGER + 1 }, 'maxTransactions'],
   ])('rejects invalid complete-history limits %o', async (options, name) => {
-    const { fetchFn, calls } = makeFetch(() => ({ body: '[]' }))
+    const { fetchFn, calls } = kit([], 'mempool-qbit')
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.getAddressHistory(ADDR, options)).rejects.toThrow(`${name} must be a positive integer`)
@@ -866,11 +892,9 @@ describe('MempoolQbitClient endpoints', () => {
       economyFee: 2,
       minimumFee: 1,
     }
-    const { fetchFn, calls } = makeFetch((_i, url) => {
-      if (url.endsWith('/fees/recommended')) return { body: JSON.stringify(fees) }
-      throw new Error(`unexpected url ${url}`)
-    })
-    const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
+    const mock = createMockEsplora({ backend: 'mempool-qbit', baseUrl: BASE, recommendedFees: fees })
+    const calls = mock.requests
+    const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn: mock.fetchFn, sleepFn: noSleep })
 
     await expect(client.getFeeEstimates()).resolves.toEqual({
       '1': 9,
@@ -910,7 +934,7 @@ describe('MempoolQbitClient endpoints', () => {
     ['structured RPC rejection', JSON.stringify({ error: 'sendrawtransaction RPC error: {"code":-26}' })],
     ['transaction validity rejection', 'bad-txns-inputs-missingorspent'],
   ])('does not mask %s with the /tx/push fallback', async (_case, body) => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 400, body }))
+    const { fetchFn, calls } = kit([always('POST /tx', 400, body), always('POST /tx/push', 400, body)], 'mempool-qbit')
     const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
 
     await expect(client.broadcastTx('0200000000ffff')).rejects.toMatchObject({
@@ -930,7 +954,7 @@ describe('EsploraClient error taxonomy', () => {
     { status: 400, kind: 'http' },
   ]
   it.each(cases)('maps HTTP $status to $kind', async ({ status, kind }) => {
-    const { fetchFn } = makeFetch(() => ({ status, body: 'x' }))
+    const { fetchFn } = kit([always('GET /address/:address', status, 'x')])
     // retries=0 so 429 is not retried away
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 0, sleepFn: noSleep })
     await expect(client.getAddressStats(ADDR)).rejects.toMatchObject({ kind })
@@ -961,7 +985,7 @@ describe('EsploraClient error taxonomy', () => {
   })
 
   it('raises a parse error on malformed JSON', async () => {
-    const { fetchFn } = makeFetch(() => ({ body: 'not json' }))
+    const { fetchFn } = kit([always('GET /address/:address', 200, 'not json')])
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, sleepFn: noSleep })
     await expect(client.getAddressStats(ADDR)).rejects.toMatchObject({ kind: 'parse' })
   })
@@ -998,9 +1022,9 @@ describe('EsploraClient resilience', () => {
 
   it('honors Retry-After on 429', async () => {
     const sleep = vi.fn(noSleep)
-    const { fetchFn } = makeFetch(i =>
-      i === 0 ? { status: 429, body: 'slow down', headers: { 'retry-after': '2' } } : { body: JSON.stringify(STATS) }
-    )
+    const { fetchFn } = kit([
+      { route: 'GET /address/:address', kind: 'status', status: 429, body: 'slow down', retryAfter: '2' },
+    ])
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 1, sleepFn: sleep })
     await client.getAddressStats(ADDR)
     expect(sleep).toHaveBeenCalledWith(2000, expect.any(AbortSignal))
@@ -1009,12 +1033,9 @@ describe('EsploraClient resilience', () => {
   describe('Retry-After cap', () => {
     const ONE_YEAR_S = 31_536_000
 
-    function rateLimited(retryAfter: string, status = 429) {
-      return makeFetch(i =>
-        i === 0
-          ? { status, body: 'slow down', headers: { 'retry-after': retryAfter } }
-          : { body: JSON.stringify(STATS) }
-      )
+    /** The first request to `route` answers `status` with `Retry-After: retryAfter`; the rest succeed. */
+    function rateLimited(retryAfter: string, status = 429, route: MockRoute = 'GET /address/:address') {
+      return kit([{ route, kind: 'status', status, body: 'slow down', retryAfter }])
     }
 
     it('honours a Retry-After up to and including the 30 s default cap', async () => {
@@ -1034,7 +1055,12 @@ describe('EsploraClient resilience', () => {
 
     it('throws rate_limit at once with retryAfterMs when the server asks for longer than the cap', async () => {
       const sleep = vi.fn(noSleep)
-      const { fetchFn, calls, responses } = rateLimited(String(ONE_YEAR_S))
+      // makeFetch, to check that the reply's own body was consumed.
+      const { fetchFn, calls, responses } = makeFetch(i =>
+        i === 0
+          ? { status: 429, body: 'slow down', headers: { 'retry-after': String(ONE_YEAR_S) } }
+          : { body: JSON.stringify(STATS) }
+      )
       const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: sleep })
       await expect(client.getAddressStats(ADDR)).rejects.toMatchObject({
         name: 'QbitApiError',
@@ -1160,7 +1186,7 @@ describe('EsploraClient resilience', () => {
 
     it('throws a transient http error with retryAfterMs for an over-cap 503', async () => {
       const sleep = vi.fn(noSleep)
-      const { fetchFn, calls } = rateLimited('3600', 503)
+      const { fetchFn, calls } = rateLimited('3600', 503, 'GET /blocks/tip/hash')
       const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 2, sleepFn: sleep })
       await expect(client.getTipHash()).rejects.toMatchObject({ kind: 'http', status: 503, retryAfterMs: 3_600_000 })
       expect(sleep).not.toHaveBeenCalled()
@@ -1208,7 +1234,9 @@ describe('EsploraClient resilience', () => {
       expect((await malformedClient.getAddressStats(ADDR)).address).toBe(ADDR)
       expect(sleep.mock.calls).toEqual([[300, expect.any(AbortSignal)]])
 
-      const { fetchFn } = makeFetch(() => ({ status: 429, body: 'x', headers: { 'retry-after': 'soon' } }))
+      const { fetchFn } = kit([
+        { route: 'GET /address/:address', kind: 'status', status: 429, body: 'x', retryAfter: 'soon', times: Infinity },
+      ])
       const error = await new EsploraClient({ baseUrl: BASE, fetchFn, retries: 0, sleepFn: noSleep })
         .getAddressStats(ADDR)
         .catch((e: unknown) => e)
@@ -1370,7 +1398,7 @@ describe('EsploraClient constructor options', () => {
 
   it('treats explicitly undefined numeric options as omitted', async () => {
     const sleep = vi.fn((_ms: number) => noSleep())
-    const { fetchFn, calls } = makeFetch(() => ({ status: 503, body: 'busy' }))
+    const { fetchFn, calls } = kit([always('GET /blocks/tip/height', 503, 'busy')])
     // exactOptionalPropertyTypes rejects the explicit undefined a JavaScript caller can pass.
     const unset = undefined as unknown as number
     const client = new EsploraClient({
@@ -1426,15 +1454,16 @@ describe('EsploraClient constructor options', () => {
       'https://\u0645\u06cc\u200c\u0631\u0648\u062f.example/api/blocks/tip/height',
     ],
   ])('accepts baseUrl %s', async (baseUrl, expectedUrl) => {
-    const { fetchFn, calls } = makeFetch(() => ({ body: '7' }))
-    const client = new EsploraClient({ baseUrl, fetchFn })
+    const mock = createMockEsplora({ backend: 'esplora', baseUrl, tip: { height: 7 } })
+    const calls = mock.requests
+    const client = new EsploraClient({ baseUrl, fetchFn: mock.fetchFn })
     expect(await client.getTipHeight()).toBe(7)
     expect(calls.map(call => call.url)).toEqual([expectedUrl])
   })
 
   it('accepts retries: 0 and makes exactly one attempt', async () => {
     const sleep = vi.fn(noSleep)
-    const { fetchFn, calls } = makeFetch(() => ({ status: 503, body: 'busy' }))
+    const { fetchFn, calls } = kit([always('GET /blocks/tip/height', 503, 'busy')])
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 0, sleepFn: sleep })
     await expect(client.getTipHeight()).rejects.toMatchObject({ kind: 'http', status: 503 })
     expect(calls).toHaveLength(1)
@@ -1442,7 +1471,7 @@ describe('EsploraClient constructor options', () => {
   })
 
   it('accepts retries: 10 and makes eleven attempts', async () => {
-    const { fetchFn, calls } = makeFetch(() => ({ status: 503, body: 'busy' }))
+    const { fetchFn, calls } = kit([always('GET /blocks/tip/height', 503, 'busy')])
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 10, sleepFn: noSleep })
     await expect(client.getTipHeight()).rejects.toMatchObject({ kind: 'http', status: 503 })
     expect(calls).toHaveLength(11)
@@ -1461,7 +1490,7 @@ describe('EsploraClient constructor options', () => {
     try {
       for (const timeoutMs of [1, 25_000, MAX_TIMER_DELAY_MS]) {
         setTimeoutSpy.mockClear()
-        const { fetchFn } = makeFetch(() => ({ body: '7' }))
+        const { fetchFn } = kit([], 'esplora', { tipHeight: 7 })
         const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs })
         expect(await client.getTipHeight()).toBe(7)
         expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), timeoutMs)
@@ -1474,7 +1503,9 @@ describe('EsploraClient constructor options', () => {
   it('accepts fractional and zero retryBaseDelayMs', async () => {
     for (const retryBaseDelayMs of [0, 0.5]) {
       const sleep = vi.fn(noSleep)
-      const { fetchFn } = makeFetch(i => (i === 0 ? { status: 503 } : { body: '7' }))
+      const { fetchFn } = kit([{ route: 'GET /blocks/tip/height', kind: 'status', status: 503 }], 'esplora', {
+        tipHeight: 7,
+      })
       const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 1, retryBaseDelayMs, sleepFn: sleep })
       expect(await client.getTipHeight()).toBe(7)
       expect(sleep).toHaveBeenCalledWith(retryBaseDelayMs, expect.any(AbortSignal))
@@ -1483,7 +1514,7 @@ describe('EsploraClient constructor options', () => {
 
   it('keeps exponential backoff unchanged below the cap', async () => {
     const sleep = vi.fn((_ms: number) => noSleep())
-    const { fetchFn } = makeFetch(() => ({ status: 503 }))
+    const { fetchFn } = kit([always('GET /blocks/tip/height', 503)])
     const client = new EsploraClient({ baseUrl: BASE, fetchFn, retries: 3, sleepFn: sleep })
     await expect(client.getTipHeight()).rejects.toMatchObject({ status: 503 })
     expect(sleep.mock.calls.map(([ms]) => ms)).toEqual([300, 600, 1200])
@@ -1491,7 +1522,7 @@ describe('EsploraClient constructor options', () => {
 
   it('caps the computed backoff at the setTimeout maximum', async () => {
     const sleep = vi.fn((_ms: number) => noSleep())
-    const { fetchFn } = makeFetch(() => ({ status: 503 }))
+    const { fetchFn } = kit([always('GET /blocks/tip/height', 503)])
     const client = new EsploraClient({
       baseUrl: BASE,
       fetchFn,

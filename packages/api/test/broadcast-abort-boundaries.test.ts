@@ -3,32 +3,11 @@ import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { EsploraClient, MempoolQbitClient, QbitApiError, type RequestOptions } from '../src/index'
+import { createMockEsplora } from '../src/testing'
 
 // Pins the points where a broadcast abort or deadline switches between a
 // definite `aborted` / `timeout` (nothing may have been sent) and
 // `unknown_outcome` (a POST may have reached the node).
-
-interface MockReply {
-  status?: number
-  body?: string
-}
-
-type Handler = (callIndex: number, url: string, init: RequestInit | undefined) => MockReply | Promise<MockReply>
-
-function makeFetch(handler: Handler): {
-  fetchFn: typeof fetch
-  calls: { url: string; init?: RequestInit | undefined }[]
-} {
-  const calls: { url: string; init?: RequestInit | undefined }[] = []
-  const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input)
-    const index = calls.length
-    calls.push({ url, init })
-    const reply = await handler(index, url, init)
-    return new Response(reply.body ?? '', { status: reply.status ?? 200 })
-  }) as typeof fetch
-  return { fetchFn, calls }
-}
 
 /** A fetch that never answers but, like real fetch, rejects with the signal's reason. */
 function hangUntilAborted(init: RequestInit | undefined): Promise<never> {
@@ -108,10 +87,12 @@ describe('broadcast abort and deadline boundaries', () => {
     '%s: %s during the backoff after a pre-connection failure is a definite %s',
     async (_name, _label, kind, Client) => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-      const { fetchFn, calls } = makeFetch(() => {
-        throw connectionRefused()
+      const mock = createMockEsplora({
+        backend: Client === EsploraClient ? 'esplora' : 'mempool-qbit',
+        baseUrl: BASE,
+        faults: [{ route: 'POST /tx', kind: 'network-error', times: Infinity }],
       })
-      const client = new Client({ baseUrl: BASE, fetchFn, retries: 2, retryBaseDelayMs: 60_000 })
+      const client = new Client({ baseUrl: BASE, fetchFn: mock.fetchFn, retries: 2, retryBaseDelayMs: 60_000 })
 
       const { outcome, reason, stopAfter10ms } = startBroadcast(client, kind)
       await stopAfter10ms()
@@ -121,7 +102,7 @@ describe('broadcast abort and deadline boundaries', () => {
       expect(outcome.error).toMatchObject({ kind })
       expect((outcome.error as QbitApiError).txid).toBeUndefined()
       if (kind === 'aborted') expect((outcome.error as QbitApiError).cause).toBe(reason)
-      expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`])
+      expect(mock.requests.map(request => request.url)).toEqual([`${BASE}/tx`])
       expect(vi.getTimerCount()).toBe(0)
     }
   )
@@ -136,11 +117,15 @@ describe('broadcast abort and deadline boundaries', () => {
     '%s: %s while the attempt re-sent after %s is in flight is unknown_outcome (%s)',
     async (_name, _label, first, kind, Client) => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-      const { fetchFn, calls } = makeFetch((i, _, init) => {
-        if (i > 0) return hangUntilAborted(init)
-        if (first === 'a 429') return { status: 429, body: 'slow down' }
+      // Not the testing kit: the re-sent attempt must hang before its headers
+      // arrive, where the kit's stall fault sends them and stalls the body.
+      const calls: string[] = []
+      const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+        calls.push(String(input))
+        if (calls.length > 1) return hangUntilAborted(init)
+        if (first === 'a 429') return new Response('slow down', { status: 429 })
         throw connectionRefused()
-      })
+      }) as typeof fetch
       // The re-sent attempt starts after the 5ms backoff, before the stop at 10ms.
       const client = new Client({ baseUrl: BASE, fetchFn, retries: 2, retryBaseDelayMs: 5 })
 
@@ -157,7 +142,7 @@ describe('broadcast abort and deadline boundaries', () => {
         cause: { kind },
       })
       if (kind === 'aborted') expect(((outcome.error as QbitApiError).cause as QbitApiError).cause).toBe(reason)
-      expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`, `${BASE}/tx`])
+      expect(calls).toEqual([`${BASE}/tx`, `${BASE}/tx`])
       expect(vi.getTimerCount()).toBe(0)
     }
   )
@@ -165,7 +150,11 @@ describe('broadcast abort and deadline boundaries', () => {
   it('MempoolQbitClient: an abort after /tx rejects definitively, before /tx/push starts, is a definite aborted', async () => {
     const controller = new AbortController()
     const reason = new Error('caller gave up')
-    const { fetchFn, calls } = makeFetch(() => ({ status: 404, body: 'Not Found' }))
+    const mock = createMockEsplora({
+      backend: 'mempool-qbit',
+      baseUrl: BASE,
+      faults: [{ route: 'POST /tx', kind: 'status', status: 404, body: 'Not Found', times: Infinity }],
+    })
     // Abort exactly between the two submissions: once /tx has settled, before the fallback is called.
     class AbortAfterTx extends MempoolQbitClient {
       protected override async submitTx(
@@ -182,13 +171,13 @@ describe('broadcast abort and deadline boundaries', () => {
         }
       }
     }
-    const client = new AbortAfterTx({ baseUrl: BASE, fetchFn })
+    const client = new AbortAfterTx({ baseUrl: BASE, fetchFn: mock.fetchFn })
 
     const error = await client.broadcastTx(P2MR_TX.rawTxHex, { signal: controller.signal }).catch(e => e)
 
     // /tx was rejected outright and /tx/push was never sent.
     expect(error).toBeInstanceOf(QbitApiError)
     expect(error).toMatchObject({ kind: 'aborted', cause: reason })
-    expect(calls.map(call => call.url)).toEqual([`${BASE}/tx`])
+    expect(mock.requests.map(request => request.url)).toEqual([`${BASE}/tx`])
   })
 })

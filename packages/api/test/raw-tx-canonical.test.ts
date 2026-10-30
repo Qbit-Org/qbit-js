@@ -15,6 +15,11 @@ const BASE = 'https://esplora.example/api'
 
 /** qbit Core `serialize.h` MAX_SIZE. */
 const MAX_SIZE = 0x02000000
+/**
+ * Several cases build and decode a MAX_SIZE (32 MiB) witness item, which takes a few seconds on a
+ * slow CI runner, near vitest's 5 s default.
+ */
+const SCALE_TIMEOUT_MS = 60_000
 
 const P2MR_TX = JSON.parse(readFileSync(new URL('./fixtures/p2mr-witness-tx.json', import.meta.url), 'utf8')) as {
   unsignedTxHex: string
@@ -156,7 +161,7 @@ describe('raw transaction fixture re-encoding', () => {
   })
 })
 
-describe('txidFromRawTx: qbit Core decoding rules', () => {
+describe('txidFromRawTx: qbit Core decoding rules', { timeout: SCALE_TIMEOUT_MS }, () => {
   it.each(MALFORMED)('throws parse on %s', (_name, hex) => {
     let error: unknown
     try {
@@ -200,7 +205,7 @@ describe('txidFromRawTx: qbit Core decoding rules', () => {
   })
 })
 
-describe.each(CLIENTS)('%s.getTxHex: qbit Core decoding rules', (_name, Client) => {
+describe.each(CLIENTS)('%s.getTxHex: qbit Core decoding rules', { timeout: SCALE_TIMEOUT_MS }, (_name, Client) => {
   it.each(MALFORMED)('rejects %s as not well-formed', async (_case, hex, sameTxid) => {
     const body = hex()
     // Witness-only changes keep the stripped bytes, so only these checks catch them.

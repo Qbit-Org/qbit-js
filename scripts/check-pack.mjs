@@ -22,7 +22,22 @@ const REQUIRED = [
   'lib/index.d.ts',
   'lib/index.d.mts',
 ]
-const ALLOWED = [/^package\.json$/, /^README\.md$/, /^LICENSE$/, /^lib\//, /^src\//, /^docs\//]
+/**
+ * Files only some packages ship, such as an extra entry point's build and the
+ * `<subpath>/package.json` shim that points resolvers ignoring `exports` at it.
+ */
+const REQUIRED_BY_PACKAGE = {
+  api: ['lib/testing.js', 'lib/testing.mjs', 'lib/testing.d.ts', 'lib/testing.d.mts', 'testing/package.json'],
+}
+const ALLOWED = [
+  /^package\.json$/,
+  /^README\.md$/,
+  /^LICENSE$/,
+  /^lib\//,
+  /^src\//,
+  /^docs\//,
+  /^testing\/package\.json$/,
+]
 
 const packages = ['protocol', 'api']
 const rootLicense = readFileSync(join(repoRoot, 'LICENSE'), 'utf8')
@@ -45,9 +60,11 @@ for (const name of packages) {
   const json = out.startsWith('[') ? out : out.slice(out.lastIndexOf('\n[') + 1)
   const [pack] = JSON.parse(json)
   const files = pack.files.map(file => file.path)
-  const missing = REQUIRED.filter(path => !files.includes(path))
+  const missing = [...REQUIRED, ...(REQUIRED_BY_PACKAGE[name] ?? [])].filter(path => !files.includes(path))
   const unexpected = files.filter(path => !ALLOWED.some(pattern => pattern.test(path)))
   console.log(`${pack.name}@${pack.version}: ${files.length} files, ${pack.unpackedSize} bytes unpacked`)
+  const extra = (REQUIRED_BY_PACKAGE[name] ?? []).filter(path => files.includes(path))
+  if (extra.length > 0) console.log(`  includes ${extra.join(', ')}`)
   if (missing.length > 0) {
     failed = true
     console.error(`  missing: ${missing.join(', ')}`)

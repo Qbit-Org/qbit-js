@@ -1,0 +1,5 @@
+{
+  "main": "../lib/testing.js",
+  "module": "../lib/testing.mjs",
+  "types": "../lib/testing.d.ts"
+}

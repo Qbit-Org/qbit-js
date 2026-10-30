@@ -7,7 +7,9 @@
   // run on each package as it is converted (packageOptions), invalidLink on the
   // merged project (the root validation).
   "packageOptions": {
-    "entryPoints": ["src/index.ts"],
+    // Each package's src/index.ts, and @qbit-oss/api's src/testing.ts (the
+    // @qbit-oss/api/testing entry point). TypeDoc's globs take @(a|b), not {a,b}.
+    "entryPoints": ["src/@(index|testing).ts"],
     "categoryOrder": ["Clients", "*"],
     "validation": {
       "notExported": true,

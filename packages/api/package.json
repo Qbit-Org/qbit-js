@@ -9,6 +9,7 @@
     "lib/**/*",
     "src/**/*",
     "docs/**/*",
+    "testing/package.json",
     "README.md"
   ],
   "exports": {
@@ -20,6 +21,16 @@
       "require": {
         "types": "./lib/index.d.ts",
         "default": "./lib/index.js"
+      }
+    },
+    "./testing": {
+      "import": {
+        "types": "./lib/testing.d.mts",
+        "default": "./lib/testing.mjs"
+      },
+      "require": {
+        "types": "./lib/testing.d.ts",
+        "default": "./lib/testing.js"
       }
     },
     "./package.json": "./package.json"

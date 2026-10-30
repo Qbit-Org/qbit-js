@@ -12,6 +12,10 @@ interface MockReply {
   headers?: Record<string, string>
 }
 
+// Not the testing kit: its stalled body errors once the request's signal
+// aborts, as undici's does, so a client that never timed out its own body read
+// would pass. These bodies ignore the signal, so only the client's
+// `timeoutMs` race ends the read.
 function makeFetch(handler: (callIndex: number) => MockReply) {
   const calls: string[] = []
   const fetchFn = (async (input: RequestInfo | URL) => {
