@@ -26,11 +26,15 @@ can answer that cursor differently (see
 transactions on `/txs/chain` and, by default, 50 on the combined route;
 `/txs/mempool` lists at most 50 transactions, with no way to page further. So
 `getAddressHistory` reads the address stats (`/address/:address`) before and
-after the scan, each in a request of its own, and returns only if both reads
-agree and the history holds exactly `chain_stats.tx_count` confirmed and
-`mempool_stats.tx_count` mempool transactions. If the stats changed during the
-scan, it scans once more; if they change again, or the counts differ, it throws
-`invalid_cursor`. Retry such a scan later. Some causes persist until the backend
+after the scan, and returns only if both reads agree and the history holds
+exactly `chain_stats.tx_count` confirmed and `mempool_stats.tx_count` mempool
+transactions. If the stats changed during the scan, it scans once more; if they
+change again, or the counts differ, it throws `invalid_cursor`. The stats reads
+and the page fetches each go out in a request of their own, never joined to an
+identical `GET` already in flight (see [Resilience](resilience.md)), whose reply
+could predate the first stats read: a replacement (RBF) that pays the address
+the same leaves the stats unchanged, so a joined page could still list the
+transaction it evicted. Retry such a scan later. Some causes persist until the backend
 changes: on `EsploraClient`, an address with more than 50 mempool transactions
 fails until enough confirm, and on `MempoolQbitClient`, an address whose mempool
 rows exactly fill pages of 50 fails while it has confirmed history. Stats
@@ -47,5 +51,6 @@ transport attempts for a page fetch. `maxTransactions` independently defaults to
 duplicate detection; callers intentionally scanning larger histories must opt
 into a higher value. Malformed rows, transactions unrelated to the requested
 address, route/status mismatches, duplicate txids, and non-advancing cursors
-fail closed. These limits bound requests and post-parse processing/retention,
-not the byte size of one HTTP response while it is being received and decoded.
+fail closed. These limits bound requests and post-parse processing/retention;
+the client's `maxResponseBytes` bounds each HTTP response while it is being
+received and decoded (see [Configuration](configuration.md#response-size-limit)).

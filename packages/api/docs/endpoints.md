@@ -30,9 +30,10 @@ default; pass `maxAddressHistoryPages` to set a different positive integer
 limit. Exhaustion throws a `pagination_limit` `QbitApiError` rather than
 returning silently truncated history.
 `getAddressTxs(address, afterTxid)` scans from the current first page and
-requires the exact confirmed address-history cursor before returning older
-rows. A stale, unrelated, or unconfirmed cursor throws an `invalid_cursor`
-`QbitApiError`.
+requires the confirmed address-history cursor before returning older rows. The
+cursor's txid is compared case-insensitively, as `EsploraClient` accepts it. A
+stale, unrelated, or unconfirmed cursor throws an `invalid_cursor`
+`QbitApiError`, and so does one that is not a string, before any request.
 If an internal cursor is in neither the mempool nor the chain history by the
 next page, both history methods reject with an `http` `QbitApiError` rather than
 return incomplete results. qbit-electrs answers that page with `422`

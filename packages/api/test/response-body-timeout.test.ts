@@ -186,44 +186,37 @@ describe('EsploraClient response body timeout', () => {
     expect(sleep).not.toHaveBeenCalled()
   })
 
-  // A 429 proves the submission was not processed, even when its body is lost.
+  // A 429 proves the submission was not processed only through its body,
+  // which could instead have said the node has it (already known) or may have
+  // it (a relayed transport failure). One whose body is lost is uncertain.
   const lost429Bodies = [
     { name: 'stalls', body: () => controlledBody(['slow down']).stream, cause: 'timeout' },
     { name: 'cannot be read', body: erroringBody, cause: 'parse' },
   ]
 
-  it.each(lost429Bodies)('retries a broadcastTx 429 whose body $name', async ({ body }) => {
-    const sleep = vi.fn(noSleep)
-    const { fetchFn, signals } = makeFetch(i => (i === 0 ? { status: 429, body: body() } : { body: TXID }))
-    const client = new EsploraClient({
-      baseUrl: BASE,
-      fetchFn,
-      timeoutMs: 20,
-      retries: 2,
-      retryBaseDelayMs: 7,
-      sleepFn: sleep,
-    })
+  it.each(lost429Bodies)(
+    'ends a broadcastTx 429 whose body $name as unknown_outcome, without a re-send',
+    async ({ body, cause }) => {
+      const sleep = vi.fn(noSleep)
+      const { fetchFn, signals } = makeFetch(i => (i === 0 ? { status: 429, body: body() } : { body: TXID }))
+      const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs: 20, retries: 2, sleepFn: sleep })
 
-    const outcome = await settleWithin(client.broadcastTx('00'), 2_000)
+      const outcome = await settleWithin(client.broadcastTx('00'), 2_000)
 
-    expect(outcome).toMatchObject({ state: 'resolved', value: TXID })
-    expect(signals).toHaveLength(2)
-    expect(sleep).toHaveBeenCalledTimes(1)
-    expect(sleep).toHaveBeenCalledWith(7, expect.any(AbortSignal))
-  })
-
-  it.each(lost429Bodies)('rejects a broadcastTx as rate_limit once every 429 body $name', async ({ body, cause }) => {
-    const { fetchFn, signals } = makeFetch(() => ({ status: 429, body: body() }))
-    const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs: 20, retries: 1, sleepFn: noSleep })
-
-    const outcome = await settleWithin(client.broadcastTx('00'), 2_000)
-
-    expect(outcome).toMatchObject({
-      state: 'rejected',
-      error: { kind: 'rate_limit', status: 429, url: `${SAFE_BASE}/tx`, cause: { kind: cause, status: 429 } },
-    })
-    expect(signals).toHaveLength(2)
-  })
+      expect(outcome).toMatchObject({
+        state: 'rejected',
+        error: {
+          kind: 'unknown_outcome',
+          status: 429,
+          url: `${SAFE_BASE}/tx`,
+          message: expect.stringContaining('HTTP 429 reply body could not be read'),
+          cause: { kind: cause, status: 429 },
+        },
+      })
+      expect(signals).toHaveLength(1)
+      expect(sleep).not.toHaveBeenCalled()
+    }
+  )
 
   it('times out a stalled error body on the final attempt instead of hanging', async () => {
     const body = controlledBody(['bus'])
@@ -506,26 +499,33 @@ describe('EsploraClient body phase under a call signal', () => {
     expect(body.cancelled).toBe(true)
   })
 
-  // A 429 proves the submission was not processed, so cutting its body short is definite.
+  // Only a 429's whole body can prove the submission was not processed, so
+  // cutting it short leaves the outcome unknown.
   it.each([
     { name: 'an abort', options: (controller: AbortController) => ({ signal: controller.signal }), kind: 'aborted' },
     { name: 'the deadline', options: () => ({ deadlineMs: 20 }), kind: 'timeout' },
-  ])('rejects a broadcastTx whose 429 body $name cuts short as $kind, without a re-send', async ({ options, kind }) => {
-    const controller = new AbortController()
-    const body = controlledBody(['slow down'])
-    const { fetchFn, signals } = makeFetch(() => ({ status: 429, body: body.stream }))
-    const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs: 1_000, retries: 0, sleepFn: noSleep })
+  ])(
+    'ends a broadcastTx whose 429 body $name cuts short as unknown_outcome, without a re-send',
+    async ({ options, kind }) => {
+      const controller = new AbortController()
+      const body = controlledBody(['slow down'])
+      const { fetchFn, signals } = makeFetch(() => ({ status: 429, body: body.stream }))
+      const client = new EsploraClient({ baseUrl: BASE, fetchFn, timeoutMs: 1_000, retries: 0, sleepFn: noSleep })
 
-    const call = client.broadcastTx('00', options(controller))
-    await tick()
-    controller.abort()
-    const outcome = await settleWithin(call, 2_000)
+      const call = client.broadcastTx('00', options(controller))
+      await tick()
+      controller.abort()
+      const outcome = await settleWithin(call, 2_000)
 
-    expect(outcome).toMatchObject({ state: 'rejected', error: { kind } })
-    expect((outcome as { error: QbitApiError }).error.txid).toBeUndefined()
-    expect(signals).toHaveLength(1)
-    expect(body.cancelled).toBe(true)
-  })
+      expect(outcome).toMatchObject({
+        state: 'rejected',
+        error: { kind: 'unknown_outcome', status: 429, cause: { kind } },
+      })
+      expect((outcome as { error: QbitApiError }).error.txid).toBeUndefined()
+      expect(signals).toHaveLength(1)
+      expect(body.cancelled).toBe(true)
+    }
+  )
 })
 
 interface PlainReply {
@@ -772,28 +772,16 @@ describe('EsploraClient releasing a stalled body read through text()', () => {
     expect(withoutListenerCount).toHaveBeenCalledWith()
   })
 
-  it('settles a real Node stream consumer and never emits an unhandled error', async () => {
+  it('reads a real Node stream itself, rather than through text(), and destroys it without an unhandled error', async () => {
+    // node-fetch's body: the client iterates it, counting bytes as they arrive.
     const { PassThrough } = await import('node:stream')
-    const consumed = new PassThrough()
-    consumed.write('00000000')
-    let consumerSettled = false
-    const text = () =>
-      new Promise<string>((resolve, reject) => {
-        consumed.on('error', reject)
-        consumed.on('end', () => resolve(''))
-      }).finally(() => {
-        consumerSettled = true
-      })
-    await expectTimeoutWithinBudget(makeStalledTextFetch(consumed, text).fetchFn)
+    const stream = new PassThrough()
+    stream.write('00000000')
+    const text = vi.fn(() => new Promise<string>(() => {}))
+    await expectTimeoutWithinBudget(makeStalledTextFetch(stream, text).fetchFn)
     await new Promise(resolve => setImmediate(resolve))
-    expect(consumed.destroyed).toBe(true)
-    expect(consumerSettled).toBe(true)
-
-    // No consumer attached: destroyed quietly rather than crashing on 'error'.
-    const unconsumed = new PassThrough()
-    await expectTimeoutWithinBudget(makeStalledTextFetch(unconsumed).fetchFn)
-    await new Promise(resolve => setImmediate(resolve))
-    expect(unconsumed.destroyed).toBe(true)
+    expect(stream.destroyed).toBe(true)
+    expect(text).not.toHaveBeenCalled()
   })
 
   it('prefers cancel() when a body exposes both', async () => {

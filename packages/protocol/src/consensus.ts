@@ -9,7 +9,10 @@ import {
   PAY_TO_ANCHOR_SCRIPT,
   PQC_SIGNATURE_BYTES,
 } from './constants'
-import { bytesEqual, assertBytes } from './bytes'
+import { bytesEqual, assertBytes, bytesToHex } from './bytes'
+import type { createP2mrPsbt } from './psbt'
+import type { multiALeafScript } from './scripts'
+import type { signP2mrPsbt, validateP2mrSigningPlans } from './signing'
 
 /**
  * Coinbase outputs are spendable only after this many confirmations on every
@@ -224,4 +227,60 @@ function assertRestrictedOutputModeOutputs(
   })
 }
 
-export { P2MR_MAX_MULTI_A_PUBKEYS, assertRestrictedOutputModeOutputs }
+/** qbit Core `COutPoint::IsNull` (src/primitives/transaction.h:42): an all-zero txid and vout 0xffffffff. */
+function isNullOutpoint(prevout: { txid: Uint8Array; vout: number }): boolean {
+  return prevout.vout === 0xffffffff && prevout.txid.every(byte => byte === 0)
+}
+
+/**
+ * Refuse a transaction qbit Core's `CheckTransaction` rejects for its shape,
+ * so no signature is spent on one that can never confirm, in Core's order:
+ * one without inputs (`bad-txns-vin-empty`) or outputs
+ * (`bad-txns-vout-empty`), two inputs spending one outpoint
+ * (`bad-txns-inputs-duplicate`), or an input spending the null outpoint
+ * (`bad-txns-prevout-null`; src/consensus/tx_check.cpp:14-17, :41-44,
+ * :54-56). As the only input, a null outpoint makes the transaction a
+ * coinbase (src/primitives/transaction.h:356-358), which is never a valid
+ * spend: Core rejects it with `bad-cb-length` unless its scriptSig is 2 to
+ * 100 bytes (tx_check.cpp:47-50), and the mempool with `coinbase`
+ * (src/validation.cpp:843-845). Core's PSBT decoder does not run
+ * `CheckTransaction` (`DecodeRawPSBT`, src/psbt.cpp:754-768), so parsing and
+ * decoding accept such a PSBT, except one without inputs, which this
+ * package's parser refuses.
+ */
+function assertTransactionShape(tx: {
+  inputs: readonly { prevout: { txid: Uint8Array; vout: number } }[]
+  outputs: readonly unknown[]
+}): void {
+  if (tx.inputs.length === 0) {
+    throw new QbitProtocolError('INVALID_PSBT', 'transaction has no inputs (Core rejects it with bad-txns-vin-empty)')
+  }
+  if (tx.outputs.length === 0) {
+    throw new QbitProtocolError('INVALID_PSBT', 'transaction has no outputs (Core rejects it with bad-txns-vout-empty)')
+  }
+  const spentBy = new Map<string, number>()
+  tx.inputs.forEach((input, index) => {
+    const outpoint = `${bytesToHex(input.prevout.txid)}:${input.prevout.vout}`
+    const earlier = spentBy.get(outpoint)
+    if (earlier !== undefined) {
+      throw new QbitProtocolError(
+        'INVALID_PSBT',
+        `inputs ${earlier} and ${index} spend the same output ` +
+          '(Core rejects the transaction with bad-txns-inputs-duplicate)'
+      )
+    }
+    spentBy.set(outpoint, index)
+  })
+  const nullInput = tx.inputs.findIndex(input => isNullOutpoint(input.prevout))
+  if (nullInput !== -1) {
+    throw new QbitProtocolError(
+      'INVALID_PSBT',
+      tx.inputs.length === 1
+        ? 'input 0 spends the null outpoint, making the transaction a coinbase ' +
+            '(Core rejects it with bad-cb-length, or with coinbase outside a block)'
+        : `input ${nullInput} spends the null outpoint (Core rejects the transaction with bad-txns-prevout-null)`
+    )
+  }
+}
+
+export { P2MR_MAX_MULTI_A_PUBKEYS, assertRestrictedOutputModeOutputs, assertTransactionShape }

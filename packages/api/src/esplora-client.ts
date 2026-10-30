@@ -11,6 +11,7 @@ import type {
 } from './index'
 import {
   causeOptions,
+  detachedParseError,
   formatErrorCause,
   QbitApiError,
   quotedResponseText,
@@ -37,6 +38,7 @@ import {
 import {
   type AddressBalance,
   addressBalanceFromStats,
+  type DEFAULT_MAX_FEE_RATE_SAT_VB,
   type FeeRateTier,
   feeTiersFromEstimates,
   resolveBroadcastTxid,
@@ -44,14 +46,17 @@ import {
 } from './adapters'
 import {
   abortErrorFor,
+  BodyLimitExceeded,
   bodyReadError,
   bufferedResponse,
+  bufferedText,
   defaultSleep,
   discardResponseBody,
   httpError,
   httpReplyMessage,
   internalAbortController,
   isAbortError,
+  isUnshared,
   MAX_TIMER_DELAY_MS,
   openOperationScope,
   parseRetryAfter,
@@ -59,16 +64,19 @@ import {
   readBody,
   readBodyUntilAborted,
   refuseRedirect,
+  sendUnshared,
   validBaseUrl,
 } from './transport'
 import {
   isAlreadyKnownBroadcastReply,
+  isBroadcastVerdictReply,
   isDefiniteNodeRejection,
   isPreConnectionFailure,
   isRelayedTransportFailure,
   parseBroadcastReply,
   unknownOutcomeError,
 } from './broadcast'
+import type { MempoolQbitClient } from './mempool-qbit-client'
 
 // ---------------------------------------------------------------------------
 // Client
@@ -87,8 +95,8 @@ export type QbitFetchCredentials = 'omit' | 'same-origin' | 'include'
  * Options for the {@link EsploraClient} and {@link MempoolQbitClient}
  * constructors. The constructor throws an `http` {@link QbitApiError} for an
  * invalid `baseUrl` or an out-of-range option instead of storing it.
- * `timeoutMs`, `retries`, `retryBaseDelayMs` and `maxRetryAfterMs` reject
- * `null`; only an omitted option takes its default.
+ * `timeoutMs`, `retries`, `retryBaseDelayMs`, `maxRetryAfterMs` and
+ * `maxResponseBytes` reject `null`; only an omitted option takes its default.
  *
  * @remarks
  * See [Configuration](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/configuration.md) and
@@ -102,7 +110,11 @@ export interface EsploraClientOptions {
    * It must be an absolute `http(s)` URL without whitespace, control or format
    * characters, backslashes, credentials, a query or a fragment, since
    * endpoint paths are appended to it; trailing slashes are dropped. A plain
-   * `http` URL also needs a loopback host or `allowInsecureHttp`.
+   * `http` URL also needs a loopback host or `allowInsecureHttp`. Where the
+   * runtime's URL parser does not follow the URL Standard (React Native), the
+   * whole URL must be ASCII and encoded: give an internationalized host in
+   * its punycode (`xn--`) form, and write every other character RFC 3986
+   * allows only percent-encoded as the `%XX` escapes of its UTF-8 bytes.
    */
   baseUrl: string
   /**
@@ -126,8 +138,10 @@ export interface EsploraClientOptions {
    * fallback.
    *
    * The client cannot tell whether a submission's POST was sent before such
-   * an error was thrown, so it takes the error at its word. A kind other than
-   * `network`, `timeout` or `aborted` propagates as it is: an `http`,
+   * an error was thrown, so it takes the error at its word. A
+   * `response_too_large` says a reply arrived, so on a submission it becomes
+   * an `unknown_outcome`, as `network`, `timeout` and `aborted` do. A kind
+   * other than those four propagates as it is: an `http`,
    * `not_found`, `payload_too_large` or `rate_limit` then reads as a submission
    * that was not accepted, and one that matches a `/tx/push` row of the
    * [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes)
@@ -149,9 +163,11 @@ export interface EsploraClientOptions {
    * Retry attempts after the first (default 2; an integer from 0 to 10).
    * Reads retry only network errors, attempts that timed out, and HTTP 429,
    * 500, 502, 503 and 504 replies; every other non-2xx status, 501, 505, 507
-   * and 511 included, fails at once. Submissions repeat only attempts that
-   * provably were not processed (a 429 within `maxRetryAfterMs`, or a
-   * connection failure before anything was sent); see the
+   * and 511 included, and a reply over `maxResponseBytes`, fails at once.
+   * Submissions repeat only attempts that provably were not processed (a 429
+   * within `maxRetryAfterMs` whose body was read in full and is neither an
+   * already-known reply nor a relayed transport failure, or a connection
+   * failure before anything was sent); see the
    * [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes).
    */
   retries?: number
@@ -166,11 +182,33 @@ export interface EsploraClientOptions {
    * retrying, in ms (default 30000; an integer from 0 to 2147483647). A longer
    * request is not slept on: a read's 429 (`rate_limit`) or its 500, 502, 503
    * or 504 (`http`) is thrown at once with `retryAfterMs` set, unless its body
-   * could not be read, which throws `parse` without `retryAfterMs`. A submission's
+   * could not be read, which throws `parse`, or exceeded `maxResponseBytes`,
+   * which throws `response_too_large`, both without `retryAfterMs`. A submission's
    * 429 is not re-sent then, and is judged by its body first, as the
    * [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes) says.
    */
   maxRetryAfterMs?: number
+  /**
+   * Largest response body the client reads, in bytes (default
+   * {@link DEFAULT_MAX_RESPONSE_BYTES}; an integer from 1 to
+   * 9007199254740991). Every reply's body is counted as it arrives, after any
+   * content decoding, error replies included; once it passes the limit the
+   * client cancels the body and stops reading. A read then fails with
+   * `response_too_large` and is not retried, since the backend would send the
+   * same body again. Concurrent identical reads share one request, and so one
+   * limit and one copy of the body. A submission's reply over the limit, a
+   * `429` included, is `unknown_outcome` and is not re-sent, since the node
+   * may have accepted the transaction; see the
+   * [outcome table](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md#outcomes).
+   * The limit stops the download of a body that is a WHATWG `ReadableStream`
+   * or an async iterable of bytes, such as node-fetch's Node `Readable`. Where
+   * the response has neither (React Native's fetch), the whole body is read
+   * with `blob()`, whose `size` is checked before its text is read, or else
+   * `arrayBuffer()`, so the limit fails the call but cannot stop the download;
+   * `timeoutMs` still bounds it. A Response-like object with only `text()` is
+   * measured as its text's UTF-8 encoding.
+   */
+  maxResponseBytes?: number
   /**
    * Extra request headers, copied when the client is constructed and sent with
    * every request. UDID/telemetry headers are intentionally unsupported.
@@ -191,6 +229,57 @@ const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD'])
 const UNPROCESSED_SERVER_ERROR_STATUSES = new Set([501, 505, 511])
 const DEFAULT_MAX_RETRY_AFTER_MS = 30_000
 const MAX_RETRIES = 10
+
+// Derived from the largest legitimate replies, in qbit Core at
+// 7ebcddb622d6e639041f005a189b048ec2a221fe and Qbit-Org/qbit-electrs@53102e9:
+// - `/tx/:txid/hex` is the transaction's hex (qbit-electrs src/rest.rs:1432).
+//   A block holds at most MAX_BLOCK_SERIALIZED_SIZE = 2,000,000 bytes (Core
+//   src/consensus/consensus.h:13), so a mined transaction's hex is under
+//   4,000,000 characters, and a relayed one's at most 800,000: 2 per byte of
+//   MAX_STANDARD_TX_WEIGHT = 400,000 (src/policy/policy.h:37), which is its
+//   size, as qbit has no witness discount (consensus.h:22). The stats, a
+//   status, the fee estimates, the tip and a submission's reply are under
+//   1 kB, and `/address/:a/utxo` about 137 kB for the 500 confirmed outputs
+//   `--utxos-limit` allows (qbit-electrs src/config.rs:361-365), plus about
+//   150 bytes per mempool output.
+// - Transaction JSON (TransactionValue, qbit-electrs src/rest.rs:158-320)
+//   repeats each input's prevout, writes every script and witness item as
+//   hex, and every script again as asm, up to 23 characters a byte
+//   (OP_CHECKTEMPLATEVERIFY, src/util/script.rs:26): about 25 characters per
+//   byte of the transaction at worst. Prevouts stay small, as outputs can only
+//   be P2MR, OP_RETURN or anchors (fRestrictedOutputMode, Core
+//   src/consensus/restricted_outputs.h:33-39). So a 2 MB mined transaction is
+//   at most about 50 MB of JSON (one OP_RETURN output of 0xbb bytes). The
+//   largest standard spend, 106 single-key P2MR inputs of 3,763 bytes
+//   (P2MR_V1_SINGLE_KEY_SPEND_SIZE, Core src/script/p2mr_sizing.h:40), is
+//   about 0.86 MB of JSON, and a standard transaction paying 9,214 P2MR
+//   outputs about 3.2 MB.
+// - Pages: `/txs/chain` lists 25 transactions and `/txs/mempool` 50
+//   (qbit-electrs src/config.rs:385-395, src/rest.rs:1158,1336), and the
+//   combined `/txs` route, which mempool-qbit passes through
+//   (backend/src/api/bitcoin/esplora-api.ts `$getAddressTransactions`), 50
+//   rows (src/rest.rs:958). 50 of the largest standard spends are about 43 MB.
+// 64 MiB (67,108,864 bytes) holds the largest of these, the 50 MB transaction
+// and the 43 MB page, with at least a third to spare. A page of 50 large batch
+// payouts (about 160 MB), or of transactions built to inflate their asm, does
+// not fit; a client for such an address must raise maxResponseBytes.
+
+/**
+ * The default {@link EsploraClientOptions.maxResponseBytes}: 64 MiB
+ * (67,108,864 bytes). It holds every reply qbit-electrs and mempool-qbit
+ * serve about one transaction, for any transaction a block can hold, and a
+ * full page of address history (25 or 50 transactions) of the largest
+ * standard spends. A page of large batch payouts or of transactions built to
+ * inflate qbit-electrs's JSON can exceed it; pass a larger
+ * `maxResponseBytes` for such addresses, or a smaller one on a device with
+ * little memory.
+ *
+ * @remarks
+ * See [Configuration](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/configuration.md#response-size-limit).
+ *
+ * @category Configuration
+ */
+export const DEFAULT_MAX_RESPONSE_BYTES = 64 * 1024 * 1024
 
 function integerOption(
   value: number | undefined,
@@ -257,6 +346,7 @@ export class EsploraClient {
   private readonly retries: number
   private readonly retryBaseDelayMs: number
   private readonly maxRetryAfterMs: number
+  private readonly maxResponseBytes: number
   private readonly headers: Record<string, string>
   private readonly credentials: QbitFetchCredentials
   private readonly sleepFn: (ms: number, signal?: AbortSignal) => Promise<void>
@@ -271,10 +361,10 @@ export class EsploraClient {
    * @param options - The backend's base URL, and transport, timeout and retry
    *   settings.
    * @throws {@link QbitApiError} `http` when `baseUrl` is missing or not an
-   *   accepted URL, or `timeoutMs`, `retries`, `retryBaseDelayMs` or
-   *   `maxRetryAfterMs` is out of range; `network` when `fetchFn` is given and
-   *   is not a function, or when it is omitted (`undefined` or `null`) and the
-   *   global `fetch` is not one.
+   *   accepted URL, or `timeoutMs`, `retries`, `retryBaseDelayMs`,
+   *   `maxRetryAfterMs` or `maxResponseBytes` is out of range; `network` when
+   *   `fetchFn` is given and is not a function, or when it is omitted
+   *   (`undefined` or `null`) and the global `fetch` is not one.
    *
    * @example
    * ```ts
@@ -301,6 +391,13 @@ export class EsploraClient {
       0,
       MAX_TIMER_DELAY_MS
     )
+    const maxResponseBytes = integerOption(
+      options.maxResponseBytes,
+      DEFAULT_MAX_RESPONSE_BYTES,
+      'maxResponseBytes',
+      1,
+      Number.MAX_SAFE_INTEGER
+    )
     const fetchImpl = options.fetchFn ?? globalThis.fetch
     if (typeof fetchImpl !== 'function') {
       throw new QbitApiError('network', 'no fetch implementation available; pass options.fetchFn')
@@ -311,6 +408,7 @@ export class EsploraClient {
     this.retries = retries
     this.retryBaseDelayMs = retryBaseDelayMs
     this.maxRetryAfterMs = maxRetryAfterMs
+    this.maxResponseBytes = maxResponseBytes
     this.headers = { ...(options.headers ?? {}) }
     this.credentials = options.credentials ?? 'omit'
     this.sleepFn = options.sleepFn ?? defaultSleep
@@ -329,8 +427,9 @@ export class EsploraClient {
    * @returns The parsed reply.
    * @throws {@link QbitApiError} when the request fails (`not_found`,
    *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
-   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
-   *   reply is not JSON or cannot be read.
+   *   refused redirect; `network`; `timeout`; `aborted`; `response_too_large`
+   *   for a reply over `maxResponseBytes`), or `parse` when the reply is not
+   *   JSON or cannot be read.
    */
   getAddressStats(address: string, options?: RequestOptions): Promise<EsploraAddressStats> {
     return this.getJson<EsploraAddressStats>(`/address/${encodeURIComponent(address)}`, options)
@@ -346,8 +445,9 @@ export class EsploraClient {
    * @returns The parsed reply.
    * @throws {@link QbitApiError} when the request fails (`not_found`,
    *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
-   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
-   *   reply is not JSON or cannot be read.
+   *   refused redirect; `network`; `timeout`; `aborted`; `response_too_large`
+   *   for a reply over `maxResponseBytes`), or `parse` when the reply is not
+   *   JSON or cannot be read.
    */
   getAddressUtxos(address: string, options?: RequestOptions): Promise<EsploraUtxo[]> {
     return this.getJson<EsploraUtxo[]>(`/address/${encodeURIComponent(address)}/utxo`, options)
@@ -370,8 +470,9 @@ export class EsploraClient {
    * @returns The parsed page.
    * @throws {@link QbitApiError} when the request fails (`not_found`,
    *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
-   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
-   *   reply is not JSON or cannot be read.
+   *   refused redirect; `network`; `timeout`; `aborted`; `response_too_large`
+   *   for a reply over `maxResponseBytes`), or `parse` when the reply is not
+   *   JSON or cannot be read.
    */
   getAddressTxs(address: string, afterTxid?: string, options?: RequestOptions): Promise<EsploraTx[]> {
     const suffix = afterTxid ? `/${encodeURIComponent(afterTxid)}` : ''
@@ -391,8 +492,9 @@ export class EsploraClient {
    * @returns The parsed reply.
    * @throws {@link QbitApiError} when the request fails (`not_found`,
    *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
-   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
-   *   reply is not JSON or cannot be read.
+   *   refused redirect; `network`; `timeout`; `aborted`; `response_too_large`
+   *   for a reply over `maxResponseBytes`), or `parse` when the reply is not
+   *   JSON or cannot be read.
    */
   getAddressMempoolTxs(address: string, options?: RequestOptions): Promise<EsploraTx[]> {
     return this.getJson<EsploraTx[]>(`/address/${encodeURIComponent(address)}/txs/mempool`, options)
@@ -406,14 +508,19 @@ export class EsploraClient {
    * load balancer, or a reorg between pages) with HTTP 200 and `[]`, and
    * `/txs/mempool` stops at 50 rows, so the scan alone cannot tell a short
    * history from a complete one. The address stats are therefore read before
-   * and after the scan, each in a request of its own, and the history is
-   * returned only if both reads agree and it holds exactly
-   * `chain_stats.tx_count` confirmed and `mempool_stats.tx_count` mempool
-   * transactions. If the stats changed during the scan, the address is scanned
-   * once more; if they change again, or the counts differ, the call rejects
-   * with `invalid_cursor`. Stats without a non-negative safe-integer
-   * `tx_count` reject with `parse`. `maxPages` and `maxTransactions` cover
-   * both scans.
+   * and after the scan, and the history is returned only if both reads agree
+   * and it holds exactly `chain_stats.tx_count` confirmed and
+   * `mempool_stats.tx_count` mempool transactions. If the stats changed during
+   * the scan, the address is scanned once more; if they change again, or the
+   * counts differ, the call rejects with `invalid_cursor`. Stats without a
+   * non-negative safe-integer `tx_count` reject with `parse`. `maxPages` and
+   * `maxTransactions` cover both scans. The pages are read with
+   * `getAddressMempoolTxs` and `getAddressTxs`, so a subclass's overrides of
+   * them are used. The stats reads and the pages are each fetched in a
+   * request of their own, never joined to an identical GET already in flight,
+   * whose reply could predate the first stats read and so miss a replacement
+   * (RBF) that leaves the stats unchanged; so is every other GET made under
+   * the scan's signal.
    *
    * @remarks
    * Some causes of `invalid_cursor` last until the backend changes: an address
@@ -435,7 +542,7 @@ export class EsploraClient {
    *   a transaction under the wrong confirmation status. `http` for an invalid
    *   `maxPages` or `maxTransactions`. Any kind a
    *   failed request has (`not_found`, `rate_limit`, `payload_too_large`,
-   *   `http`, `network`, `timeout`, `aborted`).
+   *   `http`, `network`, `timeout`, `aborted`, `response_too_large`).
    *
    * @example
    * ```ts
@@ -462,6 +569,11 @@ export class EsploraClient {
       'maxTransactions'
     )
     const budget = createAddressHistoryBudget()
+    // The stats and the pages are fetched in requests of their own: a joined
+    // GET's reply can predate the first stats read, and so miss a replacement
+    // (RBF) that leaves the stats unchanged. The mark reaches the pages through
+    // getAddressMempoolTxs and getAddressTxs, overridden or not.
+    sendUnshared(signal)
     return verifiedAddressHistory(
       address,
       'esplora',
@@ -530,8 +642,9 @@ export class EsploraClient {
    * @returns The parsed reply.
    * @throws {@link QbitApiError} when the request fails (`not_found`,
    *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
-   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
-   *   reply is not JSON or cannot be read.
+   *   refused redirect; `network`; `timeout`; `aborted`; `response_too_large`
+   *   for a reply over `maxResponseBytes`), or `parse` when the reply is not
+   *   JSON or cannot be read.
    */
   getTx(txid: string, options?: RequestOptions): Promise<EsploraTx> {
     return this.getJson<EsploraTx>(`/tx/${encodeURIComponent(txid)}`, options)
@@ -565,7 +678,7 @@ export class EsploraClient {
    * @throws {@link QbitApiError} `parse` when the reply is not that
    *   transaction's hex, as above, or its body cannot be read; any kind a
    *   failed request has (`not_found`, `rate_limit`, `payload_too_large`,
-   *   `http`, `network`, `timeout`, `aborted`).
+   *   `http`, `network`, `timeout`, `aborted`, `response_too_large`).
    */
   async getTxHex(txid: string, options?: RequestOptions): Promise<string> {
     const path = `/tx/${encodeURIComponent(txid)}/hex`
@@ -596,8 +709,9 @@ export class EsploraClient {
    * @returns The parsed reply.
    * @throws {@link QbitApiError} when the request fails (`not_found`,
    *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
-   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
-   *   reply is not JSON or cannot be read.
+   *   refused redirect; `network`; `timeout`; `aborted`; `response_too_large`
+   *   for a reply over `maxResponseBytes`), or `parse` when the reply is not
+   *   JSON or cannot be read.
    */
   getTxStatus(txid: string, options?: RequestOptions): Promise<EsploraTxStatus> {
     return this.getJson<EsploraTxStatus>(`/tx/${encodeURIComponent(txid)}/status`, options)
@@ -615,8 +729,9 @@ export class EsploraClient {
    * @returns The parsed reply.
    * @throws {@link QbitApiError} when the request fails (`not_found`,
    *   `rate_limit`, `payload_too_large` or `http` for a non-2xx reply or a
-   *   refused redirect; `network`; `timeout`; `aborted`), or `parse` when the
-   *   reply is not JSON or cannot be read.
+   *   refused redirect; `network`; `timeout`; `aborted`; `response_too_large`
+   *   for a reply over `maxResponseBytes`), or `parse` when the reply is not
+   *   JSON or cannot be read.
    */
   getFeeEstimates(options?: RequestOptions): Promise<EsploraFeeEstimates> {
     return this.getJson<EsploraFeeEstimates>('/fee-estimates', options)
@@ -633,7 +748,7 @@ export class EsploraClient {
    * @throws {@link QbitApiError} `parse` when the converted reply is not an
    *   integer, or its body cannot be read; any kind a failed request has
    *   (`not_found`, `rate_limit`, `payload_too_large`, `http`, `network`,
-   *   `timeout`, `aborted`).
+   *   `timeout`, `aborted`, `response_too_large`).
    */
   async getTipHeight(options?: RequestOptions): Promise<number> {
     const text = await this.getText('/blocks/tip/height', options)
@@ -655,7 +770,7 @@ export class EsploraClient {
    * @returns The trimmed reply.
    * @throws {@link QbitApiError} `parse` when the body cannot be read; any kind
    *   a failed request has (`not_found`, `rate_limit`, `payload_too_large`,
-   *   `http`, `network`, `timeout`, `aborted`).
+   *   `http`, `network`, `timeout`, `aborted`, `response_too_large`).
    */
   async getTipHash(options?: RequestOptions): Promise<string> {
     return (await this.getText('/blocks/tip/hash', options)).trim()
@@ -683,14 +798,18 @@ export class EsploraClient {
    * @throws `TypeError` (as a rejection) when `rawTxHex` is not a string, or
    *   `options.txid` is not a 64-hex transaction id matching the hex.
    * @throws {@link QbitApiError} `unknown_outcome` when the submission may have
-   *   reached the node. `http`, `not_found`, `payload_too_large` or
+   *   reached the node, including a reply, a 429 included, whose body failed,
+   *   stalled or passed `maxResponseBytes`. `http`, `not_found`,
+   *   `payload_too_large` or
    *   `rate_limit` when this submission was not accepted; for a resubmission,
    *   that proves nothing about the original. `network` for a connection
    *   failure before anything was sent, once retries run out. `aborted` or
    *   `timeout` when the call was cancelled or its deadline expired before the
-   *   POST was sent or re-sent, or while a 429 body was read. A custom
+   *   POST was sent or re-sent, or after a 429 whose body proves nothing was
+   *   processed. A custom
    *   `fetchFn`'s own `QbitApiError` propagates as it is, even if the POST was
-   *   already sent, unless its kind is `network`, `timeout` or `aborted`, so
+   *   already sent, unless its kind is `network`, `timeout`, `aborted` or
+   *   `response_too_large`, so
    *   its `http`, `not_found`, `payload_too_large` or `rate_limit` proves that
    *   this submission was not accepted only if that `fetchFn` throws one only
    *   when nothing was sent; see {@link EsploraClientOptions.fetchFn}.
@@ -738,7 +857,7 @@ export class EsploraClient {
    * @throws {@link QbitApiError} `parse` when the reply is not JSON, cannot be
    *   read, or fails {@link addressBalanceFromStats}'s checks; any kind a failed
    *   request has (`not_found`, `rate_limit`, `payload_too_large`, `http`,
-   *   `network`, `timeout`, `aborted`).
+   *   `network`, `timeout`, `aborted`, `response_too_large`).
    *
    * @example
    * ```ts
@@ -766,7 +885,7 @@ export class EsploraClient {
    * @throws {@link QbitApiError} `parse` when the reply is not JSON, cannot be
    *   read, or fails {@link feeTiersFromEstimates}'s checks; any kind a failed
    *   request has (`not_found`, `rate_limit`, `payload_too_large`, `http`,
-   *   `network`, `timeout`, `aborted`).
+   *   `network`, `timeout`, `aborted`, `response_too_large`).
    */
   async getFeeTiers(options?: RequestOptions): Promise<FeeRateTier[]> {
     return feeTiersFromEstimates(await this.getFeeEstimates(options))
@@ -807,12 +926,13 @@ export class EsploraClient {
       } catch (cause) {
         // V8's JSON.parse error quotes the first characters of the body, and a
         // token cut short there escapes redaction, so the cause is a generic
-        // SyntaxError; the original stays behind QbitApiError.unredactedCause().
+        // SyntaxError. A copy of the original's message and stack stays behind
+        // QbitApiError.unredactedCause(): the original keeps the body alive.
         throw new QbitApiError('parse', `failed to parse JSON from ${path}`, {
           url,
           responseBody: responseBodyPreview(text, this.baseUrl),
           cause: new SyntaxError('response body is not valid JSON'),
-          unredactedCause: cause,
+          unredactedCause: detachedParseError(cause),
         })
       }
     })
@@ -838,7 +958,9 @@ export class EsploraClient {
    * `txid` identifies the submission in `unknown_outcome` errors and, when
    * known, is the result for already-known non-2xx replies. An abort or
    * deadline once the POST may have been sent, including while the reply body
-   * is read, is an `unknown_outcome` too, unless the reply is a 429.
+   * is read, is an `unknown_outcome` too, unless the reply is a 429 whose body
+   * was read in full and carries no verdict, which proves nothing was
+   * processed.
    */
   protected submitTx(path: string, body: string, txid: string | undefined, options?: RequestOptions): Promise<string> {
     return this.runOperation(options, async signal => {
@@ -854,8 +976,11 @@ export class EsploraClient {
       try {
         text = (await readBody(response, errorUrl, this.baseUrl, signal)).trim()
       } catch (cause) {
-        // A 429 proves nothing was submitted, even when the call is cut short here.
-        if (response.status === 429 && signal.aborted) throw abortErrorFor(signal)
+        // A 429 whose whole body carries no verdict proves nothing was
+        // submitted, even when the call is cut short here.
+        if (response.status === 429 && signal.aborted && !isBroadcastVerdictReply(bufferedText(response))) {
+          throw abortErrorFor(signal)
+        }
         throw unknownOutcomeError(errorUrl, txid, `HTTP ${response.status} reply body could not be read`, {
           status: response.status,
           cause,
@@ -926,7 +1051,9 @@ export class EsploraClient {
   ): Promise<Response> {
     return this.runOperation(options, signal => {
       const url = `${this.baseUrl}${path}`
-      return init.dedup ? this.requestShared(url, init, signal) : this.requestWithRetry(url, init, signal)
+      return init.dedup && !isUnshared(signal)
+        ? this.requestShared(url, init, signal)
+        : this.requestWithRetry(url, init, signal)
     })
   }
 
@@ -969,7 +1096,9 @@ export class EsploraClient {
     }
 
     pending.consumers -= 1
-    // The last waiter consumes the original body; earlier waiters receive clones.
+    // The last waiter consumes the original body; earlier waiters receive
+    // clones. Every one shares the buffered text, which readBody hands out
+    // without copying, so the clones hold no copy of the body.
     if (pending.consumers === 0) {
       if (this.inflight.get(url) === pending) this.inflight.delete(url)
       return response
@@ -981,12 +1110,15 @@ export class EsploraClient {
    * Idempotent requests (GET/HEAD) retry on network errors, timeouts, and
    * transient statuses. Any other method is a submission: an attempt is only
    * repeated when it provably was not processed (a 429 within the retry and
-   * `Retry-After` limits, or a connection failure before anything was sent;
-   * see [Broadcasting](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md)). Any other attempt is never re-sent: a reply
-   * that arrives whole is returned for the caller to judge, and one that may
-   * have been processed without such a reply (a transport failure, an abort or
-   * deadline in flight unless the reply is a 429, or a refused redirect) fails
-   * with `unknown_outcome`. `txid` labels that error when the submission is a
+   * `Retry-After` limits whose body was read in full and carries no verdict, or
+   * a connection failure before anything was sent; see
+   * [Broadcasting](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/broadcasting.md)).
+   * Any other attempt is never re-sent: a reply that arrives whole is returned
+   * for the caller to judge, and one that may have been processed without such
+   * a reply (a transport failure, an abort or deadline in flight, a body that
+   * fails, stalls or passes `maxResponseBytes`, a 429's included, or a refused
+   * redirect) fails with `unknown_outcome`. A reply over `maxResponseBytes` is
+   * never retried. `txid` labels that error when the submission is a
    * transaction. A custom fetchFn's own QbitApiError is taken at its word,
    * whether or not the POST was sent; see `EsploraClientOptions.fetchFn`.
    */
@@ -1025,24 +1157,28 @@ export class EsploraClient {
             cause: lastError,
           })
         }
-        // fetchOnce reads the body, so a submission reply can arrive and then stall,
-        // fail mid-read, or be cut short by an abort or the deadline. A 429 still
-        // proves the submission was not processed; any other reply may follow an
-        // accepted POST.
-        if (!idempotent && reply.status === 429) {
-          if (signal.aborted) throw abortErrorFor(signal)
-          const { retryAfterMs } = reply
-          if (attempt < this.retries && (retryAfterMs === undefined || retryAfterMs <= this.maxRetryAfterMs)) {
-            await this.sleep(retryAfterMs ?? this.backoffMs(attempt), signal)
-            continue
-          }
-          throw new QbitApiError('rate_limit', `HTTP 429 from ${errorUrl} (reply body could not be read)`, {
-            status: 429,
-            url: errorUrl,
+        // A reply over maxResponseBytes is never retried: the same backend would
+        // send the same body. A submission's reply arrived, so the node may have
+        // accepted it, a 429 included, whose unread body could have said so. A
+        // custom fetchFn's own `response_too_large` also means a reply arrived,
+        // and is judged alike.
+        if (lastError.kind === 'response_too_large') {
+          if (idempotent) throw lastError
+          const reason =
+            reply.status === undefined
+              ? redactBaseUrl(String(lastError.message), this.baseUrl)
+              : `HTTP ${reply.status} reply body exceeded maxResponseBytes (${this.maxResponseBytes} bytes)`
+          throw unknownOutcomeError(errorUrl, txid, reason, {
+            ...(reply.status === undefined ? {} : { status: reply.status }),
             cause: lastError,
-            ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
           })
         }
+        // fetchOnce reads the body, so a submission reply can arrive and then stall,
+        // fail mid-read, or be cut short by an abort or the deadline. Any such
+        // reply may follow an accepted POST, a 429 included: only its body can
+        // show that nothing was processed, as it may instead say the node
+        // already has the transaction, or that the backend's call to the node
+        // failed in transit.
         if (!idempotent && reply.status !== undefined) {
           throw unknownOutcomeError(errorUrl, txid, `HTTP ${reply.status} reply body could not be read`, {
             status: reply.status,
@@ -1098,7 +1234,13 @@ export class EsploraClient {
         throw lastError
       }
 
-      const retryable = idempotent ? TRANSIENT_STATUSES.has(response.status) : response.status === 429
+      // A submission's 429 proves nothing was processed only when its body,
+      // fully read, carries no verdict of its own; one that says the node
+      // already has the transaction, or that the backend's call to the node
+      // failed in transit, goes to submitTx to be judged instead.
+      const retryable = idempotent
+        ? TRANSIENT_STATUSES.has(response.status)
+        : response.status === 429 && !isBroadcastVerdictReply(bufferedText(response))
       if (retryable && attempt < this.retries) {
         const retryAfterMs = parseRetryAfter(response.headers.get('retry-after'))
         // Never park the request (and every de-duplicated waiter) on an
@@ -1134,8 +1276,9 @@ export class EsploraClient {
    * after the timer is cleared. A body that misses the attempt timeout fails
    * the attempt as `timeout`, even for a status that would otherwise be
    * retried; an abort or call deadline, before or after the headers, rejects
-   * with the call's `aborted` / `timeout` error. `reply.status` is set once
-   * the headers arrive. A redirect is refused before its body is read, which
+   * with the call's `aborted` / `timeout` error. A body that passes
+   * `maxResponseBytes` is cancelled and fails the attempt as
+   * `response_too_large`. `reply.status` is set once the headers arrive. A redirect is refused before its body is read, which
    * is cancelled instead, and `reply.refusedRedirect` is set; see
    * `refuseRedirect`.
    */
@@ -1201,11 +1344,12 @@ export class EsploraClient {
 
       let text: string
       try {
-        text = await readBodyUntilAborted(response, controller.signal)
+        text = await readBodyUntilAborted(response, controller.signal, this.maxResponseBytes)
       } catch (cause) {
         // The call signal also aborts `controller`, so only an abort it did not
         // cause is this attempt's own timeout.
         if (signal.aborted) throw abortErrorFor(signal)
+        if (cause instanceof BodyLimitExceeded) throw this.responseTooLargeError(url, response.status)
         if (controller.signal.aborted) throw this.timeoutError(url, cause, response.status)
         throw bodyReadError(response, cause, redactBaseUrl(url, this.baseUrl), this.baseUrl)
       }
@@ -1214,6 +1358,16 @@ export class EsploraClient {
       clearTimeout(timer)
       signal.removeEventListener('abort', onAbort)
     }
+  }
+
+  /** A reply whose body passed `maxResponseBytes`, which readBodyUntilAborted has cancelled. */
+  private responseTooLargeError(url: string, status: number): QbitApiError {
+    const errorUrl = redactBaseUrl(url, this.baseUrl)
+    return new QbitApiError(
+      'response_too_large',
+      `HTTP ${status} reply from ${errorUrl} exceeded maxResponseBytes (${this.maxResponseBytes} bytes); its body was discarded`,
+      { status, url: errorUrl }
+    )
   }
 
   /** `status` is set when the headers arrived and the body missed the deadline. */

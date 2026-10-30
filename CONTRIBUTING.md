@@ -97,8 +97,11 @@ Prettier skips what `.gitignore` lists and what `.prettierignore` excludes:
 ## API reference
 
 `corepack pnpm docs:api` builds the API reference for both packages with
-[TypeDoc](https://typedoc.org), from the TSDoc comments in each package's
-`src/index.ts` (and `packages/api/src/testing.ts`), into `api-docs/` (gitignored); `typedoc.json` configures it.
+[TypeDoc](https://typedoc.org), from the TSDoc comments in `packages/*/src`,
+into `api-docs/` (gitignored); `typedoc.json` configures it. Its entry points
+are each package's `src/index.ts`, a barrel that re-exports the topic modules
+beside it, and `packages/api/src/testing.ts`: the comment on each declaration
+they export, in the module that declares it, is its reference entry.
 `corepack pnpm docs:api:check` runs the same validation without writing
 anything: it reports undocumented exports, documented types that reference
 unexported ones, and `{@link}` tags that do not resolve. It then runs

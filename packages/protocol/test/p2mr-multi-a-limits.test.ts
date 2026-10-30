@@ -35,6 +35,7 @@ const MAX_TOTAL_INITIAL_STACK_BYTES = 131072
 const NO_SATISFACTION =
   'P2MR descriptor has no wallet-constructible satisfaction: multi_a thresholds must not exceed 35'
 const TOO_DEEP = 'mr descriptor exceeds maximum tree depth'
+const REUSED_NODE = 'mr descriptor tree node appears more than once'
 const RAW_ROOT = '000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f'
 
 // Same keys as qbit Core's descriptor_p2mr_tests.cpp HexPubkey(i + 1).
@@ -293,7 +294,80 @@ describe('P2MR multi_a threshold cap', () => {
     const cyclic: Record<string, unknown> = { type: 'branch', right: pkLeaf(1) }
     cyclic['left'] = cyclic
     const cyclicDescriptor = { type: 'mr', tree: cyclic } as unknown as ParsedP2mrDescriptor
-    expectDescriptorError(() => p2mrRootFromDescriptor(cyclicDescriptor), TOO_DEEP)
+    expectDescriptorError(() => p2mrRootFromDescriptor(cyclicDescriptor), REUSED_NODE)
+  })
+
+  it('refuses descriptor objects that share a subtree, in time linear in their size', () => {
+    // Count property reads, so a walk that follows every path fails here instead of hanging.
+    let reads = 0
+    const counted = <T extends object>(node: T): T =>
+      new Proxy(node, {
+        get(target, key, receiver) {
+          reads += 1
+          if (reads > 10_000) throw new Error('descriptor walk read more than 10,000 properties')
+          return Reflect.get(target, key, receiver) as unknown
+        },
+      })
+    let countedShared: P2mrDescriptorTree = counted(pkLeaf(1))
+    for (let level = 0; level < 100; level += 1) {
+      countedShared = counted({ type: 'branch', left: countedShared, right: countedShared })
+    }
+    for (const run of [
+      (descriptor: ParsedP2mrDescriptor) => serializeP2mrDescriptor(descriptor),
+      (descriptor: ParsedP2mrDescriptor) => p2mrRootFromDescriptor(descriptor),
+      (descriptor: ParsedP2mrDescriptor) => p2mrAddressFromDescriptor(descriptor, 'regtest'),
+      (descriptor: ParsedP2mrDescriptor) => hasP2mrStandardSatisfaction(descriptor),
+    ]) {
+      reads = 0
+      expectDescriptorError(() => run({ type: 'mr', tree: countedShared }), REUSED_NODE)
+      expect(reads).toBeLessThan(500)
+    }
+
+    // 101 objects, but 2^100 root-to-leaf paths: a walk bounded only by depth never ends.
+    let shared: P2mrDescriptorTree = pkLeaf(1)
+    for (let level = 0; level < 100; level += 1) {
+      shared = { type: 'branch', left: shared, right: shared }
+    }
+    const dag = { type: 'mr', tree: shared } as ParsedP2mrDescriptor
+    const started = performance.now()
+    expectDescriptorError(() => serializeP2mrDescriptor(dag), REUSED_NODE)
+    expectDescriptorError(() => p2mrRootFromDescriptor(dag), REUSED_NODE)
+    expectDescriptorError(() => p2mrAddressFromDescriptor(dag, 'regtest'), REUSED_NODE)
+    expectDescriptorError(() => hasP2mrStandardSatisfaction(dag), REUSED_NODE)
+    expect(performance.now() - started).toBeLessThan(1000)
+
+    // A repeated leaf object is refused too; a leaf at each position is a tree.
+    const leaf = pkLeaf(1)
+    const repeatedLeaf = { type: 'mr', tree: { type: 'branch', left: leaf, right: leaf } } as ParsedP2mrDescriptor
+    expectDescriptorError(() => serializeP2mrDescriptor(repeatedLeaf), REUSED_NODE)
+    const ownLeaves = { type: 'mr', tree: { type: 'branch', left: leaf, right: { ...leaf } } } as ParsedP2mrDescriptor
+    const twoLeaves = `mr({pk(${hexPubkey(1)}),pk(${hexPubkey(1)})})`
+    expect(serializeP2mrDescriptor(ownLeaves, false)).toBe(twoLeaves)
+    expect(p2mrRootFromDescriptor(ownLeaves)).toEqual(p2mrRootFromDescriptor(twoLeaves))
+  })
+
+  it('accepts a large tree at the depth limit whose leaves share key bytes', () => {
+    // A balanced subtree of 2^10 leaves hung 118 branches down: 1,142 leaves, the deepest at 128.
+    const pubkey = hexToBytes(hexPubkey(1))
+    const balanced = (height: number): P2mrDescriptorTree =>
+      height === 0
+        ? { type: 'pk', pubkey }
+        : { type: 'branch', left: balanced(height - 1), right: balanced(height - 1) }
+    let tree = balanced(10)
+    for (let level = 0; level < 118; level += 1) {
+      tree = { type: 'branch', left: tree, right: { type: 'pk', pubkey } }
+    }
+    const large = { type: 'mr', tree } as ParsedP2mrDescriptor
+    const serialized = serializeP2mrDescriptor(large, false)
+    expect(serialized.match(/pk\(/g)).toHaveLength(1024 + 118)
+    expect(serializeP2mrDescriptor(parseP2mrDescriptor(serialized), false)).toBe(serialized)
+    expect(p2mrRootFromDescriptor(large)).toEqual(p2mrRootFromDescriptor(serialized))
+    expect(p2mrAddressFromDescriptor(large, 'regtest')).toBe(p2mrAddressFromDescriptor(serialized, 'regtest'))
+    expect(hasP2mrStandardSatisfaction(large)).toBe(true)
+
+    // One more level is over the limit.
+    const tooDeep = { type: 'mr', tree: { type: 'branch', left: tree, right: { type: 'pk', pubkey } } }
+    expectDescriptorError(() => serializeP2mrDescriptor(tooDeep as ParsedP2mrDescriptor), TOO_DEEP)
   })
 
   it('re-validates pqc() keys in descriptor objects with the string parser', () => {

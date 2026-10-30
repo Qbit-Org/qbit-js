@@ -18,7 +18,11 @@ import {
   PSBT_QBIT_IN_P2MR_MERKLE_ROOT,
   PSBT_QBIT_IN_P2MR_SCRIPT_SIG,
 } from './constants'
-import { assertRestrictedOutputModeOutputs } from './consensus'
+import {
+  assertRestrictedOutputModeOutputs,
+  assertTransactionShape,
+  type isRestrictedOutputModeOutput,
+} from './consensus'
 import {
   bytesToHex,
   compactSize,
@@ -225,7 +229,9 @@ interface PreparedP2mrSigningPlan {
  * Validate every signing plan without invoking a signer or mutating the PSBT.
  * Stateful signers can call this before reserving counters or keys. It also
  * checks every output against qbit Core's restricted-output mode unless
- * `restrictedOutputMode: false` is passed (see {@link P2mrSigningOptions}).
+ * `restrictedOutputMode: false` is passed (see {@link P2mrSigningOptions}),
+ * and refuses a transaction without outputs or with two inputs spending the
+ * same outpoint, which Core's `CheckTransaction` rejects.
  *
  * Each plan's leaf must be a committed v1 `pk` or `multi_a` leaf containing
  * the key, with no signature yet for that (pubkey, leaf hash); its input must
@@ -262,7 +268,8 @@ interface PreparedP2mrSigningPlan {
  * @throws {QbitProtocolError} `INVALID_PSBT` for a plan the rules above refuse,
  * an `inputIndex` out of range, a duplicate plan, an input without a witness
  * UTXO (every input needs one, since the sighash commits to all spent
- * outputs), or a PSBT {@link decodePsbt} rejects.
+ * outputs), a transaction without outputs or with two inputs spending the
+ * same outpoint, or a PSBT {@link decodePsbt} rejects.
  * @throws {QbitProtocolError} `INVALID_SCRIPT` for an output restricted-output
  * mode rejects, or `INVALID_SIGHASH` for a sighash rule.
  * @throws {QbitProtocolError} `INVALID_BYTES` for a plan's `pubkey` or
@@ -292,7 +299,8 @@ export function validateP2mrSigningPlans(
  *
  * `sign` and `onSigned` are checked to be functions, every output is checked
  * against qbit Core's restricted-output mode (see {@link P2mrSigningOptions}),
- * and the plans are validated as `validateP2mrSigningPlans` validates them
+ * a transaction without outputs or with two inputs spending the same outpoint
+ * is refused, and the plans are validated as `validateP2mrSigningPlans` validates them
  * before the first signer call, so no key is used for a plan whose signature
  * `finalizeP2mrPsbt` would leave out of the witness it builds from the PSBT's
  * signatures and this call's (`validateP2mrSigningPlans` says what this does
@@ -580,6 +588,7 @@ function prepareP2mrSigningPlans(
   const tx = psbtUnsignedTransaction(psbt)
   const summary = decodePsbt(psbt)
   assertRestrictedOutputModeOutputs(tx.outputs, options.restrictedOutputMode)
+  assertTransactionShape(tx)
   const spentOutputs = extractSpentOutputs(psbt)
   const midstates = precomputeSighashMidstates(tx, spentOutputs)
   const targets = new Set<string>()

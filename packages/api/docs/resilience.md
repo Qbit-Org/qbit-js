@@ -9,7 +9,8 @@ every client method.
   for a submission, see the [outcome table](broadcasting.md#outcomes).
 - Retry with exponential backoff on network errors, timeouts, `500`, `502`,
   `503`, `504` and `429` (honoring `Retry-After` up to `maxRetryAfterMs`,
-  default 30 s) for reads; other `5xx` replies are not retried. When
+  default 30 s) for reads; other `5xx` replies, and a reply over
+  `maxResponseBytes`, are not retried. When
   the server asks for a longer wait, the client does not sleep: it throws the
   `rate_limit` / `http` error immediately with `retryAfterMs` set so the UI can
   decide when to try again. Submissions are retried only as the
@@ -33,10 +34,19 @@ every client method.
 - In-flight de-duplication of identical concurrent `GET`s (polling-friendly).
   One caller aborting stops only its own wait; the shared request is cancelled
   only when every caller waiting on it has given up.
+- A size limit on every response body, `maxResponseBytes` (see
+  [Configuration](configuration.md#response-size-limit)), counted as the bytes
+  arrive. Once a body passes it the client cancels the body and stops
+  reading: a read fails with `response_too_large` and is not retried, and a
+  submission is judged by the [outcome table](broadcasting.md#outcomes).
+  De-duplicated `GET`s share one request, so they share one limit, and one
+  copy of the body.
 - Fetch credentials default to `omit`; authenticated reverse proxies can opt
   into `same-origin` or `include` with the `credentials` option.
 - Typed `QbitApiError` taxonomy for UI: `rate_limit` (429), `payload_too_large`
   (413), `not_found` (404), `http`, `network`, `timeout`, `aborted`, `parse`,
+  `response_too_large` (a reply's body passed `maxResponseBytes`; never a
+  submission's outcome),
   `pagination_limit` (a history scan hit `maxPages` / `maxTransactions`),
   `invalid_cursor` (a history scan could not be shown complete; retry it), and
   `unknown_outcome` (a submission may have reached the node; carries `txid`
@@ -49,7 +59,8 @@ every client method.
   checks the `Symbol.for('qbit-js.QbitApiError')` brand on the class
   prototype. Any code can set that brand, so it classifies errors, it does not
   authenticate them. An error from another version can carry a `kind` this one
-  does not list, so keep a default branch. `QbitApiError.unredactedCause` only
+  does not list, so keep a default branch: `response_too_large`, new in 0.1.1,
+  reaches code written for 0.1.0 there. `QbitApiError.unredactedCause` only
   finds the cause of an error from its own copy.
 
 ```ts

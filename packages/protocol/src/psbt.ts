@@ -16,7 +16,12 @@ import {
   PSBT_QBIT_IN_P2MR_LEAF_SCRIPT,
   PSBT_QBIT_IN_P2MR_SCRIPT_SIG,
 } from './constants'
-import { assertMoneyRange, assertRestrictedOutputModeOutputs } from './consensus'
+import {
+  assertMoneyRange,
+  assertRestrictedOutputModeOutputs,
+  assertTransactionShape,
+  type isRestrictedOutputModeOutput,
+} from './consensus'
 import {
   bytesToHex,
   concatByteList,
@@ -31,6 +36,7 @@ import {
   asciiBytes,
 } from './bytes'
 import { assertP2mrControlBlockShape } from './scripts'
+import type { finalizeP2mrPsbt } from './signing'
 import {
   type P2mrOutpoint,
   type P2mrTransactionInput,
@@ -226,9 +232,12 @@ export interface PsbtSummary {
  * Parse a binary PSBT, preserving all fields (including unknown) in order.
  * Mirrors qbit Core's deserializer: CompactSizes (including each key's type)
  * must be canonical and at most MAX_SIZE, proprietary keys are unserialized
- * eagerly in every map, and `qbit` proprietary P2MR keys in input maps must have
- * the key-data shape Core expects, so such malformed input is rejected with
- * `INVALID_PSBT`.
+ * eagerly in every map, `qbit` proprietary P2MR keys in input maps must have
+ * the key-data shape Core expects, and a key whose type Core reads as the type
+ * byte alone, such as an input's witness UTXO (`0x01`) or final scriptwitness
+ * (`0x08`), must have no key data, so such malformed input is rejected with
+ * `INVALID_PSBT`. {@link combinePsbts} and {@link decodePsbt} refuse such keys
+ * too.
  *
  * Input larger than `options.maxBytes` is rejected before parsing, and at most
  * `options.maxObjects` objects are decoded (see `PsbtLimitOptions`). Unlike qbit
@@ -505,7 +514,9 @@ export function decodePsbt(psbt: Psbt): PsbtSummary {
  * there and the bytes would parse as a different PSBT, or not at all), and no
  * raw key repeated within any map (the
  * `readPsbtMap` rule; Core's per-map "Duplicate Key" checks, e.g. the input
- * map's `key_lookup` at psbt.h:533). `Psbt` is a plain object, so callers can build or merge one without
+ * map's `key_lookup` at psbt.h:533), nor a key with data after a type byte
+ * Core requires alone (`assertSingleBytePsbtKey`, which also guards the
+ * duplicate check). `Psbt` is a plain object, so callers can build or merge one without
  * `parsePsbt`. Without this check, a map with two witness-UTXO (0x01) entries
  * would decode the last one for display and fee, while the sighash commits to
  * the first, so a signer would approve an amount it never saw.
@@ -517,12 +528,18 @@ function assertPsbtMapShape(psbt: Psbt, tx: P2mrTransaction): void {
   if (psbt.outputs.length !== tx.outputs.length) {
     throw new QbitProtocolError('INVALID_PSBT', 'PSBT output map count does not match the unsigned transaction')
   }
-  for (const map of [psbt.global, ...psbt.inputs, ...psbt.outputs]) {
+  const maps: [PsbtMapKind, PsbtKeyValue[]][] = [
+    ['global', psbt.global],
+    ...psbt.inputs.map((map): [PsbtMapKind, PsbtKeyValue[]] => ['input', map]),
+    ...psbt.outputs.map((map): [PsbtMapKind, PsbtKeyValue[]] => ['output', map]),
+  ]
+  for (const [kind, map] of maps) {
     const seen = new Set<string>()
     for (const { key } of map) {
       if (key.length === 0) {
         throw new QbitProtocolError('INVALID_PSBT', 'empty key in PSBT map')
       }
+      assertSingleBytePsbtKey(key, readPsbtKeyType(key), kind)
       // The parser's key id, so a long key costs a SHA-256 rather than its hex.
       const keyId = psbtKeyIndexId(key)
       if (seen.has(keyId)) {
@@ -647,7 +664,11 @@ export interface P2mrPsbtInput {
  * `MoneyRange`, or `INVALID_INTEGER` for a version, locktime, vout or sequence
  * that is not a uint32.
  * @throws {QbitProtocolError} `INVALID_PSBT` for a control block with the
- * wrong length or a clear low bit in its first byte.
+ * wrong length or a clear low bit in its first byte, no inputs, no outputs,
+ * two inputs spending the same outpoint, or an input spending the null
+ * outpoint, which qbit Core's `CheckTransaction` rejects
+ * (`bad-txns-vin-empty`, `bad-txns-vout-empty`, `bad-txns-inputs-duplicate`,
+ * `bad-txns-prevout-null`, or as a coinbase when it is the only input).
  * @throws {RangeError} if a leaf version is not an integer from 0 to 255.
  *
  * @remarks
@@ -720,6 +741,8 @@ export function createP2mrPsbt(params: {
   const global: PsbtKeyValue[] = [
     { key: Uint8Array.of(PSBT_GLOBAL_UNSIGNED_TX), value: serializeUnsignedTransaction(tx) },
   ]
+  // After serializing, which checks every txid and vout.
+  assertTransactionShape(tx)
   const inputs: PsbtKeyValue[][] = params.inputs.map((spec, index) => {
     const entries: PsbtKeyValue[] = [
       {
@@ -895,6 +918,40 @@ function readPsbtKeyType(key: Uint8Array): number {
 }
 
 /**
+ * The key types qbit Core reads with a key that must be the type byte alone,
+ * by map, rejecting a longer key as "... key is more than one byte type"
+ * (src/psbt.h): global unsigned transaction 0x00 (:1446-1450) and version 0xfb
+ * (:1495-1498); input non-witness UTXO 0x00 (:557-560), witness UTXO 0x01
+ * (:567-570), sighash type 0x03 (:603-606), redeemScript 0x04 (:614-617),
+ * witnessScript 0x05 (:624-627), final scriptSig 0x07 (:639-642), final
+ * scriptWitness 0x08 (:649-652), Taproot key signature 0x13 (:743-746),
+ * internal key 0x17 (:878-881) and Merkle root 0x18 (:888-891); output
+ * redeemScript 0x00 (:1183-1186), witnessScript 0x01 (:1193-1196), Taproot
+ * internal key 0x05 (:1208-1211) and tree 0x06 (:1218-1221). Other key types
+ * carry key data, and unknown ones are kept whatever their length.
+ */
+const SINGLE_BYTE_PSBT_KEY_TYPES: Record<PsbtMapKind, ReadonlySet<number>> = {
+  global: new Set([0x00, 0xfb]),
+  input: new Set([0x00, 0x01, 0x03, 0x04, 0x05, 0x07, 0x08, 0x13, 0x17, 0x18]),
+  output: new Set([0x00, 0x01, 0x05, 0x06]),
+}
+
+/**
+ * Refuse a key with data after a type byte Core requires to stand alone. With
+ * it, a raw-key lookup would pass over the key (such an input `0x08` record
+ * reads as not finalized, and finalizing appends a second one), and the
+ * duplicate check, which compares raw keys, would let two such records through.
+ */
+function assertSingleBytePsbtKey(key: Uint8Array, keyType: number, kind: PsbtMapKind): void {
+  if (key.length !== 1 && SINGLE_BYTE_PSBT_KEY_TYPES[kind].has(keyType)) {
+    throw new QbitProtocolError(
+      'INVALID_PSBT',
+      `PSBT ${kind} key of type 0x${keyType.toString(16).padStart(2, '0')} must be the single type byte`
+    )
+  }
+}
+
+/**
  * Core reads every key's type with `ReadCompactSize` and unserializes every
  * `0xfc` proprietary key (the same type byte in the global, input and output
  * maps) as `<identifier><subtype>` while deserializing a PSBT. Only
@@ -905,7 +962,9 @@ function readPsbtKeyType(key: Uint8Array): number {
  * fail at parse time, not when a field is first decoded.
  */
 function validatePsbtKey(key: Uint8Array, kind: PsbtMapKind): void {
-  if (readPsbtKeyType(key) !== PSBT_IN_PROPRIETARY) return
+  const keyType = readPsbtKeyType(key)
+  assertSingleBytePsbtKey(key, keyType, kind)
+  if (keyType !== PSBT_IN_PROPRIETARY) return
   const { identifier, subtype, keyData } = parseProprietaryKey(key)
   if (kind === 'input' && bytesEqual(identifier, asciiBytes(PSBT_QBIT_IDENTIFIER))) {
     assertQbitProprietaryP2mrKeyData(subtype, keyData)

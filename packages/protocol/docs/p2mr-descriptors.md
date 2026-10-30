@@ -99,5 +99,11 @@ otherwise:
 - `pqc` keys pass the same parser as `pk(pqc(...))` strings.
 - No leaf is more than 128 branches deep (`P2MR_CONTROL_MAX_NODE_COUNT`, Core's
   `mr()` nesting limit, `src/script/descriptor.cpp:3052`). The check is
-  iterative, so very deep or cyclic objects fail with `INVALID_DESCRIPTOR`
-  instead of a stack overflow.
+  iterative, so very deep objects fail with `INVALID_DESCRIPTOR` instead of a
+  stack overflow.
+- Every tree node is a distinct object, as `parseP2mrDescriptor` builds them. A
+  node object reached twice, through a shared subtree or a cycle, fails with
+  `INVALID_DESCRIPTOR`, so the check visits each object once. Depth alone does
+  not bound the work: 100 levels of `{ type: 'branch', left: prev, right: prev }`
+  are 101 objects but 2^100 paths. To repeat a leaf, give each position its own
+  object.

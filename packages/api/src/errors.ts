@@ -1,3 +1,5 @@
+import type { EsploraClientOptions } from './esplora-client'
+
 // ---------------------------------------------------------------------------
 // Error taxonomy (user-presentable)
 // ---------------------------------------------------------------------------
@@ -20,6 +22,10 @@
  * - `aborted`: the call's or the client's `AbortSignal` fired.
  * - `parse`: a body was not the expected JSON or text, could not be read, or
  *   failed the client's validation.
+ * - `response_too_large`: a reply's body passed the client's
+ *   `maxResponseBytes`, so the client stopped reading it. Not retried. A
+ *   submission's reply over the limit, a `429` included, is
+ *   `unknown_outcome` instead.
  * - `pagination_limit`: a history scan exceeded its page or transaction bound.
  * - `invalid_cursor`: an address-history scan could not be shown complete
  *   (retry it later), or a `MempoolQbitClient.getAddressTxs` cursor is stale,
@@ -46,6 +52,7 @@ export type QbitApiErrorKind =
   | 'timeout' // request or call deadline expired
   | 'aborted' // caller's AbortSignal fired
   | 'parse' // body was not the expected JSON/text
+  | 'response_too_large' // body exceeded maxResponseBytes; reading stopped
   | 'pagination_limit' // history scan exceeded its configured page or transaction bound
   | 'invalid_cursor' // an address-history scan could not be shown complete; retry it
   | 'unknown_outcome' // a submission may have reached the node; see docs/broadcasting.md
@@ -129,7 +136,8 @@ export class QbitApiError extends Error {
   /**
    * The underlying error. Errors the client creates attach a redacted copy,
    * safe to log: see `QbitApiError.unredactedCause`. A JSON `parse` error's
-   * cause is a generic `SyntaxError` instead. Two causes are passed through
+   * cause is a generic `SyntaxError` instead, and its unredacted cause a copy
+   * of `JSON.parse`'s, with the same message and stack. Two causes are passed through
    * unchanged: an `aborted` error's, which is the signal's reason, and a
    * `QbitApiError`, such as one a custom `fetchFn` threw.
    */
@@ -171,7 +179,8 @@ export class QbitApiError extends Error {
    * a brand, `Symbol.for('qbit-js.QbitApiError')`, set on the class prototype
    * instead. It identifies the class, not where the error came from: any code
    * can set the brand. An error from another version can carry a `kind` this
-   * version does not list, so keep a default branch when switching on it.
+   * version does not list, so keep a default branch when switching on it: code
+   * written for 0.1.0 meets `response_too_large`, new in 0.1.1, there.
    *
    * @param value - Any value, typically a caught error.
    * @returns True when `value` carries the `QbitApiError` brand.
@@ -266,6 +275,17 @@ function redactedBaseUrl(baseUrl: string): string {
  * first, so replaced text is not matched again.
  */
 function redactBaseUrl(text: string, baseUrl: string): string {
+  const replacements = baseUrlReplacements(baseUrl)
+  if (replacements.size === 0) return text
+  const pattern = [...replacements.keys()]
+    .sort((a, b) => b.length - a.length)
+    .map(needle => needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('|')
+  return text.replace(new RegExp(pattern, 'g'), match => replacements.get(match)!)
+}
+
+/** What `redactBaseUrl` replaces, each needle mapped to its replacement. */
+function baseUrlReplacements(baseUrl: string): Map<string, string> {
   const spellings = [baseUrl]
   try {
     spellings.push(new URL(baseUrl).href.replace(/\/+$/, ''))
@@ -277,12 +297,7 @@ function redactBaseUrl(text: string, baseUrl: string): string {
   for (const part of spellings.flatMap(baseUrlParts)) replacements.set(part, '...')
   for (const path of spellings.map(basePath)) if (path) replacements.set(path, '/...')
   for (const spelling of spellings) if (spelling) replacements.set(spelling, redacted)
-  if (replacements.size === 0) return text
-  const pattern = [...replacements.keys()]
-    .sort((a, b) => b.length - a.length)
-    .map(needle => needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-    .join('|')
-  return text.replace(new RegExp(pattern, 'g'), match => replacements.get(match)!)
+  return replacements
 }
 
 /**
@@ -339,9 +354,51 @@ function redactRedirectTarget(target: string, baseUrl: string): string {
   return redacted.replace(new RegExp(pattern, 'gi'), '...')
 }
 
-/** A response body preview: trimmed, the base URL redacted, capped at 200 characters. */
+/** How many characters of a response body an error keeps. */
+const PREVIEW_LENGTH = 200
+
+/**
+ * A response body preview: trimmed, the base URL redacted, capped at
+ * `PREVIEW_LENGTH` characters, as a new string. Only a bounded prefix of the
+ * body is redacted, and the result shares no memory with the body: engines
+ * keep a whole string alive while any slice of it lives (V8's sliced
+ * strings), so a sliced preview would pin a body of up to `maxResponseBytes`
+ * for as long as its error lives.
+ */
 function responseBodyPreview(text: string, baseUrl: string): string {
-  return redactBaseUrl(text.trim(), baseUrl).slice(0, 200)
+  // Redaction shortens a needle of n characters to no fewer than 3 ('...'), so
+  // the first PREVIEW_LENGTH characters of the redacted body come from at most
+  // PREVIEW_LENGTH * max(1, n / 3) characters of the body, plus n so that a
+  // needle running past them is still found whole. Then the preview is the
+  // same as one redacted from the whole body.
+  let longest = 0
+  for (const needle of baseUrlReplacements(baseUrl).keys()) longest = Math.max(longest, needle.length)
+  const window = longest + PREVIEW_LENGTH * Math.max(1, Math.ceil(longest / 3))
+  // trim() and slice() return views, not copies: only the window is redacted.
+  const trimmed = text.trim()
+  const prefix = trimmed.length > window ? trimmed.slice(0, window) : trimmed
+  return detachedString(redactBaseUrl(prefix, baseUrl).slice(0, PREVIEW_LENGTH))
+}
+
+/**
+ * A `SyntaxError` from `JSON.parse` as a new one with the same message and
+ * stack. V8's own keeps the whole text it failed to parse alive, here a
+ * response body of up to `maxResponseBytes`, for as long as it lives.
+ */
+function detachedParseError(cause: unknown): unknown {
+  if (!(cause instanceof SyntaxError)) return cause
+  const copy = new SyntaxError(detachedString(cause.message))
+  if (typeof cause.stack === 'string') copy.stack = detachedString(cause.stack)
+  return copy
+}
+
+/**
+ * A copy of `text` that shares no memory with any other string. A slice, a
+ * trimmed string, or a regex replace that matched nothing can all be views of
+ * the string they came from; joining its characters builds a new one.
+ */
+function detachedString(text: string): string {
+  return Array.from(text).join('')
 }
 
 /** Response text quoted in an error message: `responseBodyPreview` with control characters escaped. */
@@ -447,8 +504,11 @@ function formatErrorCause(error: unknown): string {
 
 export {
   causeOptions,
+  detachedParseError,
+  detachedString,
   escapeControlChars,
   formatErrorCause,
+  PREVIEW_LENGTH,
   quotedResponseText,
   redactBaseUrl,
   redactedBaseUrl,

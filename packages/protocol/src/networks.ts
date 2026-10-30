@@ -1,4 +1,5 @@
 import { QbitProtocolError } from './errors'
+import type { parseQbitUri } from './uri'
 
 /**
  * Name of a network in {@link qbitNetworks}: qbit mainnet, Testnet4, signet or

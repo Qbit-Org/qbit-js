@@ -1,3 +1,4 @@
+import type { addressToScriptPubKey } from './addresses'
 import { P2MR_PROGRAM_BYTES } from './constants'
 import { assertMoneyRange, assertUint32 } from './consensus'
 import { concatByteList, compactSize, copyBytes, concatBytes, serializeVarBytes, assertByteLength } from './bytes'
