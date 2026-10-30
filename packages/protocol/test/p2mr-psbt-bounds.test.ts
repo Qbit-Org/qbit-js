@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import ts from 'typescript'
@@ -589,15 +589,20 @@ q.decodePsbt(psbt)
 process.stdout.write(JSON.stringify({ bytes: bytes.length, globalEntries: psbt.global.length }))
 `
 
-/** Compiles `src/index.ts` to CommonJS in `dir`, so a child process can't test a stale `lib/`. */
+/** Compiles every `.ts` file under `src/` to CommonJS in `dir`, keeping the tree, so a child process can't test a stale `lib/`. */
 function compileSource(dir: string): string {
-  const modulePath = join(dir, 'index.cjs')
-  const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8')
-  const compiled = ts.transpileModule(source, {
-    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
-  })
-  writeFileSync(modulePath, compiled.outputText)
-  return modulePath
+  writeFileSync(join(dir, 'package.json'), '{ "type": "commonjs" }\n')
+  const srcDir = fileURLToPath(new URL('../src/', import.meta.url))
+  for (const name of readdirSync(srcDir, { recursive: true, encoding: 'utf8' }).filter(name => name.endsWith('.ts'))) {
+    const source = readFileSync(join(srcDir, name), 'utf8')
+    const compiled = ts.transpileModule(source, {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+    })
+    const out = join(dir, name.replace(/\.ts$/, '.js'))
+    mkdirSync(dirname(out), { recursive: true })
+    writeFileSync(out, compiled.outputText)
+  }
+  return join(dir, 'index.js')
 }
 
 /** Runs `script` in a child process whose V8 heap is capped at `heapMb`; exhausting it aborts only the child. */
