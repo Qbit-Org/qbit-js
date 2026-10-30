@@ -72,6 +72,8 @@ export interface StubEsploraOptions {
   stallReads?: boolean
   /** Leave every `GET /tx/:txid` unanswered until the client aborts it. */
   stallLookups?: boolean
+  /** Answer each `GET /tx/:txid` only after this many ms, unless the client aborts it first. */
+  lookupDelayMs?: number
 }
 
 export interface StubEsplora {
@@ -143,8 +145,15 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
       // 200 {"confirmed":false}, the same as a transaction in its mempool.
       return json(known.get(status[1]!) ?? { confirmed: false })
     }
+    const hexLookup = /^\/tx\/([0-9a-f]{64})\/hex$/.exec(path)
+    if (method === 'GET' && hexLookup) {
+      // The hex of a transaction the node has, as POSTed.
+      const hex = known.has(hexLookup[1]!) ? broadcasts.find(hex => txidFromRawTx(hex) === hexLookup[1]) : undefined
+      return hex === undefined ? txNotFound() : new Response(hex)
+    }
     const lookup = /^\/tx\/([0-9a-f]{64})$/.exec(path)
     if (method === 'GET' && lookup) {
+      if (options.lookupDelayMs !== undefined && signal) await answerAfter(options.lookupDelayMs, signal)
       if (options.lookupReply) return json(options.lookupReply(lookup[1]!))
       const tx = known.get(lookup[1]!)
       if (tx === undefined) return fundingTx(lookup[1]!) ?? txNotFound()
@@ -197,6 +206,17 @@ export function stubEsplora(options: StubEsploraOptions): StubEsplora {
   }
 
   return { fetchFn, requests, broadcasts, known }
+}
+
+/** Resolves after `ms`, or rejects with `signal`'s reason if it aborts first. */
+function answerAfter(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener('abort', () => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    })
+  })
 }
 
 /** A reply that never comes: the request fails only when `signal` aborts. */

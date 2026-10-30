@@ -70,13 +70,16 @@ stores the signed transaction before the first broadcast and drops it only when
 it does only before sending anything. When the outcome is unknown, the
 transaction may already be on the network, so it looks the txid up with `getTx`
 before it resubmits anything, resubmits only the same hex, and never rebuilds
-the payment. A lookup finds the transaction only when the reply's `txid` is its
-txid, since `getTx` returns the reply as parsed, without checking that it is the
-transaction requested. Each round of reconciliation waits a poll interval, or
+the payment. `reconcileBroadcast` takes the pending record, its txid and hex,
+and checks that the hex is that transaction before any request. A lookup finds
+the transaction only when the reply's `txid` is its txid, since `getTx` returns
+the reply as parsed, without checking that it is the transaction requested.
+Each round of reconciliation waits a poll interval, or
 half of what is left when less than two are left, then looks the transaction
-up. A round with less than two poll intervals left once it has waited is the
-last: unless its lookup finds the transaction, it resubmits once with what
-remains, and stops. One budget rule covers the first broadcast and every other
+up. A round with less than two poll intervals left once its lookup is over is
+the last: unless the lookup found the transaction, it resubmits once with what
+remains, and stops, so only the last round resubmits with less than two poll
+intervals left. One budget rule covers the first broadcast and every other
 lookup and resubmission: each gets all but a poll interval of the time left
 while at least two poll intervals are left, and half of what is left below
 that. So one that stalls leaves a later request time, and however little time
@@ -104,11 +107,19 @@ a payment built from other inputs.
 
 A pending record whose stored hex is not its transaction, or not a whole
 transaction, is reported as `corrupt_pending`, never as nothing pending, by
-`sendPayment` and `abandonPendingPayment`, before either sends or releases
-anything; `reconcileBroadcast` refuses hex that is not a whole transaction the
-same way, before any request. The transaction may have been sent, so the wallet
-must restore its hex from its own records before it can settle or release it.
-Looking the txid up with `getTx` is still safe meanwhile.
+`sendPayment`, `reconcileBroadcast` and `abandonPendingPayment`, before any of
+them sends or releases anything: resubmitting hex that is another transaction,
+such as an older payment that is still valid, would pay it again. The
+transaction may have been sent, so the wallet must restore its hex before it
+can settle or release it. `client.getTxHex(txid)` restores it without a backup
+whenever the indexer knows the transaction, since it returns the hex only when
+it is that transaction; then the usual flow applies. While no indexer knows the
+transaction and the wallet has no record of its inputs, the wallet must not
+clear the record: it cannot tell which outputs a new payment may spend without
+paying twice. Only knowing the inputs, and seeing that the indexer does not know
+the transaction and that every input is still unspent, as
+`abandonPendingPayment` checks, allows releasing it, and then the only safe
+follow-up is a replacement that spends the same inputs.
 
 <!-- snippet: examples/src/send-payment.ts#broadcast -->
 ```ts
@@ -119,7 +130,7 @@ await sleep(0, signal)
 throwIfCancelled(signal)
 // The POST is round 0 of reconcileBroadcast's schedule, with the budget its
 // requests get: if it stalls, the last round still has time to resubmit.
-const deadlineMs = requestBudgetMs(end, pollMs) // a deadline that has passed sends nothing
+const deadlineMs = requestBudgetMs(msLeft(end), pollMs) // a deadline that has passed sends nothing
 // Another call may have stored a payment while this one scanned and signed.
 // Check again, with no await before the save, so that only one of them pays.
 refuseWhilePending(store)
@@ -135,7 +146,7 @@ try {
   // unknown_outcome, a kind this version does not know, or any other error,
   // which may follow a send: the node may have the transaction. Find out
   // before sending again, and never rebuild.
-  await reconcileBroadcast(client, rawTxHex, { end, signal, pollMs })
+  await reconcileBroadcast(client, { txid, rawTxHex }, { end, signal, pollMs })
 }
 ```
 
@@ -158,10 +169,13 @@ when a copy differs from its region. The script lists every copied block, so
 it also fails when a marker is deleted or a new one is not listed. It reads
 markers only in `README.md`, `examples/README.md` and `packages/*/README.md`,
 and fails on a marker in any other Markdown file git tracks, whose block it
-would never check. Without git, or when the repository root is not the top
-level of a git checkout, as `git rev-parse --show-toplevel` names it, such as in
-a source tarball, whether unpacked on its own or inside another checkout, it
-skips that scan with a note and still checks the READMEs. A tracked
+would never check. It lists those files with `git ls-files`, run at the
+repository root, which lists the files git tracks under it, whether the root is
+a checkout of its own or a tracked part of another one, and scans them when the
+list includes the script itself. Otherwise it skips that scan with a note and
+still checks the READMEs: when git is missing, when `git ls-files` fails for any
+reason, such as outside any checkout, or when the list does not include the
+script, as in a source tarball unpacked inside another checkout. A tracked
 file missing from the working tree holds no marker, so it skips that file with
 a note. Line endings do not count, so a CRLF
 checkout checks the same as an LF one. `--write` keeps every line outside the

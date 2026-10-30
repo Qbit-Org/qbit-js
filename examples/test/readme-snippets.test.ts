@@ -116,7 +116,7 @@ describe('readme-snippets.mjs', () => {
     const noGit = { ...process.env, PATH: join(gitless, 'no-git-here') }
 
     for (const [root, env, reason] of [
-      [unpacked, outside, 'this is not a git checkout'],
+      [unpacked, outside, 'git ls-files failed: '],
       [gitless, noGit, 'git is not installed'],
     ] as const) {
       const result = check(root, env)
@@ -150,7 +150,7 @@ describe('readme-snippets.mjs', () => {
 
     expect(result.status).toBe(0)
     expect(result.stderr).toContain(
-      'note: skipped the scan of other Markdown files for snippet markers: this is not the top level of a git checkout, but inside the one at '
+      'note: skipped the scan of other Markdown files for snippet markers: git does not track this tree: git ls-files does not list examples/scripts/readme-snippets.mjs'
     )
 
     // The READMEs are still checked: a block that differs from its region fails.
@@ -159,6 +159,62 @@ describe('readme-snippets.mjs', () => {
 
     expect(stale.status).toBe(1)
     expect(stale.stderr).toContain(`the block differs from ${REGION}`)
+  })
+
+  it('scans the other Markdown files of a tree that another git checkout tracks', () => {
+    // qbit-js committed inside another project's repository: `git ls-files`,
+    // run at its root, lists its files.
+    const outer = checkout()
+    const vendored = join(outer, 'vendor', 'qbit-js')
+    copyTree(vendored)
+    git(outer, 'add', '--all')
+
+    const result = check(vendored)
+
+    expect(result.status).toBe(0)
+    expect(result.stderr).not.toContain('note: skipped the scan')
+
+    // A marker in another tracked Markdown file fails the check.
+    const page = 'packages/api/docs/guide.md'
+    mkdirSync(dirname(join(vendored, page)), { recursive: true })
+    writeFileSync(join(vendored, page), '<!-- snippet: examples/src/api-quick-start.ts#quick-start -->\n')
+    git(outer, 'add', '--all')
+
+    const failed = check(vendored)
+
+    expect(failed.status).toBe(1)
+    expect(failed.stderr).toContain(`${page}:1: snippet markers are read only in the READMEs`)
+  })
+
+  it('skips the scan of other Markdown files, with a note, whatever makes git ls-files fail or list nothing', () => {
+    // A corrupt index, which `git ls-files` cannot read.
+    const corrupt = checkout()
+    writeFileSync(join(corrupt, '.git', 'index'), 'not an index\n')
+    // A bare repository as GIT_DIR, which has no work tree: `git ls-files`
+    // lists nothing there.
+    const bare = mkdtempSync(join(tmpdir(), 'readme-snippets-bare-'))
+    checkouts.push(bare)
+    git(bare, 'init', '--quiet', '--bare')
+    const noWorkTree = checkout()
+
+    for (const [root, env, reason] of [
+      [corrupt, undefined, 'git ls-files failed: '],
+      [noWorkTree, { ...process.env, GIT_DIR: bare }, 'git does not track this tree: '],
+    ] as const) {
+      const result = check(root, env)
+
+      expect(result.status, reason).toBe(0)
+      expect(result.stderr, reason).toContain(
+        `note: skipped the scan of other Markdown files for snippet markers: ${reason}`
+      )
+
+      // A block that differs from its region still fails.
+      writeFileSync(join(root, README), withStaleBlock(read(root, README)))
+      const stale = check(root, env)
+
+      expect(stale.status, reason).toBe(1)
+      expect(stale.stderr, reason).toContain(`the block differs from ${REGION}`)
+    }
   })
 
   it('checks a CRLF checkout, and a README whose lines end in a mix of CRLF and LF', () => {
