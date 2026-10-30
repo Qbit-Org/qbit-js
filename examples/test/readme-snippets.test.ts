@@ -35,7 +35,12 @@ function copyTree(root: string): void {
 }
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', args, { cwd, stdio: 'pipe' })
-const run = (root: string, mode: '--check' | '--write', env?: NodeJS.ProcessEnv) =>
+/** `env` as on a contributor's machine: without `CI`, under which the script must scan every tracked Markdown file. */
+const local = (env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => {
+  const { CI: _ci, ...rest } = env
+  return rest
+}
+const run = (root: string, mode: '--check' | '--write', env: NodeJS.ProcessEnv = local()) =>
   spawnSync(process.execPath, ['examples/scripts/readme-snippets.mjs', mode], { cwd: root, encoding: 'utf8', env })
 const check = (root: string, env?: NodeJS.ProcessEnv) => run(root, '--check', env)
 const read = (root: string, file: string) => readFileSync(join(root, file), 'utf8')
@@ -110,10 +115,10 @@ describe('readme-snippets.mjs', () => {
     // not find a repository above the copy either.
     const unpacked = checkout()
     rmSync(join(unpacked, '.git'), { recursive: true, force: true })
-    const outside = { ...process.env, GIT_CEILING_DIRECTORIES: dirname(unpacked) }
+    const outside = { ...local(), GIT_CEILING_DIRECTORIES: dirname(unpacked) }
     // A checkout on a machine without git.
     const gitless = checkout()
-    const noGit = { ...process.env, PATH: join(gitless, 'no-git-here') }
+    const noGit = { ...local(), PATH: join(gitless, 'no-git-here') }
 
     for (const [root, env, reason] of [
       [unpacked, outside, 'git ls-files failed: '],
@@ -199,7 +204,7 @@ describe('readme-snippets.mjs', () => {
 
     for (const [root, env, reason] of [
       [corrupt, undefined, 'git ls-files failed: '],
-      [noWorkTree, { ...process.env, GIT_DIR: bare }, 'git does not track this tree: '],
+      [noWorkTree, { ...local(), GIT_DIR: bare }, 'git does not track this tree: '],
     ] as const) {
       const result = check(root, env)
 
@@ -215,6 +220,30 @@ describe('readme-snippets.mjs', () => {
       expect(stale.status, reason).toBe(1)
       expect(stale.stderr, reason).toContain(`the block differs from ${REGION}`)
     }
+  })
+
+  it('fails instead of skipping the scan of other Markdown files in CI', () => {
+    // A checkout on a CI runner without git: the scan cannot run, which must
+    // not pass unnoticed there.
+    const root = checkout()
+    const noGit = { ...local(), PATH: join(root, 'no-git-here') }
+
+    for (const ci of ['true', '1']) {
+      const result = check(root, { ...noGit, CI: ci })
+
+      expect(result.status, ci).toBe(1)
+      expect(result.stderr, ci).toContain(
+        'the scan of other Markdown files for snippet markers must run in CI, but: git is not installed'
+      )
+    }
+    for (const ci of ['', '0', 'false', 'FALSE']) {
+      const result = check(root, { ...noGit, CI: ci })
+
+      expect(result.status, ci).toBe(0)
+      expect(result.stderr, ci).toContain('note: skipped the scan of other Markdown files for snippet markers')
+    }
+    // With git, CI changes nothing.
+    expect(check(root, { ...local(), CI: 'true' }).status).toBe(0)
   })
 
   it('checks a CRLF checkout, and a README whose lines end in a mix of CRLF and LF', () => {

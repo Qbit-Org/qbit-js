@@ -119,7 +119,15 @@ clear the record: it cannot tell which outputs a new payment may spend without
 paying twice. Only knowing the inputs, and seeing that the indexer does not know
 the transaction and that every input is still unspent, as
 `abandonPendingPayment` checks, allows releasing it, and then the only safe
-follow-up is a replacement that spends the same inputs.
+follow-up is a replacement that spends the same inputs. Without its inputs,
+one way out remains: move every confirmed output the address holds to the
+wallet itself, in one or more transactions the wallet tracks outside this
+example's single pending record, and wait until they confirm. This example's
+payments spend only the address's own confirmed outputs, so the lost
+transaction can spend only those that are still unspent, and once all of them
+are spent it can never confirm, and the record can be cleared. A transfer to the wallet itself pays no one: if the lost transaction
+confirms first, the transfer is refused instead, and `getTxHex` then finds the
+transaction.
 
 <!-- snippet: examples/src/send-payment.ts#broadcast -->
 ```ts
@@ -175,9 +183,11 @@ a checkout of its own or a tracked part of another one, and scans them when the
 list includes the script itself. Otherwise it skips that scan with a note and
 still checks the READMEs: when git is missing, when `git ls-files` fails for any
 reason, such as outside any checkout, or when the list does not include the
-script, as in a source tarball unpacked inside another checkout. A tracked
-file missing from the working tree holds no marker, so it skips that file with
-a note. Line endings do not count, so a CRLF
+script, as in a source tarball unpacked inside another checkout. In CI, with
+the `CI` environment variable set (to anything but `0` or `false`), that scan
+must run, so any of those reasons fails the check instead. A tracked file
+missing from the working tree holds no marker, so it skips that file with a
+note. Line endings do not count, so a CRLF
 checkout checks the same as an LF one. `--write` keeps every line outside the
 blocks it changes as it was, ending included, and ends the lines it writes with
 the line ending most of the README's lines use.

@@ -587,7 +587,15 @@ export async function reconcileBroadcast(
  *   transaction's inputs, the indexer does not know the transaction, and
  *   every input is still among the address's unspent outputs. Then, as after
  *   this call, the only safe follow-up is a replacement that spends those
- *   same inputs.
+ *   same inputs. Without its inputs, one way out remains: move every
+ *   confirmed output the address holds to the wallet itself, in one or more
+ *   transactions the wallet tracks outside this example's single pending
+ *   record, and wait until they confirm. This example's payments spend only
+ *   the address's own confirmed outputs, so the lost transaction can spend
+ *   only those that are still unspent, and once all of them are spent it can
+ *   never confirm, and the record can be cleared. A transfer to
+ *   the wallet itself pays no one: if the lost transaction confirms first,
+ *   the transfer is refused instead, and `getTxHex` then finds it.
  * - `known`: the indexer knows the transaction, in its mempool or in a block,
  *   so it is not stuck: settle it with `reconcileBroadcast`.
  * - `too_many_utxos`: the backend refuses to list `address`'s unspent outputs,

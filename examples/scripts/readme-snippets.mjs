@@ -32,8 +32,10 @@
 // READMEs are still checked: when git is missing, when `git ls-files` fails
 // for any reason, such as outside any checkout, or when the list does not
 // include this script, as in a source tarball unpacked inside another
-// checkout. A tracked file missing from the working tree, deleted but not yet
-// removed with `git rm`, holds no marker: it is skipped with a note.
+// checkout. In CI (the CI environment variable set, and not to 0 or false),
+// the scan must run, so any of those reasons fails both modes instead. A
+// tracked file missing from the working tree, deleted but not yet removed with
+// `git rm`, holds no marker: it is skipped with a note.
 //
 // Line endings do not count, so a CRLF checkout, or a README whose lines end
 // in a mix of CRLF and LF, checks the same as an LF one. --write keeps every
@@ -52,6 +54,8 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))))
 /** This script, as `git ls-files` lists it when git tracks this tree. */
 const SCRIPT = 'examples/scripts/readme-snippets.mjs'
+/** Whether this runs in CI, where the scan of other Markdown files must not be skipped. */
+const inCi = !/^(|0|false)$/i.test(process.env.CI ?? '')
 const MARKER = /^<!-- snippet: (\S+)#([\w-]+) -->$/
 /** Any line that starts like a marker, readable or not. */
 const MARKER_START = /^\s*<!--\s*snippet\b/
@@ -178,10 +182,15 @@ console.log(`readme snippets: ${found.length} ${mode === '--check' ? 'checked' :
  * The Markdown files git tracks in this tree, from `git ls-files` run at the
  * repository root. None, after a note, when git is missing, when the command
  * fails for any reason, or when its list does not include this script, so
- * that git does not track this tree.
+ * that git does not track this tree. In CI, any of those reasons exits with
+ * an error instead: a scan skipped there would let a misplaced marker pass.
  */
 function trackedMarkdown() {
   const skip = reason => {
+    if (inCi) {
+      console.error(`the scan of other Markdown files for snippet markers must run in CI, but: ${reason}`)
+      process.exit(1)
+    }
     console.warn(`note: skipped the scan of other Markdown files for snippet markers: ${reason}`)
     return []
   }
