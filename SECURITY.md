@@ -27,8 +27,10 @@ describes, and issues in `@qbit-oss/pqc` through
 ## Supported versions
 
 The latest published release line is supported. A fix ships as a patch release
-on that line, or as the next minor release when it makes the packages reject
-input they used to accept, which [RELEASING.md](RELEASING.md) counts as a
+on that line. A fix that makes the packages reject input they used to accept
+ships as a patch only when [RELEASING.md](RELEASING.md#versioning) lets a patch
+carry it as a behaviour change, for example input qbit Core refuses, and
+otherwise as the next minor release, since RELEASING.md counts it as a
 breaking change below 1.0.
 
 ## Security boundaries

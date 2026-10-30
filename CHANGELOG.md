@@ -19,7 +19,7 @@ differently, as [RELEASING.md](RELEASING.md#versioning) allows in a patch:
   is refused with them, so give each position its own object);
 - React Native `baseUrl`s that never worked;
 - `maxResponseBytes`, a new limit;
-- `broadcastTx` outcomes reported less definitely;
+- `broadcastTx` outcomes reported as the reply shows them;
 - the `@noble/hashes` minimum;
 - the `unknown_outcome` message text.
 

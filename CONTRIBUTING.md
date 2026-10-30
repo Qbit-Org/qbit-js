@@ -129,9 +129,10 @@ and `schemaVersion`.
 
 - Add an entry to [CHANGELOG.md](CHANGELOG.md) for every user-visible change,
   in the matching subsection of the unreleased version's section. Start it
-  with **Breaking:** when the change can make existing caller code fail or
-  behave differently, or with **Behaviour change:** when it is one of the
-  fixes [RELEASING.md](RELEASING.md#versioning) lets a patch carry.
+  with **Behaviour change:** when it is one of the fixes
+  [RELEASING.md](RELEASING.md#versioning) lets a patch carry, and otherwise
+  with **Breaking:** when it can make existing caller code fail or behave
+  differently.
 - Versions follow [SemVer](https://semver.org), and both packages share one
   version. Below 1.0, a breaking change bumps MINOR (`0.1.x` → `0.2.0`) and a
   backward-compatible fix or addition, or a behaviour change, bumps PATCH

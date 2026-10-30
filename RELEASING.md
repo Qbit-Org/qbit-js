@@ -14,7 +14,8 @@ and published. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
   - **MINOR** (`0.1.x` → `0.2.0`) for any breaking change: a removed or renamed
     export, an incompatible type or signature, input that used to be accepted
     and is now rejected, an existing failure that now surfaces with a different
-    error kind or code, or a changed retry or outcome contract.
+    error kind or code, or a changed retry or outcome contract, unless it is
+    one of the behaviour changes below that a patch may carry.
   - **PATCH** (`0.1.0` → `0.1.1`) for backward-compatible fixes and additions.
   - **PATCH, as a behaviour change**, for a fix that changes behaviour only
     in one of these ways, and nothing else:
@@ -24,8 +25,11 @@ and published. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
       some finite input of that shape is refused with it;
     - it adds a resource limit whose default holds every legitimate use the
       docs describe;
-    - it reports an outcome less definitely than before, such as
-      `unknown_outcome` where a definite error was claimed;
+    - it reports an outcome as the reply actually shows it, where it was
+      claimed more definitely or wrongly before: `unknown_outcome` where a
+      definite error was claimed for a reply that could not be judged, or a
+      resolved submission where the reply says the node already has the
+      transaction;
     - it raises a dependency's minimum version within the same major;
     - it changes an error message without changing the error's kind, code or
       fields.
