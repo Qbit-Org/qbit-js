@@ -75,7 +75,12 @@ export type MockRoute =
 
 /** An output of a {@link MockTx}. */
 export interface MockOutput {
-  /** The address the output pays to. Without one, the output counts for no address. */
+  /**
+   * The address the output pays to. Without one, the output counts for no
+   * address, and neither does one whose `scriptPubKey` qbit-electrs takes as
+   * provably unspendable, such as an `OP_RETURN` one: by default it indexes
+   * no such output.
+   */
   address?: string
   /** Value in satoshis, a non-negative safe integer. */
   value: number
@@ -156,11 +161,14 @@ export interface MockTx {
   /** The block that holds it; omit it for a transaction in the mempool. */
   block?: MockBlock
   /**
-   * Whether it is a block's coinbase transaction (default `false`). A
-   * coinbase has a `block` and no `vin`, its `hex`, if given, is a coinbase
-   * transaction, whose input the mock serves, and its outputs mature 1,000 blocks
-   * after it: a transaction spends one only in a block at least 1,000 higher,
-   * or in the mempool once the tip is at least 999 higher.
+   * Whether it is a block's coinbase transaction (default: whether `hex` is a
+   * coinbase transaction, or `false` without `hex`). With `hex`, it must agree
+   * with it. A coinbase has a `block` and no `vin`, is the only coinbase of
+   * its block and listed before the block's other fixture transactions, and
+   * is served with its coinbase input, from its `hex` when given, witness
+   * included. Its outputs mature 1,000 blocks after it: a transaction spends
+   * one only in a block at least 1,000 higher, or in the mempool once the tip
+   * is at least 999 higher.
    */
   coinbase?: boolean
 }
@@ -242,10 +250,12 @@ export interface MockStallFault {
  * The node's verdict on one submission, on `POST /tx` or `POST /tx/push`, in
  * place of the one it reaches without a fault (see {@link createMockEsplora}):
  *
- * - `accepted`: the node takes the transaction into its mempool and the reply
- *   is its txid, whatever it would answer without the fault: even for a
- *   transaction it has in a block, one that spends outputs it does not have,
- *   or one that conflicts with a mempool transaction, which stays.
+ * - `accepted`: the reply is the transaction's txid, whatever the node would
+ *   answer without the fault. A transaction the node does not have joins its
+ *   mempool, even one that spends outputs it does not have or that Core's
+ *   script check refuses, or one that conflicts with a mempool transaction,
+ *   which stays. One it has stays where it is: a transaction in a block stays
+ *   confirmed.
  * - `rejected`: the node refuses it with RPC error `code` and `message`,
  *   relayed as a `400` reply in qbit-electrs's and mempool-qbit's
  *   `sendrawtransaction RPC error: {...}` form. `-27` is the node's
@@ -379,11 +389,13 @@ export interface MockEsplora {
  * than its inputs); `-26 bad-txns-spends-conflicting-tx` for one that spends
  * an output of a mempool transaction it conflicts with;
  * `-26 insufficient fee` for any other conflict with a mempool transaction,
- * since the mock never replaces one; and `-25` for a fee above
- * `sendrawtransaction`'s default `maxfeerate`, 0.1 coin per kvB. It takes any
- * other transaction: the mock models no relay policy or standardness rule,
- * fee floor, script or signature, lock time or sequence lock, qbit's
- * P2MR-only output rule, mempool limit or replacement.
+ * since the mock never replaces one; `-26 mempool-script-verify-flag-failed`
+ * for a spend of an unspendable output of a mempool transaction, which Core's
+ * script check refuses; and `-25` for a fee above `sendrawtransaction`'s
+ * default `maxfeerate`, 0.1 coin per kvB. It takes any other transaction: the
+ * mock models no relay policy or standardness rule, fee floor, other script
+ * or signature, lock time or sequence lock, qbit's P2MR-only output rule,
+ * mempool limit or replacement.
  *
  * A submission the node takes joins the mempool, the address views and those
  * lookups, and {@link MockEsplora.mine} confirms it. Faults replace a route's
@@ -399,10 +411,12 @@ export interface MockEsplora {
  *   value `Headers` refuses, an unknown route or fault kind, `null`), or the
  *   fixture is inconsistent (a spend of a missing, already-spent or
  *   unspendable output, a confirmed spend of an unconfirmed output, a spend of
- *   an immature coinbase output, a coinbase with inputs, a fee or no block, or
- *   with hex that is not a coinbase's, a fee that does not balance, outputs or
- *   inputs worth more than `MAX_MONEY` in total, two hashes or times for one
- *   block height, a tip hash that is not the fixture block's at its height).
+ *   an immature coinbase output, a coinbase with inputs, a fee or no block, a
+ *   `coinbase` flag its hex contradicts, a second coinbase in a block or one
+ *   listed after another transaction of its block, a fee that does not
+ *   balance, outputs or inputs worth more than `MAX_MONEY` in total, two
+ *   hashes or times for one block height, a tip hash that is not the fixture
+ *   block's at its height).
  *
  * @example
  * ```ts
@@ -470,7 +484,13 @@ interface TxRecord {
   block: Required<MockBlock> | undefined
   /** A coinbase has no inputs in `vin`; its coinbase input is `coinbaseInput`. */
   coinbase: boolean
-  coinbaseInput: { scriptsig: string; sequence: number } | undefined
+  coinbaseInput: CoinbaseInput | undefined
+}
+
+interface CoinbaseInput {
+  scriptsig: string
+  witness: string[]
+  sequence: number
 }
 
 interface InputRecord {
@@ -511,9 +531,16 @@ const TXID_PATTERN = /^[0-9a-fA-F]{64}$/
 const HEX_PATTERN = /^(?:[0-9a-fA-F]{2})*$/
 /** Bech32 and base58 addresses are alphanumeric, and none is longer than 90 characters. */
 const ADDRESS_PATTERN = /^[0-9A-Za-z]{1,90}$/
-/** Rows per `/txs/chain` page (qbit-electrs `CHAIN_TXS_PER_PAGE`). */
+/**
+ * Rows per `/txs/chain` page: the default of qbit-electrs's
+ * `--rest-default-chain-txs-per-page`, which an operator can change
+ * (src/config.rs:386-388, read at src/rest.rs:1155-1158).
+ */
 const CHAIN_PAGE_SIZE = 25
-/** Rows `/txs/mempool` lists, and rows per combined `/txs` page (`--rest-default-max-mempool-txs`). */
+/**
+ * Rows `/txs/mempool` lists, and rows per combined `/txs` page: the default of
+ * `--rest-default-max-mempool-txs` (src/config.rs:392-394).
+ */
 const MEMPOOL_PAGE_SIZE = 50
 const MAX_UINT32 = 0xffff_ffff
 // qbit Core's consensus constants (qbit 7ebcddb): COIN and MAX_MONEY,
@@ -644,9 +671,9 @@ function coinbaseDepth(state: State, input: { txid: string }, spendHeight: numbe
 
 function addFixtureTx(state: State, value: unknown, where: string, blocks: Map<number, Required<MockBlock>>): void {
   const tx = record(value, where, ['txid', 'hex', 'vin', 'vout', 'fee', 'block', 'coinbase'])
-  const coinbase = tx['coinbase'] === undefined ? false : tx['coinbase']
-  if (typeof coinbase !== 'boolean') {
-    throw new TypeError(`createMockEsplora: ${where}.coinbase must be a boolean, not ${show(coinbase)}`)
+  const flag = tx['coinbase']
+  if (flag !== undefined && typeof flag !== 'boolean') {
+    throw new TypeError(`createMockEsplora: ${where}.coinbase must be a boolean, not ${show(flag)}`)
   }
   const hex = tx['hex'] === undefined ? undefined : hexString(tx['hex'], `${where}.hex`)
   const parsed = hex === undefined ? undefined : parseRawTx(hex)
@@ -656,6 +683,15 @@ function addFixtureTx(state: State, value: unknown, where: string, blocks: Map<n
   // Core's decoder takes one with no inputs, which CheckTransaction then refuses (src/consensus/tx_check.cpp:14-15).
   if (parsed !== undefined && parsed.vin.length === 0) {
     throw new TypeError(`createMockEsplora: ${where}.hex is a transaction with no inputs, which qbit Core never holds`)
+  }
+  // The hex, when given, decides: qbit-electrs serves whatever transaction it holds.
+  const coinbase = parsed === undefined ? flag === true : isCoinbase(parsed)
+  if (flag !== undefined && flag !== coinbase) {
+    throw new TypeError(
+      flag
+        ? `createMockEsplora: ${where} is a coinbase, but its hex is not a coinbase transaction`
+        : `createMockEsplora: ${where}.coinbase is false, but its hex is a coinbase transaction`
+    )
   }
   let txid = parsed?.txid
   if (tx['txid'] !== undefined) {
@@ -685,6 +721,16 @@ function addFixtureTx(state: State, value: unknown, where: string, blocks: Map<n
       )
     }
     blocks.set(block.height, block)
+    // A block's coinbase is its first transaction and its only one (src/validation.cpp:4481-4486), and the
+    // mock places a block's transactions in fixture order, so a coinbase is listed before the others.
+    const blockmate = [...state.txs.values()].find(other => other.block?.height === block.height)
+    if (coinbase && blockmate !== undefined) {
+      throw new TypeError(
+        blockmate.coinbase
+          ? `createMockEsplora: ${where} is a second coinbase in block ${block.height}, after ${blockmate.txid}`
+          : `createMockEsplora: ${where} is a coinbase, so it must be listed before ${blockmate.txid}, another transaction of block ${block.height}`
+      )
+    }
   }
   const outputs = list(tx['vout'], `${where}.vout`)
   if (outputs.length === 0) throw new TypeError(`createMockEsplora: ${where}.vout needs at least one output`)
@@ -694,9 +740,6 @@ function addFixtureTx(state: State, value: unknown, where: string, blocks: Map<n
   if (outpoints.size !== vin.length) throw new TypeError(`createMockEsplora: ${where} spends one output twice`)
   if (coinbase && (block === undefined || vin.length > 0)) {
     throw new TypeError(`createMockEsplora: ${where} is a coinbase, so it needs a block and no vin`)
-  }
-  if (coinbase && parsed !== undefined && !isCoinbase(parsed)) {
-    throw new TypeError(`createMockEsplora: ${where} is a coinbase, but its hex is not a coinbase transaction`)
   }
 
   // qbit Core refuses outputs or inputs worth more than MAX_MONEY in total
@@ -733,7 +776,11 @@ function addFixtureTx(state: State, value: unknown, where: string, blocks: Map<n
     block,
     coinbase,
     coinbaseInput: coinbase
-      ? { scriptsig: parsed?.vin[0]?.scriptsig ?? '', sequence: parsed?.vin[0]?.sequence ?? MAX_UINT32 }
+      ? {
+          scriptsig: parsed?.vin[0]?.scriptsig ?? '',
+          witness: parsed?.vin[0]?.witness ?? [],
+          sequence: parsed?.vin[0]?.sequence ?? MAX_UINT32,
+        }
       : undefined,
   })
 }
@@ -1162,9 +1209,11 @@ function addressReply(state: State, { route, param: address, cursor }: RouteMatc
 
 /**
  * The transactions that touch `address`. The chain is newest first: by block
- * height, then by position in the block, last first (src/rest.rs:1165-1171);
- * a block's transactions are in the order the mock learned them. The mempool
- * is in arrival order, oldest first, since qbit-electrs appends each
+ * height, then by position in the block, last first (src/rest.rs:1165-1171),
+ * which qbit-electrs indexes as `tx_position`, 0 for the coinbase
+ * (src/new_index/schema.rs:1738-1743). A block's transactions are in the
+ * order the mock learned them, so its coinbase, listed first, is at 0. The
+ * mempool is in arrival order, oldest first, since qbit-electrs appends each
  * transaction's rows to the address's list and reads it from the front
  * (src/new_index/mempool.rs:155-177, :569-571).
  */
@@ -1225,8 +1274,49 @@ function after(txs: TxRecord[], lastSeen: string | undefined, limit: number): Tx
   return index === -1 ? [] : txs.slice(index + 1, index + 1 + limit)
 }
 
+/** Whether qbit-electrs indexes a row of `tx` for `address`: an output funding it, or an input spending from it. */
 function touches(tx: TxRecord, address: string): boolean {
-  return tx.vout.some(output => output.address === address) || tx.vin.some(input => input.prevout?.address === address)
+  return tx.vout.some(output => funds(output, address)) || tx.vin.some(input => input.prevout?.address === address)
+}
+
+/**
+ * Whether qbit-electrs indexes `output` as funding `address`. With its default
+ * configuration it skips every output it takes as provably unspendable
+ * (src/new_index/schema.rs:1779, src/new_index/mempool.rs:556,
+ * src/util/transaction.rs:71-73, src/config.rs:338-341, :604), though it
+ * indexes every spend, whatever the output it spends (schema.rs:1800-1821,
+ * mempool.rs:535-547).
+ */
+function funds(output: OutputRecord, address: string): boolean {
+  return output.address === address && !isProvablyUnspendable(output.scriptPubKey)
+}
+
+/**
+ * The first opcodes of a script that rust-bitcoin takes as provably
+ * unspendable, in 0.28.0, the version qbit-electrs locks (its Cargo.toml:32,
+ * Cargo.lock:143-146): `OP_RETURN`, the opcodes a legacy script treats as it
+ * (`OP_RESERVED`, `OP_VER`, `OP_RESERVED1`, `OP_RESERVED2` and every opcode
+ * from 0xba up), and the illegal ones (`OP_VERIF`, `OP_VERNOTIF`,
+ * `OP_INVALIDOPCODE` and the 15 disabled ones) (rust-bitcoin
+ * src/blockdata/opcodes.rs:677-735).
+ */
+const PROVABLY_UNSPENDABLE_OPCODES = new Set([
+  0x50, 0x62, 0x65, 0x66, 0x6a, 0x7e, 0x7f, 0x80, 0x81, 0x83, 0x84, 0x85, 0x86, 0x89, 0x8a, 0x8d, 0x8e, 0x95, 0x96,
+  0x97, 0x98, 0x99,
+])
+
+/**
+ * rust-bitcoin 0.28.0's `Script::is_provably_unspendable`, which
+ * qbit-electrs's `is_spendable` calls (rust-bitcoin
+ * src/blockdata/script.rs:539-552): the first opcode is one of those above.
+ * Unlike qbit Core's `IsUnspendable`, it does not look at the size, so
+ * qbit-electrs indexes a script over 10,000 bytes that starts with another
+ * opcode.
+ */
+function isProvablyUnspendable(script: string): boolean {
+  if (script === '') return false
+  const first = parseInt(script.slice(0, 2), 16)
+  return first >= 0xba || PROVABLY_UNSPENDABLE_OPCODES.has(first)
 }
 
 /**
@@ -1236,11 +1326,12 @@ function touches(tx: TxRecord, address: string): boolean {
  * from it, whether the output it spends is confirmed or not, and the distinct
  * transactions (src/new_index/mempool.rs:280-326, :535-571). So a mempool
  * spend of a confirmed output leaves it funded in `chain_stats` and counts
- * it spent in `mempool_stats`.
+ * it spent in `mempool_stats`. An output qbit-electrs does not index (see
+ * {@link funds}) is in neither.
  */
 function addressStats(address: string, chain: TxRecord[], mempool: TxRecord[]): EsploraAddressStats {
   const part = (txs: TxRecord[]): EsploraChainStats => {
-    const funded = txs.flatMap(tx => tx.vout.filter(output => output.address === address))
+    const funded = txs.flatMap(tx => tx.vout.filter(output => funds(output, address)))
     const spent = txs.flatMap(tx => tx.vin.filter(input => input.prevout?.address === address))
     return {
       funded_txo_count: funded.length,
@@ -1259,7 +1350,8 @@ function addressStats(address: string, chain: TxRecord[], mempool: TxRecord[]): 
  * transaction spends, then the mempool ones no mempool transaction spends
  * (src/new_index/mempool.rs:239-277), each part in the order the mock learned
  * the transactions. qbit-electrs lists the confirmed part in no fixed order
- * (src/new_index/schema.rs:314).
+ * (src/new_index/schema.rs:314). It finds them among the outputs it indexes
+ * (see {@link funds}).
  */
 function unspentOutputs(state: State, address: string): EsploraUtxo[] {
   const outpoints = (txs: TxRecord[]) => txs.flatMap(tx => tx.vin.map(input => `${input.txid}:${input.vout}`))
@@ -1270,7 +1362,7 @@ function unspentOutputs(state: State, address: string): EsploraUtxo[] {
   const unspent = (txs: TxRecord[], spent: Set<string>): EsploraUtxo[] =>
     txs.flatMap(tx =>
       tx.vout.flatMap((output, vout) =>
-        output.address === address && !spent.has(`${tx.txid}:${vout}`)
+        funds(output, address) && !spent.has(`${tx.txid}:${vout}`)
           ? [{ txid: tx.txid, vout, value: Number(output.value), status: txStatus(tx) }]
           : []
       )
@@ -1300,14 +1392,15 @@ function txStatus(tx: TxRecord): EsploraTxStatus {
     : { confirmed: true, block_height: tx.block.height, block_hash: tx.block.hash, block_time: tx.block.time }
 }
 
-/** A coinbase's input, as qbit-electrs serves it (src/rest.rs:260-305). */
-function coinbaseVinJson({ scriptsig, sequence }: { scriptsig: string; sequence: number }): EsploraVin {
+/** A coinbase's input, as qbit-electrs serves it, with its witness when it has one (src/rest.rs:260-305, :266-270). */
+function coinbaseVinJson({ scriptsig, witness, sequence }: CoinbaseInput): EsploraVin {
   return {
     txid: NULL_TXID,
     vout: NULL_INDEX,
     prevout: null,
     scriptsig,
     scriptsig_asm: '',
+    ...(witness.length > 0 ? { witness } : {}),
     is_coinbase: true,
     sequence,
   }
@@ -1401,8 +1494,8 @@ function broadcast(
  * confirmed transactions, which never join the UTXO set (src/coins.cpp:74).
  * The mempool's view of the coins adds every output of a mempool
  * transaction, an unspendable one included (src/txmempool.cpp:1020-1029,
- * src/validation.cpp:893-916); Core refuses a spend of that later, in checks
- * the mock does not model, such as the script check.
+ * src/validation.cpp:893-916); Core refuses a spend of that only at its
+ * script check, step 9.
  *
  * A refusal carries the code `sendrawtransaction` returns for it: a mempool
  * rejection is `TransactionError::MISSING_INPUTS` for missing inputs and
@@ -1454,7 +1547,23 @@ function broadcast(
  *    (src/policy/rbf.cpp:73, :110, :150, :169, :178). The mock never
  *    replaces, and its message stops before the numbers, which it does not
  *    compute.
- * 9. -25 for a fee above `maxfeerate` times the size
+ * 9. -26 `mempool-script-verify-flag-failed` for a spend of an unspendable
+ *    output, a coin only when a mempool transaction holds it. Core runs the
+ *    scripts after `ReplacementChecks` (src/validation.cpp:1502-1512), with
+ *    the standard flags, so `CheckInputScripts` names the failure
+ *    `mempool-script-verify-flag-failed (<ScriptErrorString>)`
+ *    (:1291-1302, :2235-2258, :2451-2454, src/policy/policy.h:123-139), and
+ *    the debug message is `input <n> of <txid> (wtxid <wtxid>), spending
+ *    <txid>:<n>` (src/validation.cpp:2156). Such an output's script fails
+ *    every spend, before it runs when it is over MAX_SCRIPT_SIZE
+ *    (`Script is too big`, src/script/interpreter.cpp:516-517), else at its
+ *    `OP_RETURN` (`OP_RETURN was encountered`, :789-791;
+ *    src/script/script_error.cpp:28-29, :48-49). Core stops at the first input
+ *    whose scripts fail; the mock runs no other script, so it names the first
+ *    input that spends such an output, which is Core's answer when the
+ *    scripts of the inputs before it pass and its own scriptSig does
+ *    (src/script/interpreter.cpp:2433-2445).
+ * 10. -25 for a fee above `maxfeerate` times the size
  *    (src/node/transaction.cpp:72-81), which `BroadcastTransaction` checks
  *    once the mempool would take the transaction. qbit-electrs names no
  *    `maxfeerate`, so it is 0.1 coin per kvB (src/node/transaction.h:27,
@@ -1475,7 +1584,8 @@ function broadcast(
  * standard inputs and witnesses, the sigop limit, dust, the minimum relay
  * feerate and the mempool's minimum fee (:944-1005, :746); mempool chain
  * limits (`too-long-mempool-chain`, :1049-1086) and TRUC rules (:1091-1114);
- * scripts and signatures (:1291, :1314); and a full mempool (:1534).
+ * scripts and signatures other than step 9's (:1291, :1314); and a full
+ * mempool (:1534).
  */
 function nodeVerdict(state: State, parsed: ParsedTx): Response | undefined {
   const reject = (reason: string): Response => rpcError(-26, reason)
@@ -1564,6 +1674,15 @@ function nodeVerdict(state: State, parsed: ParsedTx): Response | undefined {
       return reject(`bad-txns-spends-conflicting-tx, ${parsed.txid} spends conflicting transaction ${spendsConflict}`)
     }
     return reject(`insufficient fee, rejecting replacement ${parsed.txid}`)
+  }
+
+  for (const [n, input] of parsed.vin.entries()) {
+    const { scriptPubKey } = state.txs.get(input.txid)!.vout[input.vout]!
+    if (!isUnspendable({ scriptPubKey })) continue
+    const error = scriptPubKey.length > 2 * MAX_SCRIPT_SIZE ? 'Script is too big' : 'OP_RETURN was encountered'
+    return reject(
+      `mempool-script-verify-flag-failed (${error}), input ${n} of ${parsed.txid} (wtxid ${parsed.wtxid}), spending ${input.txid}:${input.vout}`
+    )
   }
 
   if (valueIn - valueOut > MAX_RAW_TX_FEE_PER_BYTE * BigInt(parsed.size)) {
@@ -1698,6 +1817,11 @@ function connectionReset(): TypeError {
 
 interface ParsedTx {
   txid: string
+  /**
+   * The double SHA-256 of the encoding with the witness, or the txid without
+   * a witness (src/primitives/transaction.cpp:74-93).
+   */
+  wtxid: string
   version: number
   locktime: number
   vin: { txid: string; vout: number; scriptsig: string; witness: string[]; sequence: number }[]
@@ -1743,17 +1867,29 @@ const OP_PUSHDATA4 = 0x4e
  */
 function parseRawTx(hex: string): ParsedTx | undefined {
   if (hex === '' || !HEX_PATTERN.test(hex)) return undefined
+  const lower = hex.toLowerCase()
+  // HEX_PATTERN leaves only 0-9 and, lowercased, a-f.
+  const digit = (at: number): number => {
+    const code = lower.charCodeAt(at)
+    return code <= 0x39 ? code - 0x30 : code - 0x57
+  }
   const bytes = new Uint8Array(hex.length / 2)
-  for (let i = 0; i < bytes.length; i += 1) bytes[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16)
-  const extended = decodeTx(bytes, true)
+  for (let i = 0; i < bytes.length; i += 1) bytes[i] = (digit(2 * i) << 4) | digit(2 * i + 1)
+  const extended = decodeTx(bytes, lower, true)
   if (extended !== undefined && scriptsSane(extended)) return extended
-  const legacy = decodeTx(bytes, false)
+  // Only an input count of 0 is read as the witness marker, so without one both decodings read the same.
+  if (bytes[4] !== 0) return extended
+  const legacy = decodeTx(bytes, lower, false)
   if (legacy !== undefined && scriptsSane(legacy)) return legacy
   return extended ?? legacy
 }
 
-/** `UnserializeTransaction` with or without the witness serialization, or undefined where it throws or leaves bytes over. */
-function decodeTx(bytes: Uint8Array, allowWitness: boolean): ParsedTx | undefined {
+/**
+ * `UnserializeTransaction` with or without the witness serialization, or
+ * undefined where it throws or leaves bytes over. `hex` is `bytes` in
+ * lowercase hex, which scripts and witness items are sliced from.
+ */
+function decodeTx(bytes: Uint8Array, hex: string, allowWitness: boolean): ParsedTx | undefined {
   let offset = 0
   const take = (length: number): Uint8Array => {
     if (length > bytes.length - offset) throw new RangeError('truncated')
@@ -1775,7 +1911,11 @@ function decodeTx(bytes: Uint8Array, allowWitness: boolean): ParsedTx | undefine
     if (value < minimum || value > COMPACT_SIZE_MAX) throw new RangeError('bad CompactSize')
     return value
   }
-  const varBytes = (): string => toHex(take(compactSize()))
+  const varBytes = (): string => {
+    const length = compactSize()
+    take(length)
+    return hex.slice(2 * (offset - length), 2 * offset)
+  }
   const inputs = () =>
     Array.from({ length: compactSize() }, () => {
       const txid = toHex(take(32).slice().reverse())
@@ -1814,8 +1954,10 @@ function decodeTx(bytes: Uint8Array, allowWitness: boolean): ParsedTx | undefine
     stripped.set(bytes.subarray(0, 4))
     stripped.set(bytes.subarray(bodyStart, bodyEnd), 4)
     stripped.set(bytes.subarray(-4), stripped.length - 4)
+    const txid = toHex(sha256(sha256(stripped)).reverse())
     return {
-      txid: toHex(sha256(sha256(stripped)).reverse()),
+      txid,
+      wtxid: vin.some(input => input.witness.length > 0) ? toHex(sha256(sha256(bytes)).reverse()) : txid,
       version,
       locktime,
       vin,

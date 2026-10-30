@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 
+import { sha256 } from '@noble/hashes/sha2'
 import { describe, expect, it } from 'vitest'
 
 import { EsploraClient, MempoolQbitClient, QbitApiError, txidFromRawTx } from '../src/index'
@@ -71,6 +72,23 @@ function legacyTx(
     ...outputs.map(({ value, script = '51' }) => `${uint(value, 8)}${varBytes(script)}`),
     uint(0, 4),
   ].join('')
+}
+
+/**
+ * `hex`, a legacy transaction from {@link legacyTx}, in the witness
+ * serialization with each input's `witnesses` entry as its stack, of items
+ * under 253 bytes.
+ */
+function withWitness(hex: string, witnesses: string[][]): string {
+  const varBytes = (item: string): string => `${(item.length / 2).toString(16).padStart(2, '0')}${item}`
+  const stacks = witnesses.map(stack => `${stack.length.toString(16).padStart(2, '0')}${stack.map(varBytes).join('')}`)
+  return `${hex.slice(0, 8)}0001${hex.slice(8, -8)}${stacks.join('')}${hex.slice(-8)}`
+}
+
+/** A txid or wtxid: the double SHA-256 of the bytes, byte-reversed. */
+function hashId(hex: string): string {
+  const bytes = Uint8Array.from(hex.match(/../g)!, byte => parseInt(byte, 16))
+  return Array.from(sha256(sha256(bytes)).reverse(), byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
 /** A submission's raw reply, as `[status, body]`, for a verdict the client resolves either way. */
@@ -249,6 +267,44 @@ describe('createMockEsplora fixture views', () => {
 
     await expect(esplora().client.getFeeEstimates()).resolves.toEqual({ '1': 20, '3': 10, '6': 5, '144': 1 })
     await expect(esplora().client.getTipHeight()).resolves.toBe(0)
+  })
+
+  it("leaves out of the address views the outputs qbit-electrs's default configuration does not index", async () => {
+    // qbit-electrs indexes an output only when rust-bitcoin's is_provably_unspendable is false, unless it runs with
+    // --index-unspendables (src/new_index/mempool.rs:556, src/new_index/schema.rs:1779, src/util/transaction.rs:71-73).
+    const MIXED = txid(0x0d, 0)
+    const { client } = esplora({
+      txs: [
+        {
+          txid: MIXED,
+          vout: [
+            { address: ADDR, value: 1_000 },
+            { address: ADDR, value: 2_000, scriptPubKey: '6a0474657374' },
+            // A legacy script treats OP_RESERVED as OP_RETURN, so rust-bitcoin takes it as provably unspendable.
+            { address: ADDR, value: 3_000, scriptPubKey: '50' },
+            // qbit Core never makes a script over 10,000 bytes a coin, but rust-bitcoin does not look at the size.
+            { address: ADDR, value: 4_000, scriptPubKey: '51'.repeat(10_001) },
+          ],
+          block: { height: 3 },
+        },
+        { txid: txid(0x0d, 1), vout: [{ address: ADDR, value: 5_000, scriptPubKey: '6a' }], block: { height: 4 } },
+        { txid: txid(0x0d, 2), vout: [{ address: ADDR, value: 6_000, scriptPubKey: '6a' }] },
+      ],
+    })
+
+    await expect(client.getAddressStats(ADDR)).resolves.toEqual({
+      address: ADDR,
+      chain_stats: { funded_txo_count: 2, funded_txo_sum: 5_000, spent_txo_count: 0, spent_txo_sum: 0, tx_count: 1 },
+      mempool_stats: { funded_txo_count: 0, funded_txo_sum: 0, spent_txo_count: 0, spent_txo_sum: 0, tx_count: 0 },
+    })
+    const status = { confirmed: true, block_height: 3, block_hash: '03'.padStart(64, '0'), block_time: 1_700_001_800 }
+    await expect(client.getAddressUtxos(ADDR)).resolves.toEqual([
+      { txid: MIXED, vout: 0, value: 1_000, status },
+      { txid: MIXED, vout: 3, value: 4_000, status },
+    ])
+    const { confirmed, mempool } = await client.getAddressHistory(ADDR)
+    expect(confirmed.map(tx => tx.txid)).toEqual([MIXED])
+    expect(mempool).toEqual([])
   })
 
   it('answers an address the fixture does not name with empty views', async () => {
@@ -486,12 +542,26 @@ describe('createMockEsplora broadcast', () => {
     }
   )
 
-  it('takes an accepted outcome even for a transaction already in a block', async () => {
-    const { client } = esplora({
-      txs: [{ hex: LEGACY_TX_HEX, vout: [{ value: 5_000_000_000 }], block: { height: 0 } }],
+  it('answers an accepted outcome for a transaction already in a block with its txid, and leaves it confirmed', async () => {
+    const { mock, client } = esplora({
+      txs: [{ hex: LEGACY_TX_HEX, vout: [{ address: ADDR, value: 5_000_000_000 }], block: { height: 0 } }],
       faults: [{ route: 'POST /tx', kind: 'broadcast', outcome: 'accepted' }],
     })
+    const genesis = { confirmed: true, block_height: 0, block_hash: '00'.repeat(32), block_time: 1_700_000_000 }
     await expect(client.broadcastTx(LEGACY_TX_HEX)).resolves.toBe(LEGACY_TXID)
+
+    // qbit Core never takes a transaction it has in a block into its mempool, and neither does the mock.
+    await expect(client.getTxStatus(LEGACY_TXID)).resolves.toEqual(genesis)
+    await expect(client.getAddressBalance(ADDR)).resolves.toMatchObject({
+      confirmedSats: 5_000_000_000,
+      mempoolSats: 0,
+    })
+    await expect(client.getAddressHistory(ADDR)).resolves.toMatchObject({
+      confirmed: [{ txid: LEGACY_TXID }],
+      mempool: [],
+    })
+    mock.mine()
+    await expect(client.getTxStatus(LEGACY_TXID)).resolves.toEqual(genesis)
   })
 
   it.each([
@@ -574,29 +644,84 @@ describe('createMockEsplora node verdicts', () => {
     await expect(client.getTxStatus(id)).resolves.toMatchObject({ confirmed: true, block_height: 7 })
   })
 
-  it("counts every output of a mempool transaction as a coin, an unspendable one included, as Core's mempool view does", async () => {
-    // CCoinsViewMemPool hands out any output of a mempool transaction (src/txmempool.cpp:1020-1029); Core refuses a
-    // spend of an OP_RETURN output only at the script check, which the mock does not run.
-    const DATA = txid(0xf4, 0)
-    const { mock, client } = esplora({
-      txs: [...txs, { txid: DATA, vin: [{ txid: FUND, vout: 0 }], vout: [{ value: 0, scriptPubKey: '6a0474657374' }] }],
+  describe("a spend of a mempool transaction's unspendable output", () => {
+    // CCoinsViewMemPool hands out every output of a mempool transaction (src/txmempool.cpp:1020-1029), so the spend
+    // passes the missing-inputs check, and Core refuses it at its script check (src/validation.cpp:1291-1302, :2156,
+    // :2255), after ReplacementChecks and before the maxfeerate check.
+    const COINS = txid(0xf4, 0)
+    const DATA = txid(0xf5, 0)
+    const OVERSIZED = '51'.repeat(10_001)
+    const funding: MockTx[] = [
+      { txid: COINS, vout: [{ value: 100_000_000 }], block: { height: 5 } },
+      {
+        txid: DATA,
+        vin: [{ txid: COINS, vout: 0 }],
+        vout: [
+          { value: 1_000_000, scriptPubKey: '6a0474657374' },
+          { value: 98_000_000 },
+          { value: 1, scriptPubKey: OVERSIZED },
+        ],
+      },
+    ]
+    const scriptFailure = (hex: string, error: string, n: number, vout: number, wtxid = txidFromRawTx(hex)) =>
+      rpcError(
+        -26,
+        `mempool-script-verify-flag-failed (${error}), input ${n} of ${txidFromRawTx(hex)} (wtxid ${wtxid}), spending ${DATA}:${vout}`
+      )
+
+    it('refuses it with the script error of an OP_RETURN output, and never takes it', async () => {
+      const { mock, client } = esplora({ txs: funding })
+      const spend = legacyTx([{ txid: DATA, vout: 0 }], [{ value: 990_000 }])
+      expect(await submit(mock, spend)).toEqual([400, scriptFailure(spend, 'OP_RETURN was encountered', 0, 0)])
+      await expect(rejection(client.broadcastTx(spend))).resolves.toMatchObject({ kind: 'http', status: 400 })
+      expect(mock.hasTx(txidFromRawTx(spend))).toBe(false)
+
+      // Once a block holds DATA, its OP_RETURN output never enters the UTXO set (src/coins.cpp:74).
+      mock.mine()
+      expect(await submit(mock, spend)).toEqual([400, MISSING_INPUTS])
+      expect(await submit(mock, legacyTx([{ txid: DATA, vout: 3 }], [{ value: 0 }]))).toEqual([400, MISSING_INPUTS])
     })
-    expect(await submit(mock, legacyTx([{ txid: DATA, vout: 1 }], [{ value: 0 }]))).toEqual([400, MISSING_INPUTS])
-    const spend = legacyTx([{ txid: DATA, vout: 0 }], [{ value: 0 }])
-    await expect(client.broadcastTx(spend)).resolves.toBe(txidFromRawTx(spend))
-    // Once a block holds it, the OP_RETURN output never enters the UTXO set (src/coins.cpp:74).
-    const { mock: mined } = esplora({
-      txs: [
-        ...txs,
-        {
-          txid: DATA,
-          vin: [{ txid: FUND, vout: 0 }],
-          vout: [{ value: 0, scriptPubKey: '6a0474657374' }],
-          block: { height: 6 },
-        },
-      ],
+
+    it('names the input that spends it, and the wtxid, for a script over 10,000 bytes', async () => {
+      const { mock } = esplora({ txs: funding })
+      const unsigned = legacyTx(
+        [
+          { txid: DATA, vout: 1 },
+          { txid: DATA, vout: 2 },
+        ],
+        [{ value: 97_990_000 }]
+      )
+      const spend = withWitness(unsigned, [['aa'.repeat(64)], []])
+      const wtxid = hashId(spend)
+      expect(wtxid).not.toBe(txidFromRawTx(spend))
+      expect(await submit(mock, spend)).toEqual([400, scriptFailure(spend, 'Script is too big', 1, 2, wtxid)])
     })
-    expect(await submit(mined, spend)).toEqual([400, MISSING_INPUTS])
+
+    it('refuses it after the checks Core runs first, and before the maxfeerate check', async () => {
+      const { mock } = esplora({
+        txs: funding,
+        faults: [{ route: 'POST /tx', kind: 'broadcast', outcome: 'accepted' }],
+      })
+      // An accepted fault forces a first spend in; a second conflicts with it.
+      const forced = legacyTx([{ txid: DATA, vout: 0 }], [{ value: 990_000 }])
+      expect(await submit(mock, forced)).toEqual([200, txidFromRawTx(forced)])
+      const conflicting = legacyTx([{ txid: DATA, vout: 0 }], [{ value: 980_000 }])
+      expect(await submit(mock, conflicting)).toEqual([
+        400,
+        rpcError(-26, `insufficient fee, rejecting replacement ${txidFromRawTx(conflicting)}`),
+      ])
+
+      const { mock: fresh } = esplora({ txs: funding })
+      const overspent = legacyTx([{ txid: DATA, vout: 0 }], [{ value: 1_000_001 }])
+      expect(await submit(fresh, overspent)).toEqual([
+        400,
+        rpcError(-26, 'bad-txns-in-belowout, value in (0.01) < value out (0.01000001)'),
+      ])
+      // A fee of 1,000,000 sats is above the 610,000 the maxfeerate allows these 61 bytes.
+      const overpaid = legacyTx([{ txid: DATA, vout: 0 }], [{ value: 0 }])
+      expect(overpaid.length / 2).toBe(61)
+      expect(await submit(fresh, overpaid)).toEqual([400, scriptFailure(overpaid, 'OP_RETURN was encountered', 0, 0)])
+    })
   })
 
   it('refuses a payment rebuilt with the same input after unknown_outcome, and takes the same hex again', async () => {
@@ -689,7 +814,10 @@ describe('createMockEsplora node verdicts', () => {
   )
 })
 
-describe("createMockEsplora qbit Core's transaction checks", () => {
+// A case builds and decodes a transaction of over 2 MB, which can take seconds on a shared CI runner.
+const SCALE_TIMEOUT_MS = 60_000
+
+describe("createMockEsplora qbit Core's transaction checks", { timeout: SCALE_TIMEOUT_MS }, () => {
   // qbit Core 7ebcddb: CheckTransaction (src/consensus/tx_check.cpp), then CheckTxInputs
   // (src/consensus/tx_verify.cpp), as sendrawtransaction reaches them (src/validation.cpp:839-942).
   const FUND = txid(0xd1, 0)
@@ -1567,6 +1695,39 @@ describe('createMockEsplora coinbase fixtures', () => {
       /is a coinbase, but its hex is not a coinbase transaction/,
     ],
     [
+      'coinbase: false with the hex of a coinbase transaction',
+      {
+        backend: 'esplora',
+        txs: [{ hex: LEGACY_TX_HEX, coinbase: false, vout: [{ value: 1 }], block: { height: 0 } }],
+      },
+      /coinbase is false, but its hex is a coinbase transaction/,
+    ],
+    [
+      'the hex of a coinbase transaction in the mempool',
+      { backend: 'esplora', txs: [{ hex: LEGACY_TX_HEX, vout: [{ value: 1 }] }] },
+      /is a coinbase, so it needs a block and no vin/,
+    ],
+    [
+      'two coinbases in one block',
+      {
+        backend: 'esplora',
+        txs: [
+          tx({ coinbase: true, block: { height: 10 } }),
+          tx({ txid: txid(2, 0), block: { height: 9 } }),
+          { hex: LEGACY_TX_HEX, vout: [{ value: 1 }], block: { height: 10 } },
+        ],
+      },
+      /is a second coinbase in block 10, after 01/,
+    ],
+    [
+      'a coinbase listed after another transaction of its block',
+      {
+        backend: 'esplora',
+        txs: [tx({ block: { height: 10 } }), tx({ txid: txid(2, 0), coinbase: true, block: { height: 10 } })],
+      },
+      /is a coinbase, so it must be listed before 01.*, another transaction of block 10/,
+    ],
+    [
       'a coinbase with a fee',
       { backend: 'esplora', txs: [tx({ coinbase: true, fee: 1, block: { height: 1 } })] },
       /is a coinbase, so its fee is 0/,
@@ -1599,13 +1760,24 @@ describe('createMockEsplora coinbase fixtures', () => {
     expect(() => createMockEsplora(options as MockEsploraOptions)).toThrow(message)
   })
 
-  it("serves a coinbase declared with its hex with that hex's coinbase input", async () => {
-    const { client } = esplora({
-      txs: [{ hex: LEGACY_TX_HEX, coinbase: true, vout: [{ value: 5_000_000_000 }], block: { height: 0 } }],
+  it.each([
+    ['declared with coinbase: true', true],
+    ['whose hex alone makes it one', undefined],
+  ])("serves a coinbase %s with its hex's coinbase input, and applies maturity to its outputs", async (_case, flag) => {
+    const { mock, client } = esplora({
+      txs: [
+        {
+          hex: LEGACY_TX_HEX,
+          ...(flag === undefined ? {} : { coinbase: flag }),
+          vout: [{ value: 5_000_000_000 }],
+          block: { height: 0 },
+        },
+      ],
     })
     const scriptsig = LEGACY_TX_HEX.slice(84, 84 + 2 * 0x4d)
     expect(scriptsig).toMatch(/^04ffff001d01/)
-    await expect(client.getTx(LEGACY_TXID)).resolves.toMatchObject({
+    const tx = await client.getTx(LEGACY_TXID)
+    expect(tx).toMatchObject({
       fee: 0,
       vin: [
         {
@@ -1618,14 +1790,49 @@ describe('createMockEsplora coinbase fixtures', () => {
         },
       ],
     })
+    // A legacy coinbase has no witness, which qbit-electrs then leaves out (src/rest.rs:266-270).
+    expect(tx.vin[0]).not.toHaveProperty('witness')
+    expect(await submit(mock, legacyTx([{ txid: LEGACY_TXID, vout: 0 }], [{ value: 4_999_000_000 }]))).toEqual([
+      400,
+      rpcError(-26, 'bad-txns-premature-spend-of-coinbase, tried to spend coinbase at depth 1'),
+    ])
+  })
+
+  it("serves a coinbase input's witness from the hex, as qbit-electrs does", async () => {
+    const legacy = legacyTx(
+      [{ txid: '00'.repeat(32), vout: 0xffff_ffff, scriptSig: '0151' }],
+      [{ value: 5_000_000_000 }]
+    )
+    // A segwit coinbase's witness: its 32-byte reserved value.
+    const hex = withWitness(legacy, [['00'.repeat(32)]])
+    const { client } = esplora({ txs: [{ hex, vout: [{ value: 5_000_000_000 }], block: { height: 1 } }] })
+    await expect(client.getTx(txidFromRawTx(hex))).resolves.toMatchObject({
+      vin: [{ scriptsig: '0151', witness: ['00'.repeat(32)], is_coinbase: true }],
+    })
+    await expect(client.getTxHex(txidFromRawTx(hex))).resolves.toBe(hex)
+  })
+
+  it('places a coinbase first in its block, so the chain history lists it after the rest of the block', async () => {
+    const { client } = esplora({
+      txs: [
+        tx({ txid: txid(0xcb, 0), coinbase: true, block: { height: 10 } }),
+        tx({ txid: txid(2, 0), block: { height: 10 } }),
+        tx({ txid: txid(3, 0), block: { height: 9 } }),
+        tx({ txid: txid(4, 0), block: { height: 10 } }),
+      ],
+    })
+    // Newest first: by height, then by position in the block, last first (qbit-electrs src/rest.rs:1165-1171).
+    const { confirmed } = await client.getAddressHistory(ADDR)
+    expect(confirmed.map(row => row.txid)).toEqual([txid(4, 0), txid(2, 0), txid(0xcb, 0), txid(3, 0)])
   })
 
   it('takes spends of a coinbase output exactly 1,000 blocks deep, in a block and in the mempool', () => {
+    // One coinbase per block: at heights 10 and 11.
     const coinbase = (n: number): MockTx => ({
       txid: txid(0xcb, n),
       coinbase: true,
       vout: [{ value: 5_000_000_000 }],
-      block: { height: 10 },
+      block: { height: 10 + n },
       fee: 0,
     })
     const spend = (n: number, block?: MockTx['block']): MockTx => ({
@@ -1637,12 +1844,9 @@ describe('createMockEsplora coinbase fixtures', () => {
     expect(() =>
       createMockEsplora({
         backend: 'esplora',
-        txs: [coinbase(0), spend(0, { height: 1_010 }), coinbase(1), spend(1)],
+        txs: [coinbase(0), coinbase(1), spend(0, { height: 1_010 }), spend(1)],
         tip: { height: 1_010 },
       })
-    ).not.toThrow()
-    expect(() =>
-      createMockEsplora({ backend: 'esplora', txs: [coinbase(1), spend(1)], tip: { height: 1_009 } })
     ).not.toThrow()
   })
 })

@@ -49,23 +49,28 @@ breaking changes bump MINOR.
   `Retry-After`, a refused connection, a stalled body, and a submission that is
   accepted, rejected with a node code, or accepted with its reply lost. Without
   a fault, a submission gets qbit Core v1.0.0's `sendrawtransaction` verdict,
-  with Core's code and message, from the outputs the fixture and earlier
-  submissions create and spend, in Core's order: `-22` for hex Core cannot
-  decode, `-25` for an unspendable output with a value (`maxburnamount`),
-  `-27` for a transaction in a block while one of its outputs is unspent,
-  `-26` for a broken `CheckTransaction` rule, `-25` for a spend of an output
-  that is not a coin, `-26` for a broken `CheckTxInputs` rule (an immature
-  coinbase output, input values out of range, outputs worth more than the
-  inputs), `-26` for a conflict with a mempool transaction, which the mock
-  never takes as a replacement, and `-25` for a fee above the default
-  `maxfeerate`. It does not model relay policy or standardness, fee floors,
-  scripts or signatures, lock times or sequence locks, qbit's P2MR-only
-  output rule, mempool limits or replacement. A submission it takes joins the
-  address views, in the mempool until `mine()` confirms it; they follow
-  qbit-electrs, which lists the mempool oldest first. Its options are
-  validated up front: `null`, a `Retry-After` that `Headers` refuses, and a
-  fixture qbit Core could not hold, such as a spend of an unspendable or
-  immature coinbase output, are refused, not taken. It ships in both builds
+  with Core's code and message (for a conflict, Core's reason and the start of
+  its message, without the feerates or fees Core compared), from the outputs
+  the fixture and earlier submissions create and spend, in Core's order: `-22`
+  for hex Core cannot decode, `-25` for an unspendable output with a value
+  (`maxburnamount`), `-27` for a transaction in a block while one of its
+  outputs is unspent, `-26` for a broken `CheckTransaction` rule, `-25` for a
+  spend of an output that is not a coin, `-26` for a broken `CheckTxInputs`
+  rule (an immature coinbase output, input values out of range, outputs worth
+  more than the inputs), `-26` for a conflict with a mempool transaction,
+  which the mock never takes as a replacement, `-26` for a spend of a mempool
+  transaction's unspendable output, which Core's script check refuses, and
+  `-25` for a fee above the default `maxfeerate`. It does not model relay
+  policy or standardness, fee floors, other scripts or signatures, lock times
+  or sequence locks, qbit's P2MR-only output rule, mempool limits or
+  replacement. A submission it takes joins the address views, in the mempool
+  until `mine()` confirms it; they follow qbit-electrs, which lists the
+  mempool oldest first and by default indexes no provably unspendable output,
+  such as an `OP_RETURN` one. A coinbase fixture, declared or found from its
+  hex, is served with its coinbase input. Its options are validated up front:
+  `null`, a `Retry-After` that `Headers` refuses, and a fixture qbit Core could
+  not hold, such as a spend of an unspendable or immature coinbase output or a
+  block with two coinbases, are refused, not taken. It ships in both builds
   with type declarations, and imports nothing from the client at runtime. A
   `testing/package.json` shim points resolvers that ignore `exports` at it:
   TypeScript's `moduleResolution: "node10"` through `types`, and Jest before
