@@ -4,14 +4,17 @@ import { readFileSync } from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { EsploraClient, MempoolQbitClient, QbitApiError, type RequestOptions } from '../src/index'
-import { createMockEsplora, type MockBackend, type MockFault } from '../src/testing'
+import { createMockEsplora, type MockBackend, type MockEsplora, type MockFault } from '../src/testing'
 
 // Tests whose backend just has to answer use the testing kit, wrapping its
-// fetchFn to abort or delay at a given request. `makeFetch` stays for what the
-// kit does not model: a request with no reply until it is aborted, a fetch or a
-// body that ignores its signal (the kit's stalled body errors on abort, as
-// undici's does), a body whose chunks or cancels the test controls, and checks
-// on the RequestInit the client passes.
+// fetchFn to abort or delay at a given request, or to hide each request's
+// signal from it: the kit's fetchFn rejects a request whose signal has
+// aborted, as fetch does, so a test of the client's own abort checks answers
+// regardless (`abortingAt`). `makeFetch` stays for what the kit does not
+// model: a request with no reply until it is aborted, or ever, a body that
+// ignores its signal (the kit's stalled body errors on abort, as undici's
+// does), a body whose chunks or cancels the test controls, and checks on the
+// RequestInit the client passes.
 
 interface MockReply {
   status?: number
@@ -135,6 +138,18 @@ function longHistory(backend: MockBackend, faults: MockFault[] = []) {
   })
 }
 
+/**
+ * `mock`'s fetchFn, ignoring each request's signal, that aborts `controller`
+ * as request `index` (from 0) arrives and answers it anyway, so that only the
+ * client's own checks of the signal can stop a scan.
+ */
+function abortingAt(mock: MockEsplora, index: number, controller: AbortController): typeof fetch {
+  return (input, init) => {
+    if (mock.requests.length === index) controller.abort()
+    return mock.fetchFn(input, { ...init, signal: null })
+  }
+}
+
 /** `mock`'s fetchFn, with every reply arriving `ms` after its request. */
 function delayed(mock: { fetchFn: typeof fetch }, ms: number): typeof fetch {
   return (input, init) => {
@@ -180,11 +195,7 @@ describe('caller cancellation (AbortSignal)', () => {
   it('issues no further page fetches once aborted between pages', async () => {
     const controller = new AbortController()
     const mock = longHistory('esplora')
-    const fetchFn: typeof fetch = (input, init) => {
-      if (mock.requests.length === 2) controller.abort()
-      return mock.fetchFn(input, init)
-    }
-    const client = new EsploraClient({ baseUrl: BASE, fetchFn })
+    const client = new EsploraClient({ baseUrl: BASE, fetchFn: abortingAt(mock, 2, controller) })
 
     await expect(client.getAddressHistory(ADDR, { signal: controller.signal })).rejects.toMatchObject({
       kind: 'aborted',
@@ -196,11 +207,7 @@ describe('caller cancellation (AbortSignal)', () => {
   it('stops a mempool-qbit combined-history scan mid-pagination', async () => {
     const controller = new AbortController()
     const mock = longHistory('mempool-qbit')
-    const fetchFn: typeof fetch = (input, init) => {
-      if (mock.requests.length === 1) controller.abort()
-      return mock.fetchFn(input, init)
-    }
-    const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn })
+    const client = new MempoolQbitClient({ baseUrl: BASE, fetchFn: abortingAt(mock, 1, controller) })
 
     await expect(client.getAddressHistory(ADDR, { signal: controller.signal })).rejects.toMatchObject({
       kind: 'aborted',

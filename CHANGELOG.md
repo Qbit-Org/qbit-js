@@ -66,8 +66,10 @@ breaking changes bump MINOR.
   replacement. A submission it takes joins the address views, in the mempool
   until `mine()` confirms it; they follow qbit-electrs, which lists the
   mempool oldest first and by default indexes no provably unspendable output,
-  such as an `OP_RETURN` one. A coinbase fixture, declared or found from its
-  hex, is served with its coinbase input. Its options are validated up front:
+  such as an `OP_RETURN` one, and matches a qbit bech32 address in lowercase
+  or uppercase alike, refusing one in mixed case. A coinbase fixture, declared
+  or found from its hex, is served with its coinbase input. Its options are
+  validated up front:
   `null`, a `Retry-After` that `Headers` refuses, and a fixture qbit Core could
   not hold, such as a spend of an unspendable or immature coinbase output or a
   block with two coinbases, are refused, not taken. It ships in both builds

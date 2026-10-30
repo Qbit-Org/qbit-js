@@ -79,7 +79,10 @@ export interface MockOutput {
    * The address the output pays to. Without one, the output counts for no
    * address, and neither does one whose `scriptPubKey` qbit-electrs takes as
    * provably unspendable, such as an `OP_RETURN` one: by default it indexes
-   * no such output.
+   * no such output. A qbit bech32 address (`qb1`, `tq1` or `qbrt1`) may be
+   * given in lowercase or uppercase, not mixed: a query in either case finds
+   * it, and it is served lowercase, as on qbit-electrs (see
+   * {@link createMockEsplora}).
    */
   address?: string
   /** Value in satoshis, a non-negative safe integer. */
@@ -98,8 +101,9 @@ export interface MockInput {
   /** Index of that output. */
   vout: number
   /**
-   * The spent output's address, for an output outside the fixture. An
-   * output in the fixture brings its own; if given, it must match.
+   * The spent output's address, for an output outside the fixture, given as
+   * {@link MockOutput.address} is. An output in the fixture brings its own; if
+   * given, it must match, as an address query would.
    */
   address?: string
   /**
@@ -267,17 +271,42 @@ export interface MockStallFault {
  *
  * Hex the node cannot decode is never taken: `accepted` and `lost-reply` then
  * answer, or lose, RPC error `-22`.
+ *
+ * `outcome` discriminates: a `rejected` fault needs its `code`, and the others
+ * take no `code` or `message`.
  */
-export interface MockBroadcastFault {
+export type MockBroadcastFault = MockBroadcastAcceptedFault | MockBroadcastRejectedFault
+
+/**
+ * A {@link MockBroadcastFault} whose node takes the transaction: `accepted`,
+ * or `lost-reply`, whose reply is then lost.
+ */
+export interface MockBroadcastAcceptedFault {
   /** The submission route it answers. */
   route: 'POST /tx' | 'POST /tx/push'
   /** Discriminant. */
   kind: 'broadcast'
   /** The node's verdict. */
-  outcome: 'accepted' | 'rejected' | 'lost-reply'
-  /** RPC error code for `rejected`, a negative integer such as `-26`; only for `rejected`. */
-  code?: number
-  /** RPC error message for `rejected` (default `'transaction rejected'`); only for `rejected`. */
+  outcome: 'accepted' | 'lost-reply'
+  /** None: only a `rejected` outcome has an RPC error code. */
+  code?: never
+  /** None: only a `rejected` outcome has an RPC error message. */
+  message?: never
+  /** How many matching requests it answers (default 1; `Infinity` for every one). */
+  times?: number
+}
+
+/** A {@link MockBroadcastFault} whose node refuses the transaction with an RPC error. */
+export interface MockBroadcastRejectedFault {
+  /** The submission route it answers. */
+  route: 'POST /tx' | 'POST /tx/push'
+  /** Discriminant. */
+  kind: 'broadcast'
+  /** The node's verdict. */
+  outcome: 'rejected'
+  /** RPC error code, a negative integer such as `-26`. */
+  code: number
+  /** RPC error message (default `'transaction rejected'`). */
   message?: string
   /** How many matching requests it answers (default 1; `Infinity` for every one). */
   times?: number
@@ -353,7 +382,9 @@ export interface MockEsplora {
   hasTx(txid: string): boolean
   /**
    * Mine a block on the tip: every mempool transaction, from the fixture or a
-   * submission, confirms in it, and the tip moves to it.
+   * submission, confirms in it, and the tip moves to it. The block holds them
+   * in arrival order, except that each follows the transactions it spends
+   * from, as in a block qbit Core mines.
    *
    * @returns The new block.
    */
@@ -372,7 +403,12 @@ export interface MockEsplora {
  * It serves every route the two clients call, from one fixture and the
  * submissions the node takes, so the views agree: address stats, unspent
  * outputs and history pages are derived from them as qbit-electrs derives
- * them, as are `GET /tx/:txid`, its `/hex` and its `/status`.
+ * them, as are `GET /tx/:txid`, its `/hex` and its `/status`. It matches an
+ * address as qbit-electrs does, by the script the address stands for: a qbit
+ * bech32 address is the same in lowercase and in uppercase and is served in
+ * lowercase, one in mixed case is refused (a `400` reply, or a `TypeError` in
+ * the fixture), and any other address, such as a base58 one, is matched
+ * exactly.
  *
  * Without a fault, the node judges a submission as qbit Core v1.0.0's
  * `sendrawtransaction` does, from the outputs the fixture and the submissions
@@ -485,6 +521,12 @@ interface TxRecord {
   /** A coinbase has no inputs in `vin`; its coinbase input is `coinbaseInput`. */
   coinbase: boolean
   coinbaseInput: CoinbaseInput | undefined
+  /**
+   * Whether every output it spends was known when it arrived, which decides
+   * whether qbit-electrs indexes it while it is in the mempool (see
+   * {@link indexedMempool}). A fixture transaction's always are.
+   */
+  arrivedWithPrevouts: boolean
 }
 
 interface CoinbaseInput {
@@ -531,6 +573,10 @@ const TXID_PATTERN = /^[0-9a-fA-F]{64}$/
 const HEX_PATTERN = /^(?:[0-9a-fA-F]{2})*$/
 /** Bech32 and base58 addresses are alphanumeric, and none is longer than 90 characters. */
 const ADDRESS_PATTERN = /^[0-9A-Za-z]{1,90}$/
+/** The HRPs of qbit's bech32m addresses on mainnet, testnet4 and regtest (qbit-electrs src/chain.rs:78-82). */
+const QBIT_BECH32_HRPS: ReadonlySet<string> = new Set(['qb', 'tq', 'qbrt'])
+/** A bech32 data part, its 6-character checksum included, in either case. */
+const BECH32_DATA_PATTERN = /^[qpzry9x8gf2tvdw0s3jn54khce6mua7l]{6,}$/i
 /**
  * Rows per `/txs/chain` page: the default of qbit-electrs's
  * `--rest-default-chain-txs-per-page`, which an operator can change
@@ -782,6 +828,7 @@ function addFixtureTx(state: State, value: unknown, where: string, blocks: Map<n
           sequence: parsed?.vin[0]?.sequence ?? MAX_UINT32,
         }
       : undefined,
+    arrivedWithPrevouts: true,
   })
 }
 
@@ -1002,11 +1049,18 @@ function checkTxid(value: unknown, where: string): string {
   return value.toLowerCase()
 }
 
+/** An address, in the form {@link addressKey} matches it in. */
 function checkAddress(value: unknown, where: string): string {
   if (typeof value !== 'string' || !ADDRESS_PATTERN.test(value)) {
     throw new TypeError(`createMockEsplora: ${where} must be an address (letters and digits), not ${show(value)}`)
   }
-  return value
+  const key = addressKey(value)
+  if (key === undefined) {
+    throw new TypeError(
+      `createMockEsplora: ${where} is a bech32 address in mixed case, which qbit-electrs refuses: ${show(value)}`
+    )
+  }
+  return key
 }
 
 function hexString(value: unknown, where: string): string {
@@ -1058,13 +1112,52 @@ function defaultBlockTime(height: number): number {
   return 1_700_000_000 + 600 * height
 }
 
+/**
+ * Confirm every mempool transaction in a block on the tip. qbit Core's miner
+ * puts a transaction after those it spends from (src/node/miner.cpp:288-296,
+ * :434-438), as its consensus rules require (src/validation.cpp:2847-2932),
+ * so the block holds the mempool in arrival order, except that a transaction
+ * that arrived after one spending from it goes just before that one. Only a
+ * fault takes a transaction before one it spends from. The views order a
+ * block's transactions as `state.txs` holds them, so the mined ones fill the
+ * places they held there in the block's order.
+ */
 function mineBlock(state: State): Required<MockBlock> {
   const height = state.tipHeight + 1
   const block = { height, hash: defaultBlockHash(height), time: defaultBlockTime(height) }
-  for (const tx of state.txs.values()) tx.block ??= block
+  const known = [...state.txs.values()]
+  const pending = known.filter(tx => tx.block === undefined)
+  const mined = parentsFirst(pending)
+  state.txs.clear()
+  let next = 0
+  for (const tx of known) {
+    const placed = tx.block === undefined ? mined[next++]! : tx
+    state.txs.set(placed.txid, placed)
+  }
+  for (const tx of pending) tx.block = block
   state.tipHeight = height
   state.tipHash = block.hash
   return { ...block }
+}
+
+/**
+ * `txs` in their order, except that one that comes after a transaction
+ * spending from it moves to just before the first such, and so on for the
+ * ones it spends from.
+ */
+function parentsFirst(txs: TxRecord[]): TxRecord[] {
+  const positions = new Map(txs.map((tx, position) => [tx.txid, position]))
+  const placed = new Set<string>()
+  const order: TxRecord[] = []
+  const place = (tx: TxRecord): void => {
+    if (placed.has(tx.txid)) return
+    placed.add(tx.txid)
+    const parents = tx.vin.flatMap(input => positions.get(input.txid) ?? [])
+    for (const position of parents.sort((a, b) => a - b)) place(txs[position]!)
+    order.push(tx)
+  }
+  txs.forEach(place)
+  return order
 }
 
 // ---------------------------------------------------------------------------
@@ -1185,16 +1278,42 @@ function routeReply(state: State, match: RouteMatch, body: string | undefined): 
 // The address views, from the fixture and the submissions the node took, as
 // qbit-electrs 53102e9 builds them from its chain index and its mempool
 // (src/new_index/query.rs, src/new_index/mempool.rs, src/rest.rs). Faults
-// aside, mempool-qbit passes these routes through from it.
+// aside, mempool-qbit passes these routes through from it. Below
+// `addressReply`, an address is in the form `addressKey` gives, as the
+// fixture's are.
+
+/**
+ * The form in which the mock matches `address`, or undefined for an address
+ * qbit-electrs refuses. qbit-electrs looks an address up by the script it
+ * decodes it to (src/rest.rs:2054-2059), and decodes a qbit bech32m address
+ * with the bech32 crate, 0.8.1 by its Cargo.lock, which takes one in
+ * lowercase or in uppercase and refuses one in mixed case
+ * (src/qbit_address.rs:103-108, :138-150; bech32 src/lib.rs:470-525). It
+ * serves each address lowercase, since it encodes it from the script
+ * (src/util/script.rs:39-42, src/qbit_address.rs:91-101). So an address of a
+ * qbit HRP, `1` and a bech32 data part is matched lowercased; the mock checks
+ * no checksum. Any other, such as a base58 one, is matched exactly.
+ */
+function addressKey(address: string): string | undefined {
+  const separator = address.lastIndexOf('1')
+  const bech32 =
+    separator > 0 &&
+    QBIT_BECH32_HRPS.has(address.slice(0, separator).toLowerCase()) &&
+    BECH32_DATA_PATTERN.test(address.slice(separator + 1))
+  if (!bech32) return address
+  const lower = address.toLowerCase()
+  return address === lower || address === address.toUpperCase() ? lower : undefined
+}
 
 function addressReply(state: State, { route, param: address, cursor }: RouteMatch): Response {
-  if (!ADDRESS_PATTERN.test(address)) return text(400, 'Invalid address')
-  const { chain, mempool } = addressHistory(state, address)
+  const key = ADDRESS_PATTERN.test(address) ? addressKey(address) : undefined
+  if (key === undefined) return text(400, 'Invalid address')
+  const { chain, mempool } = addressHistory(state, key)
   switch (route) {
     case 'GET /address/:address':
-      return json(addressStats(address, chain, mempool))
+      return json(addressStats(address, key, chain, mempool))
     case 'GET /address/:address/utxo':
-      return json(unspentOutputs(state, address))
+      return json(unspentOutputs(state, key))
     case 'GET /address/:address/txs/mempool':
       return json(mempool.slice(0, MEMPOOL_PAGE_SIZE).map(txJson))
     case 'GET /address/:address/txs/chain': {
@@ -1227,15 +1346,17 @@ function addressHistory(state: State, address: string): { chain: TxRecord[]; mem
 }
 
 /**
- * The mempool transactions qbit-electrs indexes: it skips one whose spent
- * outputs it cannot all find, which then has no rows and no spend edges
- * (src/new_index/mempool.rs:508-517). Only an `accepted` or `lost-reply`
- * fault can put such a transaction in the mock's mempool.
+ * The mempool transactions qbit-electrs indexes. It indexes a transaction
+ * when it arrives, and skips one whose spent outputs it cannot all find then,
+ * which has no rows and no spend edges (src/new_index/mempool.rs:482-517)
+ * while it stays in the mempool, even once those outputs arrive: it keeps the
+ * transaction, and each update adds only txids it does not hold (:389-391,
+ * :396-410). A block that confirms it indexes it with every output it spends
+ * (src/new_index/schema.rs:576-587, :651-658). Only an `accepted` or
+ * `lost-reply` fault can put such a transaction in the mock's mempool.
  */
 function indexedMempool(state: State): TxRecord[] {
-  return [...state.txs.values()].filter(
-    tx => tx.block === undefined && tx.vin.every(input => input.prevout !== undefined)
-  )
+  return [...state.txs.values()].filter(tx => tx.block === undefined && tx.arrivedWithPrevouts)
 }
 
 /**
@@ -1327,12 +1448,13 @@ function isProvablyUnspendable(script: string): boolean {
  * transactions (src/new_index/mempool.rs:280-326, :535-571). So a mempool
  * spend of a confirmed output leaves it funded in `chain_stats` and counts
  * it spent in `mempool_stats`. An output qbit-electrs does not index (see
- * {@link funds}) is in neither.
+ * {@link funds}) is in neither. The reply names the address as it was asked
+ * for (src/rest.rs:925-936), and `key` is the form the mock matches it in.
  */
-function addressStats(address: string, chain: TxRecord[], mempool: TxRecord[]): EsploraAddressStats {
+function addressStats(address: string, key: string, chain: TxRecord[], mempool: TxRecord[]): EsploraAddressStats {
   const part = (txs: TxRecord[]): EsploraChainStats => {
-    const funded = txs.flatMap(tx => tx.vout.filter(output => funds(output, address)))
-    const spent = txs.flatMap(tx => tx.vin.filter(input => input.prevout?.address === address))
+    const funded = txs.flatMap(tx => tx.vout.filter(output => funds(output, key)))
+    const spent = txs.flatMap(tx => tx.vin.filter(input => input.prevout?.address === key))
     return {
       funded_txo_count: funded.length,
       funded_txo_sum: Number(funded.reduce((sum, output) => sum + output.value, 0n)),
@@ -1469,8 +1591,8 @@ function broadcast(
 ): Response {
   const raw = body ?? ''
   const hex = route === 'POST /tx/push' ? (/^txHash=([0-9a-fA-F]*)$/.exec(raw)?.[1] ?? '') : raw
+  if (fault?.outcome === 'rejected') return rpcError(fault.code, fault.message ?? 'transaction rejected')
   const outcome = fault?.outcome
-  if (outcome === 'rejected') return rpcError(fault!.code!, fault!.message ?? 'transaction rejected')
   const parsed = parseRawTx(hex)
   if (parsed === undefined) {
     if (outcome === 'lost-reply') throw connectionReset()
@@ -1480,7 +1602,7 @@ function broadcast(
     const refusal = nodeVerdict(state, parsed)
     if (refusal !== undefined) return refusal
   }
-  if (!state.txs.has(parsed.txid)) state.txs.set(parsed.txid, submittedTx(state, parsed, hex))
+  if (!state.txs.has(parsed.txid)) addSubmission(state, submittedTx(state, parsed, hex))
   if (outcome === 'lost-reply') throw connectionReset()
   return text(200, parsed.txid)
 }
@@ -1744,10 +1866,6 @@ function submittedTx(state: State, parsed: ParsedTx, hex: string): TxRecord {
   }
   const vin = parsed.vin.map(input => ({ ...input, prevout: outputs.get(`${input.txid}:${input.vout}`) }))
   const vout = parsed.vout.map(output => ({ ...output, address: addresses.get(output.scriptPubKey) }))
-  const inSum = vin.every(input => input.prevout !== undefined)
-    ? vin.reduce((sum, input) => sum + input.prevout!.value, 0n)
-    : undefined
-  const outSum = vout.reduce((sum, output) => sum + output.value, 0n)
   return {
     txid: parsed.txid,
     hex: hex.toLowerCase(),
@@ -1755,12 +1873,39 @@ function submittedTx(state: State, parsed: ParsedTx, hex: string): TxRecord {
     locktime: parsed.locktime,
     vin,
     vout,
-    fee: inSum === undefined || inSum < outSum ? 0 : Number(inSum - outSum),
+    fee: submissionFee(vin, vout),
     size: parsed.size,
     weight: parsed.weight,
     block: undefined,
     coinbase: false,
     coinbaseInput: undefined,
+    arrivedWithPrevouts: vin.every(input => input.prevout !== undefined),
+  }
+}
+
+/** A submission's fee: inputs minus outputs, or 0 while an output it spends is unknown or when outputs exceed inputs. */
+function submissionFee(vin: InputRecord[], vout: OutputRecord[]): number {
+  if (!vin.every(input => input.prevout !== undefined)) return 0
+  const inSum = vin.reduce((sum, input) => sum + input.prevout!.value, 0n)
+  const outSum = vout.reduce((sum, output) => sum + output.value, 0n)
+  return inSum < outSum ? 0 : Number(inSum - outSum)
+}
+
+/**
+ * Add a submission the node took, and give the inputs that spend its outputs,
+ * of transactions only a fault can have taken before it, their prevouts and
+ * their transactions' fees. qbit-electrs looks a transaction's prevouts up
+ * each time it serves it (src/rest.rs:618-637), so `GET /tx/:txid` shows them
+ * at once, and the address views count them once a block confirms the
+ * spending transaction (see {@link indexedMempool}).
+ */
+function addSubmission(state: State, tx: TxRecord): void {
+  state.txs.set(tx.txid, tx)
+  for (const spender of state.txs.values()) {
+    const inputs = spender.vin.filter(input => input.txid === tx.txid && input.prevout === undefined)
+    if (inputs.length === 0) continue
+    for (const input of inputs) input.prevout = tx.vout[input.vout]
+    spender.fee = submissionFee(spender.vin, spender.vout)
   }
 }
 

@@ -31,7 +31,8 @@ try {
   if (!QbitApiError.is(error) || error.kind !== 'unknown_outcome') throw error
 }
 mock.hasTx(txidFromRawTx(signedTxHex)) // true: getTx finds it too
-mock.requests // [{ method: 'POST', url: 'https://esplora.example/api/tx', path: '/tx', body: signedTxHex }, ...]
+mock.requests.map(({ method, path }) => `${method} ${path}`) // [`GET /address/${address}`, `GET /address/${address}/utxo`, 'POST /tx']
+mock.requests[2] // { method: 'POST', url: 'https://esplora.example/api/tx', path: '/tx', body: signedTxHex }
 ```
 
 `createMockEsplora` checks its options and throws a `TypeError` for a missing,
@@ -109,12 +110,14 @@ the views agree with each other as they do on a real backend:
   that a later mempool transaction spends still counts as funded.
 - `GET /address/:address/utxo`: the confirmed outputs that no confirmed or
   mempool transaction spends, then the mempool outputs that no mempool
-  transaction spends, each part in the order the mock learned the
-  transactions. qbit-electrs lists the confirmed part in no fixed order.
-- History: the chain newest first, by block height, then in reverse fixture
-  and arrival order, so a block's coinbase comes after the rest of its block,
-  and the mempool oldest first, in fixture and arrival order, as qbit-electrs
-  lists it. It is paged as qbit-electrs pages it with its default page sizes,
+  transaction spends, each part in fixture and arrival order, with a block
+  `mock.mine()` made in its own order ([Submissions](#submissions)).
+  qbit-electrs lists the confirmed part in no fixed order.
+- History: the chain newest first, by block height, then by position in the
+  block, last first, where a fixture block holds its transactions in fixture
+  order and a block `mock.mine()` made in its own, so a block's coinbase comes
+  after the rest of its block; and the mempool oldest first, in fixture and
+  arrival order, as qbit-electrs lists it. It is paged as qbit-electrs pages it with its default page sizes,
   which its operator can change (`--rest-default-chain-txs-per-page` and
   `--rest-default-max-mempool-txs`): `/txs/chain` 25 rows per page, where a
   cursor it cannot find yields `[]` and an unparseable one is ignored;
@@ -125,6 +128,15 @@ the views agree with each other as they do on a real backend:
   found nowhere is the error the backends table lists, and an unparseable one
   is ignored. A cursor that no mempool row follows, such as the last mempool
   row, yields `[]`, as on qbit-electrs, which `MempoolQbitClient` detects.
+
+An address is matched as qbit-electrs matches it, by the script it decodes the
+address to. A qbit bech32m address, with the HRP `qb`, `tq` or `qbrt`, is the
+same address in lowercase and in uppercase, in a request or in the fixture,
+and is served in lowercase, as qbit-electrs encodes it from the script;
+`GET /address/:address` names it as it was asked for. In mixed case, which
+qbit-electrs's decoder refuses, it is a `400` reply, or a `TypeError` in the
+fixture. The mock checks no checksum, and matches any other address, such as
+a base58 one, exactly.
 
 An output whose `scriptPubKey` qbit-electrs takes as provably unspendable
 counts for no address, whatever `address` it is given: qbit-electrs indexes no
@@ -139,9 +151,16 @@ decides. It does not look at the size, unlike qbit Core, so an output over
 10,000 bytes that starts otherwise is listed. Spends are indexed whatever they
 spend.
 
-A mempool transaction that spends an output the mock does not know, which only
-an `accepted` or `lost-reply` fault can put there, stays out of the address
-views, as qbit-electrs skips indexing it; the lookups below still find it.
+A mempool transaction that spends an output the mock does not know when it
+arrives, which only an `accepted` or `lost-reply` fault can put there, stays
+out of the address views while it is in the mempool, even once the
+transaction that creates the output arrives: qbit-electrs indexes a mempool
+transaction when it arrives, and skips one whose spent outputs it cannot all
+find then. The lookups below still find it, and `GET /tx/:txid` gives each
+output it spends, and its fee, once the mock knows them, as qbit-electrs looks
+them up each time. Once `mock.mine()` confirms it, the address views count it
+with every output it spends that the mock knows, as qbit-electrs indexes a
+block.
 
 `feeEstimates` (default `{ "1": 20, "3": 10, "6": 5, "144": 1 }`) answers
 `GET /fee-estimates`, `recommendedFees` (default 20, 15, 10, 5 and 1 sat/vB)
@@ -234,7 +253,11 @@ reply can name the rule below where the mock's names the modeled one:
 A transaction the node took is found by `GET /tx/:txid`, `/hex` and `/status`
 and by `mock.hasTx(txid)`, and joins the address views in the mempool.
 `mock.mine()` confirms every mempool transaction in a new block on the tip,
-where the address views count it as confirmed. A submission's input counts for
+where the address views count it as confirmed. The block holds them in arrival
+order, except that a transaction that arrived after one spending from it goes
+just before that one, as qbit Core's miner and consensus rules put a
+transaction after those it spends from; only a fault can take a transaction
+before one it spends from. A submission's input counts for
 the address of the output it spends. Its output counts for an address only
 when a fixture output pairs that address with the same `scriptPubKey`, since
 the mock does not derive addresses from scripts: give the fixture's outputs

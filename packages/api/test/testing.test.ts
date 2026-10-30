@@ -307,6 +307,54 @@ describe('createMockEsplora fixture views', () => {
     expect(mempool).toEqual([])
   })
 
+  it('matches a qbit bech32 address in lowercase or uppercase, as qbit-electrs does, and any other exactly', async () => {
+    // qbit-electrs looks an address up by the script it decodes it to, and its bech32 decoder takes one in either
+    // case, never mixed (src/rest.rs:2054-2059, src/qbit_address.rs:103-108, :138-150).
+    const { client } = esplora({ txs })
+    const upper = ADDR.toUpperCase()
+    // It names the address as it was asked for.
+    await expect(client.getAddressStats(upper)).resolves.toEqual({
+      ...(await client.getAddressStats(ADDR)),
+      address: upper,
+    })
+    await expect(client.getAddressBalance(upper)).resolves.toMatchObject({ confirmedSats: 89_000, totalSats: 50_000 })
+    await expect(client.getAddressUtxos(upper)).resolves.toEqual(await client.getAddressUtxos(ADDR))
+    const history = await client.getAddressHistory(ADDR)
+    expect(history.confirmed.map(tx => tx.txid)).toEqual([SPEND, FUND])
+    await expect(client.getAddressHistory(upper)).resolves.toEqual(history)
+    const mixed = `${ADDR.slice(0, 12)}${ADDR.slice(12).toUpperCase()}`
+    await expect(rejection(client.getAddressStats(mixed))).resolves.toMatchObject({ kind: 'http', status: 400 })
+
+    // A fixture address in uppercase is the same address, served lowercase, as qbit-electrs encodes it from the
+    // script (src/util/script.rs:39-42, src/qbit_address.rs:91-101); an input may name it in either case.
+    const shouted = esplora({
+      txs: [
+        { txid: FUND, vout: [{ address: OTHER.toUpperCase(), value: 7 }], block: { height: 1 } },
+        {
+          txid: SPEND,
+          vin: [{ txid: FUND, vout: 0, address: OTHER }],
+          vout: [{ address: ADDR.toUpperCase(), value: 7 }],
+        },
+      ],
+    })
+    await expect(shouted.client.getTx(SPEND)).resolves.toMatchObject({
+      vin: [{ prevout: { scriptpubkey_address: OTHER } }],
+      vout: [{ scriptpubkey_address: ADDR }],
+    })
+    await expect(shouted.client.getAddressStats(OTHER)).resolves.toMatchObject({
+      chain_stats: { funded_txo_count: 1, funded_txo_sum: 7 },
+      mempool_stats: { spent_txo_count: 1, spent_txo_sum: 7 },
+    })
+    await expect(shouted.client.getAddressUtxos(ADDR)).resolves.toMatchObject([{ txid: SPEND, vout: 0, value: 7 }])
+
+    // A base58 address is case-sensitive, so it is matched exactly.
+    const base58 = 'mipcBbFg9gMiCh81Kj8tqqdgoZub1ZJRfn'
+    const legacy = esplora({ txs: [{ txid: FUND, vout: [{ address: base58, value: 5 }], block: { height: 1 } }] })
+    await expect(legacy.client.getAddressUtxos(base58)).resolves.toMatchObject([{ txid: FUND, value: 5 }])
+    await expect(legacy.client.getAddressUtxos(base58.toLowerCase())).resolves.toEqual([])
+    await expect(legacy.client.getAddressUtxos(base58.toUpperCase())).resolves.toEqual([])
+  })
+
   it('answers an address the fixture does not name with empty views', async () => {
     const { client } = esplora({ txs })
     const unknown = 'qbrt1zqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq'
@@ -1152,6 +1200,53 @@ describe('createMockEsplora address views after a submission', () => {
     ])
   })
 
+  it('gives a fault-taken spend the output it spends once that arrives, and counts the spend in every view once mined', async () => {
+    // A fault takes CHILD, which spends SPEND:1, before the node has SPEND.
+    const { mock, client } = esplora({ txs, faults: [{ route: 'POST /tx', kind: 'broadcast', outcome: 'accepted' }] })
+    const child = legacyTx([{ txid: SPEND, vout: 1 }], [{ value: 38_000, script: OTHER_SCRIPT }])
+    const CHILD = txidFromRawTx(child)
+    await expect(client.broadcastTx(child)).resolves.toBe(CHILD)
+    await expect(client.broadcastTx(spend)).resolves.toBe(SPEND)
+
+    // qbit-electrs looks a transaction's prevouts up each time it serves it (src/rest.rs:618-637).
+    await expect(client.getTx(CHILD)).resolves.toMatchObject({
+      vin: [{ txid: SPEND, vout: 1, prevout: { scriptpubkey_address: ADDR, value: 39_000 } }],
+      fee: 1_000,
+    })
+    // But its mempool index skipped CHILD when it arrived, and never adds it (src/new_index/mempool.rs:389-410, :482-517).
+    await expect(client.getAddressStats(ADDR)).resolves.toMatchObject({
+      mempool_stats: { funded_txo_count: 1, spent_txo_count: 1, spent_txo_sum: 100_000, tx_count: 1 },
+    })
+    await expect(client.getAddressUtxos(ADDR)).resolves.toEqual([
+      { txid: SPEND, vout: 1, value: 39_000, status: { confirmed: false } },
+    ])
+
+    // Its block is indexed with every output its transactions spend (src/new_index/schema.rs:576-587, :651-658).
+    mock.mine()
+    await expect(client.getAddressStats(ADDR)).resolves.toEqual({
+      address: ADDR,
+      chain_stats: {
+        funded_txo_count: 2,
+        funded_txo_sum: 139_000,
+        spent_txo_count: 2,
+        spent_txo_sum: 139_000,
+        tx_count: 3,
+      },
+      mempool_stats: { funded_txo_count: 0, funded_txo_sum: 0, spent_txo_count: 0, spent_txo_sum: 0, tx_count: 0 },
+    })
+    await expect(client.getAddressBalance(ADDR)).resolves.toMatchObject({ confirmedSats: 0, totalSats: 0 })
+    await expect(client.getAddressUtxos(ADDR)).resolves.toEqual([])
+    await expect(client.getTx(CHILD)).resolves.toMatchObject({ fee: 1_000, status: block(6) })
+    // The block holds SPEND before CHILD, which spends from it, so the history, last in a block first, ends with SPEND.
+    const { confirmed } = await client.getAddressHistory(ADDR)
+    expect(confirmed.map(tx => tx.txid)).toEqual([CHILD, SPEND, FUND])
+    await expect(client.getAddressUtxos(OTHER)).resolves.toEqual([
+      { txid: FUND, vout: 1, value: 1, status: block(5) },
+      { txid: SPEND, vout: 0, value: 60_000, status: block(6) },
+      { txid: CHILD, vout: 0, value: 38_000, status: block(6) },
+    ])
+  })
+
   it('looks a combined-history cursor up among every transaction, and ignores an unparseable one', async () => {
     const { mock } = esplora({
       txs: [...history(3, 2), { txid: txid(0xbb, 0), vout: [{ address: OTHER, value: 1 }], block: { height: 9 } }],
@@ -1329,6 +1424,18 @@ describe('createMockEsplora option validation', () => {
     ['no outputs', { backend: 'esplora', txs: [tx({ vout: [] })] }],
     ['a malformed address', { backend: 'esplora', txs: [tx({ vout: [{ address: 'qb1 bad', value: 1 }] })] }],
     ['an empty address', { backend: 'esplora', txs: [tx({ vout: [{ address: '', value: 1 }] })] }],
+    // qbit-electrs's bech32 decoder refuses mixed case.
+    [
+      'a bech32 address in mixed case',
+      { backend: 'esplora', txs: [tx({ vout: [{ address: `qbrt1Z${ADDR.slice(6)}`, value: 1 }] })] },
+    ],
+    [
+      'an input address in mixed case',
+      {
+        backend: 'esplora',
+        txs: [tx({ vin: [{ txid: txid(9, 9), vout: 0, address: `QBRT1z${ADDR.slice(6)}`, value: 1 }] })],
+      },
+    ],
     ['a negative value', { backend: 'esplora', txs: [tx({ vout: [{ value: -1 }] })] }],
     ['a NaN value', { backend: 'esplora', txs: [tx({ vout: [{ value: Number.NaN }] })] }],
     ['an infinite value', { backend: 'esplora', txs: [tx({ vout: [{ value: Infinity }] })] }],
@@ -1539,6 +1646,24 @@ describe('createMockEsplora option validation', () => {
     ],
   ])('throws a TypeError for %s', (_case, options) => {
     expect(bad(options)).toThrow(TypeError)
+  })
+
+  it('types a rejected broadcast fault with its code, and the other outcomes without a code or message', () => {
+    // The compiler refuses what createMockEsplora refuses; `tsc -p test` checks that each directive is needed.
+    // @ts-expect-error: a rejected outcome needs its RPC error code.
+    const uncoded: MockFault = { route: 'POST /tx', kind: 'broadcast', outcome: 'rejected', message: 'refused' }
+    // @ts-expect-error: only a rejected outcome has an RPC error code.
+    const coded: MockFault = { route: 'POST /tx', kind: 'broadcast', outcome: 'lost-reply', code: -26 }
+    // @ts-expect-error: only a rejected outcome has an RPC error message.
+    const messaged: MockFault = { route: 'POST /tx/push', kind: 'broadcast', outcome: 'accepted', message: 'ok' }
+    for (const fault of [uncoded, coded, messaged])
+      expect(bad({ backend: 'esplora', faults: [fault] })).toThrow(TypeError)
+
+    const faults: MockFault[] = [
+      { route: 'POST /tx', kind: 'broadcast', outcome: 'rejected', code: -26 },
+      { route: 'POST /tx', kind: 'broadcast', outcome: 'lost-reply' },
+    ]
+    expect(() => createMockEsplora({ backend: 'esplora', faults })).not.toThrow()
   })
 
   it('sends any Retry-After Headers accepts, as Headers normalizes it', async () => {
