@@ -36,9 +36,10 @@ mock.requests // [{ method: 'POST', url: 'https://esplora.example/api/tx', path:
 
 `createMockEsplora` checks its options and throws a `TypeError` for a missing,
 unknown or malformed one (a txid, address or hex string, a negative or
-non-finite number, an unknown route or fault kind, `null`) and for a fixture
-that contradicts itself. Only an option left out, or `undefined`, takes its
-default.
+non-finite number, a `Retry-After` that `Headers` refuses, an unknown route or
+fault kind, `null`) and for a fixture that contradicts itself or that qbit
+Core could not hold ([The fixture](#the-fixture)). Only an option left out, or
+`undefined`, takes its default.
 
 ## Backends
 
@@ -72,28 +73,55 @@ outcome is unknown; `getTx` does, as on a real qbit-electrs
 - `vin`: the outputs it spends, as `{ txid, vout }`. An output of a
   transaction listed earlier brings its address and value; an output outside
   the fixture needs `value`, and may give `address`. No output may be spent
-  twice, and a confirmed transaction cannot spend an unconfirmed output.
+  twice, a confirmed transaction cannot spend an unconfirmed output, and no
+  transaction can spend an unspendable output (an `OP_RETURN` scriptPubKey, or
+  one over 10,000 bytes), which qbit Core never adds to its coins and whose
+  script fails every spend.
 - `fee`: inputs minus outputs by default, and it must equal that when the
-  transaction has inputs.
+  transaction has inputs. The outputs, and the outputs the inputs spend, may
+  each total at most `MAX_MONEY`, 21,000,000,000,000,000 sats, as in qbit
+  Core.
 - `block: { height, hash?, time? }` for a confirmed transaction; omit it for one
   in the mempool. The hash defaults to the height in hex, zero-padded, and the
   time to `1700000000 + 600 * height`. Transactions at one height are in one
   block, so they must agree on its hash and time.
+- `coinbase: true` for a block's coinbase transaction. It needs a `block`, has
+  no `vin`, pays no fee, and is served with its coinbase input, from its `hex`
+  when given, which must be a coinbase transaction. Its outputs
+  mature 1,000 blocks after it, as in qbit Core: a fixture transaction spends
+  one only in a block at least 1,000 higher, or in the mempool once the tip is
+  at least 999 higher, and a submission is refused until then.
 
-Every address view is derived from these transactions, so the views agree with
-each other as they do on a real backend:
+Every address view is derived from these transactions and the submissions the
+node took, as qbit-electrs derives it from its chain index and its mempool, so
+the views agree with each other as they do on a real backend:
 
-- `GET /address/:address`: `chain_stats` and `mempool_stats` count the
-  outputs paying the address and the inputs spending from it, in confirmed and
-  mempool transactions, and the distinct transactions touching it.
-- `GET /address/:address/utxo`: the address's outputs that no fixture
-  transaction spends, confirmed or not.
-- History, newest first (the mempool in reverse fixture order; the chain by
-  block height, then in reverse fixture order), paged as qbit-electrs pages it:
-  `/txs/chain` 25 rows per page, where a cursor it cannot find yields `[]`;
-  `/txs/mempool` at most 50 rows; and the combined `/txs?after_txid=` route 50
-  rows per page, mempool rows first. A cursor that is the last mempool row
-  yields `[]` there, as on qbit-electrs, which `MempoolQbitClient` detects.
+- `GET /address/:address`: `chain_stats` counts confirmed transactions only,
+  and `mempool_stats` mempool ones only: the outputs paying the address, the
+  inputs spending from it, and the distinct transactions touching it. So a
+  mempool spend of a confirmed output leaves the output funded in
+  `chain_stats` and counts it spent in `mempool_stats`, and a mempool output
+  that a later mempool transaction spends still counts as funded.
+- `GET /address/:address/utxo`: the confirmed outputs that no confirmed or
+  mempool transaction spends, then the mempool outputs that no mempool
+  transaction spends, each part in the order the mock learned the
+  transactions. qbit-electrs lists the confirmed part in no fixed order.
+- History: the chain newest first, by block height, then in reverse fixture
+  and arrival order, and the mempool oldest first, in fixture and arrival
+  order, as qbit-electrs lists it. It is paged as qbit-electrs pages it:
+  `/txs/chain` 25 rows per page, where a cursor it cannot find yields `[]` and
+  an unparseable one is ignored; `/txs/mempool` at most 50 rows; and the
+  combined `/txs?after_txid=` route 50 rows per page, mempool rows first. That
+  route looks the cursor up among every transaction, not only the address's:
+  one in a block pages the chain history after it, one in the mempool pages
+  the mempool rows after it, one found nowhere is the error the backends
+  table lists, and an unparseable one is ignored. A cursor that no mempool row
+  follows, such as the last mempool row, yields `[]`, as on qbit-electrs,
+  which `MempoolQbitClient` detects.
+
+A mempool transaction that spends an output the mock does not know, which only
+an `accepted` or `lost-reply` fault can put there, stays out of the address
+views, as qbit-electrs skips indexing it; the lookups below still find it.
 
 `feeEstimates` (default `{ "1": 20, "3": 10, "6": 5, "144": 1 }`) answers
 `GET /fee-estimates`, `recommendedFees` (default 20, 15, 10, 5 and 1 sat/vB)
@@ -105,30 +133,42 @@ height in hex, zero-padded.
 ## Submissions
 
 Without a fault, `POST /tx`, and `POST /tx/push` with its `txHash=<hex>` form
-body, answer as qbit Core v1.0.0 behind qbit-electrs or mempool-qbit does. The
-node's coins are the outputs of the fixture's transactions and of the
-submissions it took, except those a transaction in a block spends and the
-unspendable ones (an `OP_RETURN` scriptPubKey, or one over 10,000 bytes). The
-first row that matches decides; each refusal is a `400` reply in the
-`sendrawtransaction RPC error: {...}` form:
+body, answer as qbit Core v1.0.0's `sendrawtransaction` behind qbit-electrs or
+mempool-qbit does. The node's coins are the outputs of the fixture's
+transactions and of the submissions it took, except those a transaction in a
+block spends and the unspendable outputs (an `OP_RETURN` scriptPubKey, or one
+over 10,000 bytes) of transactions in a block. Every output of a mempool
+transaction is a coin, as in Core's view of its mempool, though Core refuses a
+spend of an unspendable one later, at the script check the mock does not run.
+The first row that matches decides, in the order Core checks; each refusal is
+a `400` reply in the `sendrawtransaction RPC error: {...}` form, with Core's
+code and message:
 
 | Submission | Reply |
 | --- | --- |
-| Hex the node cannot decode | RPC error `-22`, `TX decode failed` |
-| A transaction in a block, while one of its outputs is a coin | RPC error `-27`, `Transaction outputs already in utxo set`: the already-known reply, which the client resolves with the txid it knows |
+| Hex the node cannot decode, by Core's decoder: empty or not hex, truncated or with bytes left over, a CompactSize that is non-canonical or over 33,554,432, a witness flag with every witness stack empty, or an unknown flag | `-22`, `TX decode failed. Make sure the tx has at least one input.` |
+| An output with a value above 0 whose script is unspendable or does not parse into valid opcodes (`maxburnamount`, 0 by default) | `-25`, `Unspendable output exceeds maximum configured by user (maxburnamount)` |
+| A transaction in a block, while one of its outputs is a coin | `-27`, `Transaction outputs already in utxo set`: the already-known reply, which the client resolves with the txid it knows |
 | A transaction in the mempool | `200` with the txid |
-| One that spends an output twice | RPC error `-26`, `bad-txns-inputs-duplicate` |
-| One that spends an output that is not a coin: one no known transaction creates, one spent in a block, or an unspendable one | RPC error `-25`, `bad-txns-inputs-missingorspent` |
-| One that spends an output a mempool transaction spends | RPC error `-26`, `insufficient fee, rejecting replacement <txid>` |
+| One that breaks a rule of `CheckTransaction`: no inputs, no outputs, over 2,000,000 bytes without the witness, an output below 0 or above `MAX_MONEY` (21,000,000,000,000,000 sats), outputs above `MAX_MONEY` in total, an output spent twice, a coinbase input script under 2 or over 100 bytes, or a null prevout in another transaction | `-26`, with the first broken rule's reason, in that order: `bad-txns-vin-empty`, `bad-txns-vout-empty`, `bad-txns-oversize`, `bad-txns-vout-negative`, `bad-txns-vout-toolarge`, `bad-txns-txouttotal-toolarge`, `bad-txns-inputs-duplicate`, `bad-cb-length`, `bad-txns-prevout-null` |
+| A coinbase, which only a block holds | `-26`, `coinbase` |
+| One that spends an output that is not a coin: one no known transaction creates, one spent in a block, or an unspendable output of a transaction in a block | `-25`, `bad-txns-inputs-missingorspent` |
+| One that spends a coinbase output less than 1,000 blocks deep in the next block | `-26`, `bad-txns-premature-spend-of-coinbase, tried to spend coinbase at depth <depth>` |
+| One whose inputs are worth more than `MAX_MONEY` in total | `-26`, `bad-txns-inputvalues-outofrange` |
+| One whose outputs are worth more than its inputs | `-26`, `bad-txns-in-belowout, value in (<in>) < value out (<out>)`, in coins as Core writes them, such as `0.001` and `1.00` |
+| One that spends an output of a mempool transaction it conflicts with | `-26`, `bad-txns-spends-conflicting-tx, <txid> spends conflicting transaction <txid>` |
+| One that spends an output a mempool transaction spends | `-26`, `insufficient fee, rejecting replacement <txid>` |
+| One whose fee is above 10,000 sats per byte of its size: `sendrawtransaction`'s default `maxfeerate`, 0.1 coin per kvB | `-25`, `Fee exceeds maximum configured by user (e.g. -maxtxfee, maxfeerate)` |
 | Any other | `200` with the txid: the node takes it into its mempool |
 
 So a payment spends a coin only when `txs`, or an earlier submission, holds
 the transaction that creates it: declare a test's funding in `txs`. The
 outputs of a transaction outside the fixture, such as the one a fixture input
-spends with its own `value`, are not coins. A spend in the mempool leaves an output a coin, so a resubmitted
-transaction from a block is `-27` until a transaction in a block spends its
-last coin. Then its own inputs are spent, and it is `-25`: a rejection of the
-resubmission that proves nothing about the original, as
+spends with its own `value`, are not coins. A spend in the mempool leaves an
+output a coin, so a resubmitted transaction from a block is `-27` until a
+transaction in a block spends its last coin. Then its own inputs are spent,
+and it is `-25`: a rejection of the resubmission that proves nothing about the
+original, as
 [Recovering from an unknown outcome](broadcasting.md#recovering-from-an-unknown-outcome)
 says.
 
@@ -138,19 +178,44 @@ hex resolves with its txid. qbit Core takes a conflicting transaction as a
 replacement (full RBF) when it passes its replacement checks, which require,
 among other things, a higher feerate than each transaction it conflicts with,
 and fees that exceed the total of every transaction it would evict by at
-least the incremental relay fee for its size; it then evicts them. It refuses
-one that pays too little in the mock's words, followed by the feerates or fees
-it compared. The mock never replaces. An `accepted` fault takes a conflicting transaction, but leaves the
-one it conflicts with in the mempool.
+least the incremental relay fee for its size; it then evicts them. A conflict
+that fails them gets `insufficient fee, rejecting replacement <txid>` followed
+by the feerates or fees Core compared, or the reason of a limit it hit. The
+mock never replaces, and its message stops before those numbers, which it does
+not compute. An `accepted` fault takes a conflicting transaction, but leaves
+the one it conflicts with in the mempool.
 
-The mock checks no script, signature, amount, fee or relay policy: a
-transaction that spends coins is taken even if its outputs exceed its inputs.
+The mock models only these checks. It takes a transaction that qbit Core
+refuses for any of the following, unless a check it models refuses it. Core
+runs many of them between the checks above, though: the policy and finality
+checks come before its inputs are looked up, and fee floors and mempool
+limits before its conflicts. So for a transaction that breaks one of them and
+a modeled rule too, Core's reply can name the rule below where the mock's
+names the modeled one:
+
+- relay policy and standardness: the standard transaction rules, the 65-byte
+  minimum size without the witness (`tx-size-small`), standard inputs and
+  witnesses, the sigop limit, dust and the TRUC rules;
+- qbit's rule that outputs pay only to P2MR, `OP_RETURN`, an anchor or, once
+  activated, a reserved witness version (`tx-output-not-p2mr`), which mainnet,
+  testnet, testnet4 and signet enforce, and regtest unless the node runs with
+  `-p2mronly=0`: the mock takes an output to any script;
+- fee floors: the minimum relay feerate and the mempool's minimum fee;
+- scripts and signatures, which the mock never runs;
+- finality: lock times (`non-final`) and sequence locks (`non-BIP68-final`);
+- mempool limits: ancestor and descendant chains (`too-long-mempool-chain`)
+  and a full mempool;
+- replacement, as above.
 
 A transaction the node took is found by `GET /tx/:txid`, `/hex` and `/status`
-and by `mock.hasTx(txid)`. `mock.mine()` confirms every mempool transaction in
-a new block on the tip. A submission does not join the address views, since the
-mock cannot tell which addresses its outputs pay; declare the transaction in
-`txs` to test balances after a payment.
+and by `mock.hasTx(txid)`, and joins the address views in the mempool.
+`mock.mine()` confirms every mempool transaction in a new block on the tip,
+where the address views count it as confirmed. A submission's input counts for
+the address of the output it spends. Its output counts for an address only
+when a fixture output pairs that address with the same `scriptPubKey`, since
+the mock does not derive addresses from scripts: give the fixture's outputs
+the scripts your code pays to, and a change output, say, joins its address's
+balance.
 
 ## Faults
 
@@ -163,17 +228,20 @@ its faults are used up. Routes are named as the clients call them, such as
 
 | Fault | What the mock does | Read | `broadcastTx` |
 | --- | --- | --- | --- |
-| `{ kind: 'status', status, retryAfter?, body? }` | Replies with that status, `Retry-After` header and body | Retried for 429, 500, 502, 503 and 504, then the status's kind | Judged by status and body: a `429` is re-sent within `maxRetryAfterMs`, a `5xx` without a node verdict is `unknown_outcome`, a `404` falls back to `/tx/push` on `MempoolQbitClient` |
+| `{ kind: 'status', status, retryAfter?, body? }` | Replies with that status, `Retry-After` header and body | Retried for 429, 500, 502, 503 and 504, then the status's kind | Judged by status and body as the outcome table says. A `429` with retries left is re-sent when its `Retry-After` is absent or at most `maxRetryAfterMs`. A `501`, `505` or `511` is `http`, but `MempoolQbitClient` falls back to `/tx/push` after a `501`. Any other `5xx` is `unknown_outcome`, unless its body is an already-known reply, which resolves when the txid is known, or a definite node rejection, which is `http`. `MempoolQbitClient` also falls back to `/tx/push` after a `404` or `405` whose body is neither an already-known reply nor a relayed transport failure, and after a generic `400` failure |
 | `{ kind: 'network-error' }` | Rejects as undici does for `ECONNREFUSED` from `connect`, before anything is sent | Retried, then `network` | Retried, then `network`; the node never sees it |
 | `{ kind: 'stall', status?, retryAfter? }` | Sends the headers and never ends the body, until the request is aborted | The attempt times out and is retried; `timeout` once retries run out | `unknown_outcome`, though the node never sees it; a stalled `429` is re-sent, or `rate_limit` once not retried |
 | `{ kind: 'broadcast', outcome: 'accepted' }` | The node takes the transaction, whatever it would answer without the fault | | Resolves with the txid |
-| `{ kind: 'broadcast', outcome: 'rejected', code, message? }` | The node refuses it: `400` with RPC error `code` | | `http` for a node code such as `-26`; other codes as the [body verdicts](broadcasting.md#body-verdicts) say, so `-27` resolves with a known txid |
+| `{ kind: 'broadcast', outcome: 'rejected', code, message? }` | The node refuses it: `400` with RPC error `code` | | `http` for a definite rejection such as `-26`; any other body as the [body verdicts](broadcasting.md#body-verdicts) and the outcome table say, so the already-known `-27` resolves with a known txid, and a relayed transport failure such as `-32603` is `unknown_outcome` |
 | `{ kind: 'broadcast', outcome: 'lost-reply' }` | The node takes the transaction, as for `accepted`, then the connection resets (`ECONNRESET`) | | `unknown_outcome`, and later lookups find the transaction |
 
 The `broadcast` faults apply only to `POST /tx` and `POST /tx/push`. Hex the
 node cannot decode is never taken: `accepted` and `lost-reply` then answer, or
 lose, RPC error `-22`. A `status` or `stall` fault on those routes leaves the
-node without the transaction.
+node without the transaction. `retryAfter` is integer seconds or any header
+value `Headers` accepts, which trims it of leading and trailing whitespace; a
+value with a NUL, CR or LF inside it, or a character above U+00FF, is a
+`TypeError` from `createMockEsplora`.
 
 An indexer that lags its node is a `404` on `GET /tx/:txid` for a few requests:
 
@@ -203,4 +271,27 @@ const fetchFn: typeof fetch = (input, init) => {
 
 `fetchFn` is a plain `typeof fetch`, and the mock shares no code with the
 client at runtime, so a mock from one version of `@qbit-oss/api`, or one build,
-can drive a client from another.
+can drive a client from another. The mock needs the runtime's `Response`,
+`Headers` and `ReadableStream`.
+
+## Resolvers that ignore `exports`
+
+A `testing/package.json` shim points resolvers that ignore the `exports` map at
+the subpath: its `main` names the CommonJS build, its `module` the ESM build,
+as the package's own fields do, and its `types` the declarations. These were
+checked against the packed package:
+
+- TypeScript with `moduleResolution: "node10"` finds `lib/testing.d.ts`
+  through `types`.
+- Jest before 28, which ignores `exports` (26.6.3 and 27.5.1 were checked),
+  finds `lib/testing.js` through `main`. Its node environment does not expose
+  `Response`, `Headers` or `ReadableStream`, which the mock needs, nor, in
+  Jest 26, the `AbortController` and `AbortSignal` the client needs, so give
+  it a test environment that does, such as one that extends
+  `jest-environment-node` and copies them onto its `global`.
+- Metro 0.87.2 with `unstable_enablePackageExports: false` bundles
+  `lib/testing.js` through `main`.
+
+Both entry points, `@qbit-oss/api` and `@qbit-oss/api/testing`, are built for
+ES2020, which webpack 4's parser does not support: webpack 4.47.0 fails on the
+optional chaining in each of them, through `module` or through `main`.

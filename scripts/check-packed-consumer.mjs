@@ -27,10 +27,11 @@
 //    copy of `QbitApiError`: the testing build must import nothing from the
 //    client at runtime.
 // 4. Loads `@qbit-oss/api/testing` from a copy of the package without its
-//    `exports` field, as Jest before 28, webpack 4 and Metro without package
-//    exports resolve it: `require` must find the CommonJS build through the
-//    `testing/package.json` shim's `main`, whose `module` and `types` name the
-//    ESM build and the declarations.
+//    `exports` field, as resolvers that ignore it see the package (Jest
+//    before 28 and Metro without package exports resolve it through `main`):
+//    `require` must find the CommonJS build through the `testing/package.json`
+//    shim's `main`, whose `module` and `types` name the ESM build and the
+//    declarations.
 //
 // Package names, and so the install paths and import specifiers, come from
 // each package's package.json, and must match the name in its tarball.

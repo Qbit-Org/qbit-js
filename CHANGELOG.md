@@ -48,17 +48,32 @@ breaking changes bump MINOR.
   each request, and injects per-route faults: an HTTP status with
   `Retry-After`, a refused connection, a stalled body, and a submission that is
   accepted, rejected with a node code, or accepted with its reply lost. Without
-  a fault, a submission gets qbit Core v1.0.0's verdict from the outputs the
-  fixture and earlier submissions create and spend: `-27` for a transaction in
-  a block while one of its outputs is unspent, `-25` for a spend of an output
-  that is unknown or spent in a block, and `-26` for a conflict with a mempool
-  transaction, which the mock never takes as a replacement. Its options are
-  validated up front, and `null` is refused, not taken as the default. It
-  ships in both builds with type declarations, and imports nothing from the
-  client at runtime. A `testing/package.json` shim points resolvers that
-  ignore `exports` at it: TypeScript's `moduleResolution: "node10"`, Jest
-  before 28, webpack 4 and Metro without package exports. `@qbit-oss/api`
-  itself resolves as before. See [Testing](packages/api/docs/testing.md).
+  a fault, a submission gets qbit Core v1.0.0's `sendrawtransaction` verdict,
+  with Core's code and message, from the outputs the fixture and earlier
+  submissions create and spend, in Core's order: `-22` for hex Core cannot
+  decode, `-25` for an unspendable output with a value (`maxburnamount`),
+  `-27` for a transaction in a block while one of its outputs is unspent,
+  `-26` for a broken `CheckTransaction` rule, `-25` for a spend of an output
+  that is not a coin, `-26` for a broken `CheckTxInputs` rule (an immature
+  coinbase output, input values out of range, outputs worth more than the
+  inputs), `-26` for a conflict with a mempool transaction, which the mock
+  never takes as a replacement, and `-25` for a fee above the default
+  `maxfeerate`. It does not model relay policy or standardness, fee floors,
+  scripts or signatures, lock times or sequence locks, qbit's P2MR-only
+  output rule, mempool limits or replacement. A submission it takes joins the
+  address views, in the mempool until `mine()` confirms it; they follow
+  qbit-electrs, which lists the mempool oldest first. Its options are
+  validated up front: `null`, a `Retry-After` that `Headers` refuses, and a
+  fixture qbit Core could not hold, such as a spend of an unspendable or
+  immature coinbase output, are refused, not taken. It ships in both builds
+  with type declarations, and imports nothing from the client at runtime. A
+  `testing/package.json` shim points resolvers that ignore `exports` at it:
+  TypeScript's `moduleResolution: "node10"` through `types`, and Jest before
+  28 (given a test environment with `Response`, `Headers` and
+  `ReadableStream`) and Metro without package exports through `main`. Like
+  `@qbit-oss/api`, it is built for ES2020, which webpack 4's parser does not
+  support. `@qbit-oss/api` itself resolves as before. See
+  [Testing](packages/api/docs/testing.md).
 - The `unknown_outcome` error message ends "may have been accepted; resubmit
   the same hex, and never rebuild the payment with different inputs" (or
   "resubmit the same hex with its { txid }" when no txid is known) instead of

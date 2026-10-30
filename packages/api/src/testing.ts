@@ -122,7 +122,8 @@ export interface MockBlock {
 
 /**
  * A transaction in the fixture. The mock derives every address view from the
- * fixture's transactions: the address stats, unspent outputs and history.
+ * fixture's transactions and the submissions the node took: the address
+ * stats, unspent outputs and history.
  */
 export interface MockTx {
   /** Transaction id, 64 hex characters. Required unless `hex` is given. */
@@ -136,18 +137,32 @@ export interface MockTx {
   hex?: string
   /**
    * Inputs (default none). An input spends an output of a transaction listed
-   * before this one, or one outside the fixture. No output is spent twice.
+   * before this one, or one outside the fixture. No output is spent twice,
+   * and none that is unspendable (an `OP_RETURN` scriptPubKey, or one over
+   * 10,000 bytes).
    */
   vin?: MockInput[]
-  /** Outputs, at least one. */
+  /**
+   * Outputs, at least one. The outputs, and the outputs the inputs spend, are
+   * each worth at most `MAX_MONEY`, 21,000,000,000,000,000 sats, in total.
+   */
   vout: MockOutput[]
   /**
    * Fee in satoshis (default: inputs minus outputs, or 0 without inputs). It
-   * must equal inputs minus outputs when there are inputs.
+   * must equal inputs minus outputs when there are inputs, and be 0 for a
+   * coinbase.
    */
   fee?: number
   /** The block that holds it; omit it for a transaction in the mempool. */
   block?: MockBlock
+  /**
+   * Whether it is a block's coinbase transaction (default `false`). A
+   * coinbase has a `block` and no `vin`, its `hex`, if given, is a coinbase
+   * transaction, whose input the mock serves, and its outputs mature 1,000 blocks
+   * after it: a transaction spends one only in a block at least 1,000 higher,
+   * or in the mempool once the tip is at least 999 higher.
+   */
+  coinbase?: boolean
 }
 
 /** The chain tip a mock reports. */
@@ -178,8 +193,9 @@ export interface MockStatusFault {
   /** HTTP status, an integer from 200 to 599. */
   status: number
   /**
-   * `Retry-After` header: delta-seconds as a non-negative integer, or the raw
-   * header value (an HTTP date, say).
+   * `Retry-After` header: delta-seconds as a non-negative safe integer, or the
+   * raw header value (an HTTP date, say): any string `Headers` accepts as a
+   * header value, which it trims of leading and trailing whitespace.
    */
   retryAfter?: number | string
   /** Reply body (default empty; none for 204, 205 and 304). */
@@ -343,29 +359,35 @@ export interface MockEsplora {
  * to pass to `EsploraClient` or `MempoolQbitClient` as `fetchFn`. For tests
  * only, never production.
  *
- * It serves every route the two clients call, from one fixture, so the views
- * agree: address stats, unspent outputs and history pages are derived from
- * `txs`, as are `GET /tx/:txid`, its `/hex` and its `/status`.
+ * It serves every route the two clients call, from one fixture and the
+ * submissions the node takes, so the views agree: address stats, unspent
+ * outputs and history pages are derived from them as qbit-electrs derives
+ * them, as are `GET /tx/:txid`, its `/hex` and its `/status`.
  *
- * Without a fault, the node judges a submission as qbit Core v1.0.0 does,
- * from the outputs the fixture and the submissions it took create and spend,
- * and the first answer that applies is its reply: RPC error `-22` for hex it
- * cannot decode; `-27` for a transaction in a block while the chain holds
- * one of its outputs unspent (a mempool spend does not count); the txid for
- * one in its mempool; `-26 bad-txns-inputs-duplicate` for one that spends an
- * output twice; `-25 bad-txns-inputs-missingorspent` for one that spends an
- * output that is unknown, spent in a block, or unspendable (an `OP_RETURN` or
- * oversized script); and `-26 insufficient fee` for one that spends an output
- * a mempool transaction spends. qbit Core takes such a conflict as a
- * replacement (full RBF) when it passes its replacement checks, which ask for
- * a higher feerate and more fees among other things; the mock never replaces.
- * The node takes any other transaction: the mock checks no script,
- * signature, amount, fee or relay policy.
+ * Without a fault, the node judges a submission as qbit Core v1.0.0's
+ * `sendrawtransaction` does, from the outputs the fixture and the submissions
+ * it took create and spend, and the first answer that applies, in Core's
+ * order, is its reply: RPC error `-22` for hex it cannot decode; `-25` for an
+ * unspendable output with a value (its `maxburnamount` check); `-27` for a
+ * transaction in a block while one of its outputs is unspent; the txid for
+ * one in its mempool; `-26` for one that breaks a `CheckTransaction` rule (no
+ * inputs or no outputs, oversized, an output value or the output total out of
+ * range, an output spent twice, a malformed coinbase input) and for a
+ * coinbase; `-25 bad-txns-inputs-missingorspent` for one that spends an
+ * output that is not a coin; `-26` for one that breaks a `CheckTxInputs` rule
+ * (an immature coinbase output, input values out of range, outputs worth more
+ * than its inputs); `-26 bad-txns-spends-conflicting-tx` for one that spends
+ * an output of a mempool transaction it conflicts with;
+ * `-26 insufficient fee` for any other conflict with a mempool transaction,
+ * since the mock never replaces one; and `-25` for a fee above
+ * `sendrawtransaction`'s default `maxfeerate`, 0.1 coin per kvB. It takes any
+ * other transaction: the mock models no relay policy or standardness rule,
+ * fee floor, script or signature, lock time or sequence lock, qbit's
+ * P2MR-only output rule, mempool limit or replacement.
  *
- * A submission the node takes joins the mempool and is found by those
- * lookups, and {@link MockEsplora.mine} confirms it; only fixture
- * transactions count in the address views. Faults replace a route's reply;
- * see {@link MockFault}.
+ * A submission the node takes joins the mempool, the address views and those
+ * lookups, and {@link MockEsplora.mine} confirms it. Faults replace a route's
+ * reply; see {@link MockFault}.
  *
  * @remarks
  * See [Testing](https://github.com/Qbit-Org/qbit-js/blob/main/packages/api/docs/testing.md).
@@ -373,11 +395,14 @@ export interface MockEsplora {
  * @param options - The backend, its fixture and the faults to inject.
  * @returns The mock, with its `fetchFn` and the requests it received.
  * @throws TypeError when an option is missing, unknown or malformed (a txid,
- *   address or hex string, a negative or non-finite number, an unknown route
- *   or fault kind, `null`), or the fixture is inconsistent (a spend of a
- *   missing or already-spent output, a confirmed spend of an unconfirmed
- *   output, a fee that does not balance, two hashes or times for one block
- *   height, a tip hash that is not the fixture block's at its height).
+ *   address or hex string, a negative or non-finite number, a `Retry-After`
+ *   value `Headers` refuses, an unknown route or fault kind, `null`), or the
+ *   fixture is inconsistent (a spend of a missing, already-spent or
+ *   unspendable output, a confirmed spend of an unconfirmed output, a spend of
+ *   an immature coinbase output, a coinbase with inputs, a fee or no block, or
+ *   with hex that is not a coinbase's, a fee that does not balance, outputs or
+ *   inputs worth more than `MAX_MONEY` in total, two hashes or times for one
+ *   block height, a tip hash that is not the fixture block's at its height).
  *
  * @example
  * ```ts
@@ -443,8 +468,9 @@ interface TxRecord {
   size: number
   weight: number
   block: Required<MockBlock> | undefined
-  /** Fixture transactions count in the address views; submissions do not. */
-  inAddressViews: boolean
+  /** A coinbase has no inputs in `vin`; its coinbase input is `coinbaseInput`. */
+  coinbase: boolean
+  coinbaseInput: { scriptsig: string; sequence: number } | undefined
 }
 
 interface InputRecord {
@@ -459,7 +485,8 @@ interface InputRecord {
 
 interface OutputRecord {
   address: string | undefined
-  value: number
+  /** Satoshis, exact: a submission's output can exceed `Number.MAX_SAFE_INTEGER`. */
+  value: bigint
   scriptPubKey: string
 }
 
@@ -489,6 +516,20 @@ const CHAIN_PAGE_SIZE = 25
 /** Rows `/txs/mempool` lists, and rows per combined `/txs` page (`--rest-default-max-mempool-txs`). */
 const MEMPOOL_PAGE_SIZE = 50
 const MAX_UINT32 = 0xffff_ffff
+// qbit Core's consensus constants (qbit 7ebcddb): COIN and MAX_MONEY,
+// 210,000,000 coins (src/consensus/amount.h:15, :26), which is above
+// Number.MAX_SAFE_INTEGER; MAX_BLOCK_WEIGHT, COINBASE_MATURITY and
+// WITNESS_SCALE_FACTOR (src/consensus/consensus.h:15, :19, :22).
+const COIN = 100_000_000n
+const MAX_MONEY = 210_000_000n * COIN
+const MAX_BLOCK_WEIGHT = 2_000_000
+const COINBASE_MATURITY = 1_000
+const WITNESS_SCALE_FACTOR = 1
+/** `sendrawtransaction`'s default `maxfeerate`, 0.1 coin per kvB, per byte (src/node/transaction.h:27). */
+const MAX_RAW_TX_FEE_PER_BYTE = COIN / 10n / 1_000n
+/** A null prevout, which only a coinbase input has (src/primitives/transaction.h:34, :42). */
+const NULL_TXID = '0'.repeat(64)
+const NULL_INDEX = MAX_UINT32
 const NULL_BODY_STATUSES = new Set([204, 205, 304])
 const BACKENDS: readonly MockBackend[] = ['esplora', 'mempool-qbit']
 const ROUTES: readonly MockRoute[] = [
@@ -575,15 +616,46 @@ function createState(options: MockEsploraOptions): State {
       `createMockEsplora: options.tip.hash ${state.tipHash} is not the hash of fixture block ${height} (${tipBlock.hash})`
     )
   }
+  // The mempool holds a spend of a coinbase output only once the output is
+  // mature in the next block (src/validation.cpp:939-940).
+  for (const [i, tx] of [...state.txs.values()].entries()) {
+    if (tx.block !== undefined) continue
+    for (const [n, input] of tx.vin.entries()) {
+      const depth = coinbaseDepth(state, input, height + 1)
+      if (depth !== undefined && depth < COINBASE_MATURITY) {
+        throw new TypeError(
+          `createMockEsplora: options.txs[${i}].vin[${n}] spends coinbase output ${input.txid}:${input.vout} in the mempool at depth ${depth}, below ${COINBASE_MATURITY}`
+        )
+      }
+    }
+  }
   return state
 }
 
+/**
+ * How deep a spend at `spendHeight` finds the coinbase output `input` spends,
+ * as `CheckTxInputs` measures it (src/consensus/tx_verify.cpp:178-182), or
+ * undefined when the output is not a known coinbase's.
+ */
+function coinbaseDepth(state: State, input: { txid: string }, spendHeight: number): number | undefined {
+  const funding = state.txs.get(input.txid)
+  return funding?.coinbase === true ? spendHeight - funding.block!.height : undefined
+}
+
 function addFixtureTx(state: State, value: unknown, where: string, blocks: Map<number, Required<MockBlock>>): void {
-  const tx = record(value, where, ['txid', 'hex', 'vin', 'vout', 'fee', 'block'])
+  const tx = record(value, where, ['txid', 'hex', 'vin', 'vout', 'fee', 'block', 'coinbase'])
+  const coinbase = tx['coinbase'] === undefined ? false : tx['coinbase']
+  if (typeof coinbase !== 'boolean') {
+    throw new TypeError(`createMockEsplora: ${where}.coinbase must be a boolean, not ${show(coinbase)}`)
+  }
   const hex = tx['hex'] === undefined ? undefined : hexString(tx['hex'], `${where}.hex`)
   const parsed = hex === undefined ? undefined : parseRawTx(hex)
   if (hex !== undefined && parsed === undefined) {
     throw new TypeError(`createMockEsplora: ${where}.hex is not a well-formed transaction`)
+  }
+  // Core's decoder takes one with no inputs, which CheckTransaction then refuses (src/consensus/tx_check.cpp:14-15).
+  if (parsed !== undefined && parsed.vin.length === 0) {
+    throw new TypeError(`createMockEsplora: ${where}.hex is a transaction with no inputs, which qbit Core never holds`)
   }
   let txid = parsed?.txid
   if (tx['txid'] !== undefined) {
@@ -620,22 +692,32 @@ function addFixtureTx(state: State, value: unknown, where: string, blocks: Map<n
   const vin = list(tx['vin'], `${where}.vin`).map((input, i) => checkInput(state, input, `${where}.vin[${i}]`, block))
   const outpoints = new Set(vin.map(input => `${input.txid}:${input.vout}`))
   if (outpoints.size !== vin.length) throw new TypeError(`createMockEsplora: ${where} spends one output twice`)
+  if (coinbase && (block === undefined || vin.length > 0)) {
+    throw new TypeError(`createMockEsplora: ${where} is a coinbase, so it needs a block and no vin`)
+  }
+  if (coinbase && parsed !== undefined && !isCoinbase(parsed)) {
+    throw new TypeError(`createMockEsplora: ${where} is a coinbase, but its hex is not a coinbase transaction`)
+  }
 
-  const outSum = vout.reduce((sum, output) => sum + output.value, 0)
-  const inSum = vin.reduce((sum, input) => sum + input.prevout!.value, 0)
-  if (!Number.isSafeInteger(outSum) || !Number.isSafeInteger(inSum)) {
-    throw new TypeError(`createMockEsplora: ${where} moves more than ${Number.MAX_SAFE_INTEGER} sats`)
+  // qbit Core refuses outputs or inputs worth more than MAX_MONEY in total
+  // (src/consensus/tx_check.cpp:31-33, src/consensus/tx_verify.cpp:185-188).
+  const outSum = vout.reduce((sum, output) => sum + output.value, 0n)
+  const inSum = vin.reduce((sum, input) => sum + input.prevout!.value, 0n)
+  if (outSum > MAX_MONEY || inSum > MAX_MONEY) {
+    throw new TypeError(`createMockEsplora: ${where} moves more than MAX_MONEY (${MAX_MONEY} sats)`)
   }
   const balance = inSum - outSum
-  if (vin.length > 0 && balance < 0) {
+  if (vin.length > 0 && balance < 0n) {
     throw new TypeError(`createMockEsplora: ${where} pays out ${outSum} sats but spends only ${inSum}`)
   }
-  let fee = vin.length > 0 ? balance : 0
+  let fee = vin.length > 0 ? Number(balance) : 0
   if (tx['fee'] !== undefined) {
     const given = nonNegativeInteger(tx['fee'], `${where}.fee`)
-    if (vin.length > 0 && given !== balance) {
+    if (vin.length > 0 && BigInt(given) !== balance) {
       throw new TypeError(`createMockEsplora: ${where}.fee ${given} is not inputs minus outputs (${balance})`)
     }
+    // qbit-electrs reports a coinbase's fee as 0 (src/util/fees.rs:53-55).
+    if (coinbase && given !== 0) throw new TypeError(`createMockEsplora: ${where} is a coinbase, so its fee is 0`)
     fee = given
   }
   state.txs.set(txid, {
@@ -649,7 +731,10 @@ function addFixtureTx(state: State, value: unknown, where: string, blocks: Map<n
     size: parsed?.size ?? 0,
     weight: parsed?.weight ?? 0,
     block,
-    inAddressViews: true,
+    coinbase,
+    coinbaseInput: coinbase
+      ? { scriptsig: parsed?.vin[0]?.scriptsig ?? '', sequence: parsed?.vin[0]?.sequence ?? MAX_UINT32 }
+      : undefined,
   })
 }
 
@@ -657,7 +742,7 @@ function checkOutput(value: unknown, where: string): OutputRecord {
   const output = record(value, where, ['address', 'value', 'scriptPubKey'])
   return {
     address: output['address'] === undefined ? undefined : checkAddress(output['address'], `${where}.address`),
-    value: nonNegativeInteger(output['value'], `${where}.value`),
+    value: BigInt(nonNegativeInteger(output['value'], `${where}.value`)),
     scriptPubKey:
       output['scriptPubKey'] === undefined
         ? ''
@@ -675,7 +760,7 @@ function checkInput(state: State, value: unknown, where: string, block: Required
     )
   }
   const address = input['address'] === undefined ? undefined : checkAddress(input['address'], `${where}.address`)
-  const given = input['value'] === undefined ? undefined : nonNegativeInteger(input['value'], `${where}.value`)
+  const given = input['value'] === undefined ? undefined : BigInt(nonNegativeInteger(input['value'], `${where}.value`))
   const funding = state.txs.get(txid)
   let prevout: OutputRecord
   if (funding === undefined) {
@@ -690,12 +775,26 @@ function checkInput(state: State, value: unknown, where: string, block: Required
     if ((address !== undefined && address !== output.address) || (given !== undefined && given !== output.value)) {
       throw new TypeError(`createMockEsplora: ${where} disagrees with the output ${txid}:${vout} it spends`)
     }
+    // No valid transaction spends an unspendable output: qbit Core never adds one to the UTXO set
+    // (src/coins.cpp:74), and its script fails every spend (src/script/interpreter.cpp:516-517, :789-791, :2445).
+    if (isUnspendable(output)) {
+      throw new TypeError(
+        `createMockEsplora: ${where} spends ${txid}:${vout}, which is unspendable (an OP_RETURN scriptPubKey or one over ${MAX_SCRIPT_SIZE} bytes)`
+      )
+    }
     if (block !== undefined && funding.block === undefined) {
       throw new TypeError(`createMockEsplora: ${where} is confirmed but spends ${txid}:${vout}, which is not`)
     }
     if (block !== undefined && funding.block!.height > block.height) {
       throw new TypeError(
         `createMockEsplora: ${where} spends ${txid}:${vout} in a block below the one that confirms it`
+      )
+    }
+    // A block spends a coinbase output only once it is mature at the block's height (src/validation.cpp:2867).
+    const depth = block === undefined ? undefined : coinbaseDepth(state, { txid }, block.height)
+    if (depth !== undefined && depth < COINBASE_MATURITY) {
+      throw new TypeError(
+        `createMockEsplora: ${where} spends coinbase output ${txid}:${vout} at depth ${depth}, below ${COINBASE_MATURITY}`
       )
     }
     prevout = output
@@ -791,14 +890,25 @@ function checkStatus(value: unknown, where: string): number {
   return value as number
 }
 
+/**
+ * A `Retry-After` the mock can send: non-negative integer seconds, or a string
+ * that `Headers`, which builds every reply's headers, accepts as a header
+ * value. Asking `Headers` itself applies its rules exactly: a value with a
+ * NUL, CR or LF inside it, or a character above U+00FF, is refused.
+ */
 function checkRetryAfter(value: unknown, where: string): void {
-  const valid =
-    typeof value === 'number'
-      ? Number.isSafeInteger(value) && value >= 0
-      : typeof value === 'string' && value !== '' && !/[\r\n]/.test(value)
+  let valid = typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+  if (typeof value === 'string') {
+    try {
+      new Headers([['retry-after', value]])
+      valid = true
+    } catch {
+      valid = false
+    }
+  }
   if (!valid) {
     throw new TypeError(
-      `createMockEsplora: ${where} must be non-negative integer seconds or a header value, not ${show(value)}`
+      `createMockEsplora: ${where} must be non-negative integer seconds or a header value Headers accepts, not ${show(value)}`
     )
   }
 }
@@ -1025,16 +1135,14 @@ function routeReply(state: State, match: RouteMatch, body: string | undefined): 
   }
 }
 
+// The address views, from the fixture and the submissions the node took, as
+// qbit-electrs 53102e9 builds them from its chain index and its mempool
+// (src/new_index/query.rs, src/new_index/mempool.rs, src/rest.rs). Faults
+// aside, mempool-qbit passes these routes through from it.
+
 function addressReply(state: State, { route, param: address, cursor }: RouteMatch): Response {
   if (!ADDRESS_PATTERN.test(address)) return text(400, 'Invalid address')
-  const txs = [...state.txs.values()].filter(tx => tx.inAddressViews && touches(tx, address))
-  // Newest first: the mempool in reverse arrival order, the chain by height and then reverse arrival order.
-  const mempool = txs.filter(tx => tx.block === undefined).reverse()
-  const chain = txs
-    .filter(tx => tx.block !== undefined)
-    .map((tx, index) => ({ tx, index }))
-    .sort((a, b) => b.tx.block!.height - a.tx.block!.height || b.index - a.index)
-    .map(({ tx }) => tx)
+  const { chain, mempool } = addressHistory(state, address)
   switch (route) {
     case 'GET /address/:address':
       return json(addressStats(address, chain, mempool))
@@ -1043,7 +1151,7 @@ function addressReply(state: State, { route, param: address, cursor }: RouteMatc
     case 'GET /address/:address/txs/mempool':
       return json(mempool.slice(0, MEMPOOL_PAGE_SIZE).map(txJson))
     case 'GET /address/:address/txs/chain': {
-      // An unparseable cursor is ignored, and one qbit-electrs cannot find yields `[]`.
+      // An unparseable cursor is ignored (src/rest.rs:1154), and one qbit-electrs cannot find yields `[]`.
       const lastSeen = cursor !== undefined && TXID_PATTERN.test(cursor) ? cursor.toLowerCase() : undefined
       return json(after(chain, lastSeen, CHAIN_PAGE_SIZE).map(txJson))
     }
@@ -1053,23 +1161,56 @@ function addressReply(state: State, { route, param: address, cursor }: RouteMatc
 }
 
 /**
+ * The transactions that touch `address`. The chain is newest first: by block
+ * height, then by position in the block, last first (src/rest.rs:1165-1171);
+ * a block's transactions are in the order the mock learned them. The mempool
+ * is in arrival order, oldest first, since qbit-electrs appends each
+ * transaction's rows to the address's list and reads it from the front
+ * (src/new_index/mempool.rs:155-177, :569-571).
+ */
+function addressHistory(state: State, address: string): { chain: TxRecord[]; mempool: TxRecord[] } {
+  const chain = [...state.txs.values()]
+    .map((tx, index) => ({ tx, index }))
+    .filter(({ tx }) => tx.block !== undefined && touches(tx, address))
+    .sort((a, b) => b.tx.block!.height - a.tx.block!.height || b.index - a.index)
+    .map(({ tx }) => tx)
+  return { chain, mempool: indexedMempool(state).filter(tx => touches(tx, address)) }
+}
+
+/**
+ * The mempool transactions qbit-electrs indexes: it skips one whose spent
+ * outputs it cannot all find, which then has no rows and no spend edges
+ * (src/new_index/mempool.rs:508-517). Only an `accepted` or `lost-reply`
+ * fault can put such a transaction in the mock's mempool.
+ */
+function indexedMempool(state: State): TxRecord[] {
+  return [...state.txs.values()].filter(
+    tx => tx.block === undefined && tx.vin.every(input => input.prevout !== undefined)
+  )
+}
+
+/**
  * qbit-electrs's combined route, which mempool-qbit passes through: a page of
- * up to 50 rows, mempool rows first. A cursor that is the last mempool row is
- * passed on to the chain history, where it is not found, so the page is
- * empty; a cursor found nowhere is an error.
+ * up to 50 rows by default, which the clients keep, mempool rows first
+ * (src/rest.rs:954-1027). An unparseable cursor is ignored (:959-961). A
+ * cursor is looked up among every transaction, not only the address's
+ * (:601-613): one in a block pages the chain history after it, and one in
+ * the mempool pages the mempool rows after it, then the chain from the top;
+ * when no mempool rows follow it, the cursor is passed on to the chain
+ * history, where it is not found, so the page is empty. A cursor found
+ * nowhere is an error.
  */
 function combinedHistory(state: State, chain: TxRecord[], mempool: TxRecord[], cursor: string | undefined): Response {
-  const id = cursor?.toLowerCase()
-  if (id !== undefined && !mempool.some(tx => tx.txid === id)) {
-    if (!chain.some(tx => tx.txid === id)) {
-      return state.backend === 'esplora'
-        ? text(422, 'after_txid not found')
-        : text(500, JSON.stringify({ error: 'Failed to get address transactions' }), {
-            'content-type': 'application/json',
-          })
-    }
-    return json(after(chain, id, MEMPOOL_PAGE_SIZE).map(txJson))
+  const id = cursor !== undefined && TXID_PATTERN.test(cursor) ? cursor.toLowerCase() : undefined
+  const located = id === undefined ? undefined : state.txs.get(id)
+  if (id !== undefined && located === undefined) {
+    return state.backend === 'esplora'
+      ? text(422, 'after_txid not found')
+      : text(500, JSON.stringify({ error: 'Failed to get address transactions' }), {
+          'content-type': 'application/json',
+        })
   }
+  if (located?.block !== undefined) return json(after(chain, id, MEMPOOL_PAGE_SIZE).map(txJson))
   const rows = after(mempool, id, MEMPOOL_PAGE_SIZE)
   if (rows.length < MEMPOOL_PAGE_SIZE) {
     rows.push(...after(chain, rows.length > 0 ? undefined : id, MEMPOOL_PAGE_SIZE - rows.length))
@@ -1088,32 +1229,53 @@ function touches(tx: TxRecord, address: string): boolean {
   return tx.vout.some(output => output.address === address) || tx.vin.some(input => input.prevout?.address === address)
 }
 
+/**
+ * `chain_stats` counts confirmed transactions only, and `mempool_stats`
+ * mempool ones only (src/new_index/query.rs:152-157): every output paying the
+ * address, even one a later mempool transaction spends, every input spending
+ * from it, whether the output it spends is confirmed or not, and the distinct
+ * transactions (src/new_index/mempool.rs:280-326, :535-571). So a mempool
+ * spend of a confirmed output leaves it funded in `chain_stats` and counts
+ * it spent in `mempool_stats`.
+ */
 function addressStats(address: string, chain: TxRecord[], mempool: TxRecord[]): EsploraAddressStats {
   const part = (txs: TxRecord[]): EsploraChainStats => {
     const funded = txs.flatMap(tx => tx.vout.filter(output => output.address === address))
     const spent = txs.flatMap(tx => tx.vin.filter(input => input.prevout?.address === address))
     return {
       funded_txo_count: funded.length,
-      funded_txo_sum: funded.reduce((sum, output) => sum + output.value, 0),
+      funded_txo_sum: Number(funded.reduce((sum, output) => sum + output.value, 0n)),
       spent_txo_count: spent.length,
-      spent_txo_sum: spent.reduce((sum, input) => sum + input.prevout!.value, 0),
+      spent_txo_sum: Number(spent.reduce((sum, input) => sum + input.prevout!.value, 0n)),
       tx_count: txs.length,
     }
   }
   return { address, chain_stats: part(chain), mempool_stats: part(mempool) }
 }
 
-/** The address's outputs that no fixture transaction spends, confirmed or not, in fixture order. */
+/**
+ * The address's unspent outputs, as qbit-electrs lists them
+ * (src/new_index/query.rs:126-136): the confirmed ones no confirmed or mempool
+ * transaction spends, then the mempool ones no mempool transaction spends
+ * (src/new_index/mempool.rs:239-277), each part in the order the mock learned
+ * the transactions. qbit-electrs lists the confirmed part in no fixed order
+ * (src/new_index/schema.rs:314).
+ */
 function unspentOutputs(state: State, address: string): EsploraUtxo[] {
-  const fixture = [...state.txs.values()].filter(tx => tx.inAddressViews)
-  const spent = new Set(fixture.flatMap(tx => tx.vin.map(input => `${input.txid}:${input.vout}`)))
-  return fixture.flatMap(tx =>
-    tx.vout.flatMap((output, vout) =>
-      output.address === address && !spent.has(`${tx.txid}:${vout}`)
-        ? [{ txid: tx.txid, vout, value: output.value, status: txStatus(tx) }]
-        : []
+  const outpoints = (txs: TxRecord[]) => txs.flatMap(tx => tx.vin.map(input => `${input.txid}:${input.vout}`))
+  const confirmed = [...state.txs.values()].filter(tx => tx.block !== undefined)
+  const mempool = indexedMempool(state)
+  const mempoolSpent = new Set(outpoints(mempool))
+  const chainSpent = new Set([...outpoints(confirmed), ...mempoolSpent])
+  const unspent = (txs: TxRecord[], spent: Set<string>): EsploraUtxo[] =>
+    txs.flatMap(tx =>
+      tx.vout.flatMap((output, vout) =>
+        output.address === address && !spent.has(`${tx.txid}:${vout}`)
+          ? [{ txid: tx.txid, vout, value: Number(output.value), status: txStatus(tx) }]
+          : []
+      )
     )
-  )
+  return [...unspent(confirmed, chainSpent), ...unspent(mempool, mempoolSpent)]
 }
 
 function txReply(state: State, { route, param }: RouteMatch): Response {
@@ -1138,7 +1300,25 @@ function txStatus(tx: TxRecord): EsploraTxStatus {
     : { confirmed: true, block_height: tx.block.height, block_hash: tx.block.hash, block_time: tx.block.time }
 }
 
+/** A coinbase's input, as qbit-electrs serves it (src/rest.rs:260-305). */
+function coinbaseVinJson({ scriptsig, sequence }: { scriptsig: string; sequence: number }): EsploraVin {
+  return {
+    txid: NULL_TXID,
+    vout: NULL_INDEX,
+    prevout: null,
+    scriptsig,
+    scriptsig_asm: '',
+    is_coinbase: true,
+    sequence,
+  }
+}
+
 function txJson(tx: TxRecord): EsploraTx {
+  if (tx.coinbaseInput !== undefined) return { ...spendJson(tx), vin: [coinbaseVinJson(tx.coinbaseInput)] }
+  return spendJson(tx)
+}
+
+function spendJson(tx: TxRecord): EsploraTx {
   return {
     txid: tx.txid,
     version: tx.version,
@@ -1167,7 +1347,7 @@ function voutJson(output: OutputRecord): EsploraVout {
     scriptpubkey_asm: '',
     scriptpubkey_type: 'unknown',
     ...(output.address === undefined ? {} : { scriptpubkey_address: output.address }),
-    value: output.value,
+    value: Number(output.value),
   }
 }
 
@@ -1177,9 +1357,15 @@ function voutJson(output: OutputRecord): EsploraVout {
 
 /**
  * One submission, as the node and qbit-electrs or mempool-qbit answer it.
- * Hex the node cannot decode is RPC error -22. Without a fault, the node
- * then judges the transaction as {@link nodeVerdict} says, and takes any it
- * does not refuse into its mempool. `POST /tx/push` reads the hex from a
+ * qbit-electrs hands the body to `sendrawtransaction` as it is
+ * (src/rest.rs:1512-1526, src/daemon.rs:775-776) and relays a refusal as a
+ * `400` whose body is `sendrawtransaction RPC error: ` and the RPC error
+ * object (src/daemon.rs:136, src/rest.rs:2117-2121). Hex the node cannot
+ * decode is RPC error -22, with Core's message (src/rpc/mempool.cpp:80-82).
+ * Without a fault, the node then judges the transaction as
+ * {@link nodeVerdict} says, and takes any it does not refuse into its
+ * mempool, which qbit-electrs adds to its own mempool index at once
+ * (src/new_index/query.rs:91-103). `POST /tx/push` reads the hex from a
  * `txHash=` form body.
  */
 function broadcast(
@@ -1195,7 +1381,7 @@ function broadcast(
   const parsed = parseRawTx(hex)
   if (parsed === undefined) {
     if (outcome === 'lost-reply') throw connectionReset()
-    return rpcError(-22, 'TX decode failed')
+    return rpcError(-22, 'TX decode failed. Make sure the tx has at least one input.')
   }
   if (outcome === undefined) {
     const refusal = nodeVerdict(state, parsed)
@@ -1207,31 +1393,96 @@ function broadcast(
 }
 
 /**
- * qbit Core v1.0.0's verdict on a decoded submission, in the order
- * `sendrawtransaction` reaches it, or undefined when the node takes it or
- * already has it in its mempool. The node's coins are the outputs of the
- * transactions it knows, the fixture's and the submissions it took, less those
- * a confirmed transaction spends and those no transaction can spend.
+ * qbit Core v1.0.0's verdict on a decoded submission (qbit 7ebcddb), in the
+ * order `sendrawtransaction` reaches it, or undefined when the node takes it
+ * or already has it in its mempool. The node's coins are the outputs of the
+ * transactions it knows, the fixture's and the submissions it took, less
+ * those a confirmed transaction spends and the unspendable outputs of
+ * confirmed transactions, which never join the UTXO set (src/coins.cpp:74).
+ * The mempool's view of the coins adds every output of a mempool
+ * transaction, an unspendable one included (src/txmempool.cpp:1020-1029,
+ * src/validation.cpp:893-916); Core refuses a spend of that later, in checks
+ * the mock does not model, such as the script check.
  *
- * 1. `-27` while an output of the transaction itself is a coin and the
- *    transaction is in a block (`BroadcastTransaction` asks the chain's UTXO
- *    set, which a mempool spend does not change).
- * 2. A transaction in the mempool is answered with its txid.
- * 3. `-26 bad-txns-inputs-duplicate` for one that spends an output twice
- *    (`CheckTransaction`).
- * 4. `-25 bad-txns-inputs-missingorspent` for one that spends an output that
- *    is not a coin: unknown, spent in a block, or unspendable. A confirmed
- *    transaction whose outputs are all spent gets it too, since its own
- *    inputs are spent.
- * 5. `-26 insufficient fee` for one that spends an output a mempool
+ * A refusal carries the code `sendrawtransaction` returns for it: a mempool
+ * rejection is `TransactionError::MISSING_INPUTS` for missing inputs and
+ * `MEMPOOL_REJECTED` otherwise (src/node/transaction.cpp:21-32), which are
+ * RPC errors -25 and -26 (src/rpc/util.cpp:502-511, src/rpc/protocol.h:46-55).
+ * Its message is the reject reason, then `, ` and the debug message when
+ * there is one (src/consensus/validation.h:111-121).
+ *
+ * 1. -25 for an output that is unspendable or holds an invalid opcode and
+ *    has a value above `maxburnamount` (src/rpc/mempool.cpp:84-88), which is
+ *    0 because qbit-electrs passes only the hex (src/rpc/mempool.cpp:77,
+ *    qbit-electrs src/daemon.rs:776).
+ * 2. `BroadcastTransaction` (src/node/transaction.cpp:51-70): -27 while an
+ *    output of the transaction itself is a coin, which only a confirmed
+ *    transaction's can be; then the txid for one in the mempool.
+ * 3. `CheckTransaction` (src/consensus/tx_check.cpp:11-60, called first by
+ *    `PreChecks`, src/validation.cpp:839-841), in its order: -26 for no
+ *    inputs, no outputs, a size without the witness above MAX_BLOCK_WEIGHT,
+ *    an output value below 0 or above MAX_MONEY, an output total above
+ *    MAX_MONEY, an output spent twice, and a coinbase input script under 2 or
+ *    over 100 bytes or a null prevout in any other transaction.
+ * 4. -26 `coinbase` for a coinbase (src/validation.cpp:843-845). The checks
+ *    that follow (:847-869), qbit's P2MR-only outputs, standardness, the
+ *    minimum size and finality, are not modeled.
+ * 5. -25 `bad-txns-inputs-missingorspent` for a spend of an output that is
+ *    not a coin (:893-916): unknown, spent in a block, or an unspendable
+ *    output of a confirmed transaction. A confirmed transaction whose outputs
+ *    are all spent gets it too, since its own inputs are spent. Core's
+ *    `txn-already-known` there needs an output of the transaction itself to
+ *    be a coin, which step 2 answers first.
+ * 6. `CheckTxInputs` (src/consensus/tx_verify.cpp:164-205, called at
+ *    src/validation.cpp:939-942), in its order: -26 for a coinbase output
+ *    below COINBASE_MATURITY deep in the next block, an input value or the
+ *    input total out of range, and inputs worth less than the outputs. Its
+ *    last check, a fee out of range, cannot fail once those pass. The
+ *    sequence locks before it (:929-937) are not modeled, nor are the policy
+ *    checks after it (:944-1114).
+ * 7. -26 `bad-txns-spends-conflicting-tx` for one that spends an output of a
+ *    mempool transaction it conflicts with (:1116-1124,
+ *    src/policy/rbf.cpp:118-131), naming the first such transaction in
+ *    txid byte order, as the mempool's sets hold them
+ *    (src/txmempool.h:373, src/kernel/mempool_entry.h:46-50,
+ *    src/uint256.h:64-68).
+ * 8. -26 `insufficient fee` for any other spend of an output a mempool
  *    transaction spends. Core takes such a conflict as a replacement when it
- *    passes `ReplacementChecks` (a higher feerate and more fees, among other
- *    things), and otherwise refuses it so, with the feerates or fees it
- *    compared appended; the mock never replaces.
+ *    passes `ReplacementChecks` (src/validation.cpp:1131-1190); a conflict
+ *    that fails them gets `insufficient fee, rejecting replacement <txid>`
+ *    and the feerates or fees compared, or a limit's reason
+ *    (src/policy/rbf.cpp:73, :110, :150, :169, :178). The mock never
+ *    replaces, and its message stops before the numbers, which it does not
+ *    compute.
+ * 9. -25 for a fee above `maxfeerate` times the size
+ *    (src/node/transaction.cpp:72-81), which `BroadcastTransaction` checks
+ *    once the mempool would take the transaction. qbit-electrs names no
+ *    `maxfeerate`, so it is 0.1 coin per kvB (src/node/transaction.h:27,
+ *    src/rpc/mempool.cpp:54-56, :92-95), and with WITNESS_SCALE_FACTOR 1 the
+ *    size is the serialized size, sigops aside (src/policy/policy.h:189-192,
+ *    src/policy/policy.cpp:424-427).
  *
- * Scripts, signatures, amounts, fees and relay policy are not checked.
+ * Not modeled, so the mock takes what Core refuses for them, unless a
+ * modeled check refuses it (src/validation.cpp unless named): qbit's
+ * P2MR-only outputs (`tx-output-not-p2mr`, :849-852,
+ * src/consensus/restricted_outputs.h:18-46), which mainnet, testnet,
+ * testnet4 and signet enforce (src/kernel/chainparams.cpp:159, :267, :360,
+ * :482), and regtest unless the node runs with `-p2mronly=0`
+ * (src/kernel/chainparams.cpp:571, src/kernel/chainparams.h:153,
+ * src/chainparams.cpp:49, src/init.cpp:494-496); standardness (:854-858) and the 65-byte minimum
+ * size without the witness (:860-862, src/policy/policy.h:39); lock times
+ * (`non-final`, :864-869) and sequence locks (`non-BIP68-final`, :929-937);
+ * standard inputs and witnesses, the sigop limit, dust, the minimum relay
+ * feerate and the mempool's minimum fee (:944-1005, :746); mempool chain
+ * limits (`too-long-mempool-chain`, :1049-1086) and TRUC rules (:1091-1114);
+ * scripts and signatures (:1291, :1314); and a full mempool (:1534).
  */
 function nodeVerdict(state: State, parsed: ParsedTx): Response | undefined {
+  const reject = (reason: string): Response => rpcError(-26, reason)
+  if (parsed.vout.some(output => output.value > 0n && (isUnspendable(output) || !hasValidOps(output.scriptPubKey)))) {
+    return rpcError(-25, 'Unspendable output exceeds maximum configured by user (maxburnamount)')
+  }
+
   const spenders = new Map<string, TxRecord[]>()
   for (const tx of state.txs.values()) {
     for (const input of tx.vin) {
@@ -1239,29 +1490,126 @@ function nodeVerdict(state: State, parsed: ParsedTx): Response | undefined {
       spenders.set(outpoint, [...(spenders.get(outpoint) ?? []), tx])
     }
   }
-  const isCoin = (txid: string, vout: number): boolean => {
-    const output = state.txs.get(txid)?.vout[vout]
-    if (output === undefined || isUnspendable(output)) return false
+  // A coin in the chain's UTXO set: an output of a confirmed transaction that
+  // is spendable and that no confirmed transaction spends.
+  const isChainCoin = (txid: string, vout: number): boolean => {
+    const funding = state.txs.get(txid)
+    const output = funding?.vout[vout]
+    if (funding?.block === undefined || output === undefined || isUnspendable(output)) return false
     return !(spenders.get(`${txid}:${vout}`) ?? []).some(tx => tx.block !== undefined)
   }
+  // A coin in the mempool's view of it, which adds every output of a mempool
+  // transaction, unspendable or spent in the mempool included
+  // (src/txmempool.cpp:1020-1029).
+  const isCoin = (txid: string, vout: number): boolean => {
+    const funding = state.txs.get(txid)
+    if (funding === undefined) return false
+    return funding.block === undefined ? vout < funding.vout.length : isChainCoin(txid, vout)
+  }
   const known = state.txs.get(parsed.txid)
-  if (known?.block !== undefined && parsed.vout.some((_, vout) => isCoin(parsed.txid, vout))) {
+  if (parsed.vout.some((_, vout) => isChainCoin(parsed.txid, vout))) {
     return rpcError(-27, 'Transaction outputs already in utxo set')
   }
   if (known !== undefined && known.block === undefined) return undefined
+
+  if (parsed.vin.length === 0) return reject('bad-txns-vin-empty')
+  if (parsed.vout.length === 0) return reject('bad-txns-vout-empty')
+  if (parsed.strippedSize * WITNESS_SCALE_FACTOR > MAX_BLOCK_WEIGHT) return reject('bad-txns-oversize')
+  let valueOut = 0n
+  for (const { value } of parsed.vout) {
+    if (value < 0n) return reject('bad-txns-vout-negative')
+    if (value > MAX_MONEY) return reject('bad-txns-vout-toolarge')
+    valueOut += value
+    if (!moneyRange(valueOut)) return reject('bad-txns-txouttotal-toolarge')
+  }
   const outpoints = parsed.vin.map(input => `${input.txid}:${input.vout}`)
-  if (new Set(outpoints).size !== outpoints.length) return rpcError(-26, 'bad-txns-inputs-duplicate')
+  if (new Set(outpoints).size !== outpoints.length) return reject('bad-txns-inputs-duplicate')
+  const coinbase = isCoinbase(parsed)
+  if (coinbase) {
+    const length = parsed.vin[0]!.scriptsig.length / 2
+    if (length < 2 || length > 100) return reject('bad-cb-length')
+  } else if (parsed.vin.some(isNullPrevout)) {
+    return reject('bad-txns-prevout-null')
+  }
+  if (coinbase) return reject('coinbase')
+
   if (!parsed.vin.every(input => isCoin(input.txid, input.vout))) {
     return rpcError(-25, 'bad-txns-inputs-missingorspent')
   }
-  if (outpoints.some(outpoint => (spenders.get(outpoint) ?? []).some(tx => tx.block === undefined))) {
-    return rpcError(-26, `insufficient fee, rejecting replacement ${parsed.txid}`)
+
+  let valueIn = 0n
+  for (const input of parsed.vin) {
+    const depth = coinbaseDepth(state, input, state.tipHeight + 1)
+    if (depth !== undefined && depth < COINBASE_MATURITY) {
+      return reject(`bad-txns-premature-spend-of-coinbase, tried to spend coinbase at depth ${depth}`)
+    }
+    const { value } = state.txs.get(input.txid)!.vout[input.vout]!
+    valueIn += value
+    if (!moneyRange(value) || !moneyRange(valueIn)) return reject('bad-txns-inputvalues-outofrange')
+  }
+  if (valueIn < valueOut) {
+    return reject(`bad-txns-in-belowout, value in (${formatMoney(valueIn)}) < value out (${formatMoney(valueOut)})`)
+  }
+
+  const conflicts = new Set(
+    outpoints
+      .flatMap(outpoint => (spenders.get(outpoint) ?? []).filter(tx => tx.block === undefined))
+      .map(tx => tx.txid)
+  )
+  if (conflicts.size > 0) {
+    const spendsConflict = mempoolAncestors(state, parsed)
+      .filter(txid => conflicts.has(txid))
+      .sort((a, b) => compareTxidBytes(a, b))[0]
+    if (spendsConflict !== undefined) {
+      return reject(`bad-txns-spends-conflicting-tx, ${parsed.txid} spends conflicting transaction ${spendsConflict}`)
+    }
+    return reject(`insufficient fee, rejecting replacement ${parsed.txid}`)
+  }
+
+  if (valueIn - valueOut > MAX_RAW_TX_FEE_PER_BYTE * BigInt(parsed.size)) {
+    return rpcError(-25, 'Fee exceeds maximum configured by user (e.g. -maxtxfee, maxfeerate)')
   }
   return undefined
 }
 
-/** qbit Core `CScript::IsUnspendable`: an `OP_RETURN` script, or one over MAX_SCRIPT_SIZE, which nothing can spend. */
-function isUnspendable(output: OutputRecord): boolean {
+/** The mempool transactions `parsed` spends from, and theirs, recursively. */
+function mempoolAncestors(state: State, parsed: ParsedTx): string[] {
+  const found = new Set<string>()
+  const pending = parsed.vin.map(input => input.txid)
+  while (pending.length > 0) {
+    const tx = state.txs.get(pending.pop()!)
+    if (tx === undefined || tx.block !== undefined || found.has(tx.txid)) continue
+    found.add(tx.txid)
+    pending.push(...tx.vin.map(input => input.txid))
+  }
+  return [...found]
+}
+
+/** Order txids as qbit Core's `uint256` compares them: by their bytes in hash order, the reverse of the hex. */
+function compareTxidBytes(a: string, b: string): number {
+  const internal = (txid: string) => txid.match(/../g)!.reverse().join('')
+  return internal(a) < internal(b) ? -1 : internal(a) > internal(b) ? 1 : 0
+}
+
+/** qbit Core `MoneyRange` (src/consensus/amount.h:27). */
+function moneyRange(value: bigint): boolean {
+  return value >= 0n && value <= MAX_MONEY
+}
+
+/**
+ * qbit Core `FormatMoney` (src/util/moneystr.cpp:19-42): coins with eight
+ * decimals, trailing zeros trimmed down to two, as in `0.0015` or `1.00`.
+ */
+function formatMoney(sats: bigint): string {
+  const text = `${sats / COIN}.${(sats % COIN).toString().padStart(8, '0')}`
+  return text.replace(/(\.\d\d\d*?)0+$/, '$1')
+}
+
+/**
+ * qbit Core `CScript::IsUnspendable` (src/script/script.h:682-685): an
+ * `OP_RETURN` script, or one over MAX_SCRIPT_SIZE, which nothing can spend.
+ */
+function isUnspendable(output: { scriptPubKey: string }): boolean {
   return output.scriptPubKey.startsWith('6a') || output.scriptPubKey.length > 2 * MAX_SCRIPT_SIZE
 }
 
@@ -1278,9 +1626,9 @@ function submittedTx(state: State, parsed: ParsedTx, hex: string): TxRecord {
   const vin = parsed.vin.map(input => ({ ...input, prevout: outputs.get(`${input.txid}:${input.vout}`) }))
   const vout = parsed.vout.map(output => ({ ...output, address: addresses.get(output.scriptPubKey) }))
   const inSum = vin.every(input => input.prevout !== undefined)
-    ? vin.reduce((sum, input) => sum + input.prevout!.value, 0)
+    ? vin.reduce((sum, input) => sum + input.prevout!.value, 0n)
     : undefined
-  const outSum = vout.reduce((sum, output) => sum + output.value, 0)
+  const outSum = vout.reduce((sum, output) => sum + output.value, 0n)
   return {
     txid: parsed.txid,
     hex: hex.toLowerCase(),
@@ -1288,11 +1636,12 @@ function submittedTx(state: State, parsed: ParsedTx, hex: string): TxRecord {
     locktime: parsed.locktime,
     vin,
     vout,
-    fee: inSum === undefined ? 0 : Math.max(0, inSum - outSum),
+    fee: inSum === undefined || inSum < outSum ? 0 : Number(inSum - outSum),
     size: parsed.size,
     weight: parsed.weight,
     block: undefined,
-    inAddressViews: false,
+    coinbase: false,
+    coinbaseInput: undefined,
   }
 }
 
@@ -1352,28 +1701,59 @@ interface ParsedTx {
   version: number
   locktime: number
   vin: { txid: string; vout: number; scriptsig: string; witness: string[]; sequence: number }[]
-  vout: { value: number; scriptPubKey: string }[]
+  vout: { value: bigint; scriptPubKey: string }[]
+  /** Serialized size in bytes, with the witness. */
   size: number
+  /** Serialized size in bytes without the witness: the bytes the txid hashes. */
+  strippedSize: number
+  /**
+   * The weight qbit-electrs reports: with qbit's WITNESS_SCALE_FACTOR of 1,
+   * the serialized size (src/qbit_codec.rs:139-145, src/util/fees.rs:34-41).
+   */
   weight: number
 }
 
-/** qbit Core `serialize.h` MAX_SIZE: the largest CompactSize `ReadCompactSize` accepts. */
+/** qbit Core `serialize.h` MAX_SIZE: the largest CompactSize `ReadCompactSize` accepts (src/serialize.h:32). */
 const COMPACT_SIZE_MAX = 0x02000000
-/** qbit Core `script.h` MAX_SCRIPT_SIZE, in bytes. */
+/** qbit Core `script.h` limits (src/script/script.h:28, :40, :327): MAX_SCRIPT_ELEMENT_SIZE, MAX_SCRIPT_SIZE and MAX_OPCODE (OP_NOP10). */
+const MAX_SCRIPT_ELEMENT_SIZE = 520
 const MAX_SCRIPT_SIZE = 10_000
+const MAX_OPCODE = 0xb9
+const OP_PUSHDATA1 = 0x4c
+const OP_PUSHDATA2 = 0x4d
+const OP_PUSHDATA4 = 0x4e
 
 /**
- * Decode a legacy or BIP144 transaction as qbit Core does, or return
- * undefined where Core's decoder fails: truncated or trailing bytes, an
- * unknown flag, a CompactSize that is non-canonical or above MAX_SIZE, or a
- * witness flag with every witness stack empty. The txid is the double SHA-256
- * of the witness-stripped encoding, as the client's `txidFromRawTx` computes
- * it.
+ * Decode a raw transaction as qbit Core's `DecodeHexTx` does for
+ * `sendrawtransaction`, or return undefined where it fails
+ * (src/core_read.cpp:125-204). The hex must be non-empty
+ * (src/util/strencodings.cpp:41-47). Core decodes it with the witness
+ * serialization and, unless that result passes `CheckTxScriptsSanity`,
+ * without it, and keeps the one that passes, else the witness one, else the
+ * legacy one. The witness serialization reads an input count of 0 as its
+ * marker and the next byte as flags, and flags of 0 as a transaction with no
+ * inputs and no outputs (src/primitives/transaction.h:216-253), so a
+ * transaction with no inputs can decode either way. A decoding fails on
+ * truncated or trailing bytes, a CompactSize that is non-canonical or above
+ * MAX_SIZE (src/serialize.h:335-358), a witness flag with every witness
+ * stack empty, or an unknown flag. The txid is the double SHA-256 of the
+ * encoding without the witness, as the client's `txidFromRawTx` derives it
+ * for every transaction that one can read, which excludes those with no
+ * inputs.
  */
 function parseRawTx(hex: string): ParsedTx | undefined {
-  if (!HEX_PATTERN.test(hex)) return undefined
+  if (hex === '' || !HEX_PATTERN.test(hex)) return undefined
   const bytes = new Uint8Array(hex.length / 2)
   for (let i = 0; i < bytes.length; i += 1) bytes[i] = parseInt(hex.slice(2 * i, 2 * i + 2), 16)
+  const extended = decodeTx(bytes, true)
+  if (extended !== undefined && scriptsSane(extended)) return extended
+  const legacy = decodeTx(bytes, false)
+  if (legacy !== undefined && scriptsSane(legacy)) return legacy
+  return extended ?? legacy
+}
+
+/** `UnserializeTransaction` with or without the witness serialization, or undefined where it throws or leaves bytes over. */
+function decodeTx(bytes: Uint8Array, allowWitness: boolean): ParsedTx | undefined {
   let offset = 0
   const take = (length: number): Uint8Array => {
     if (length > bytes.length - offset) throw new RangeError('truncated')
@@ -1381,6 +1761,11 @@ function parseRawTx(hex: string): ParsedTx | undefined {
     return bytes.subarray(offset - length, offset)
   }
   const uint32 = (): number => take(4).reduce((sum, byte, i) => sum + byte * 2 ** (8 * i), 0)
+  const int64 = (): bigint =>
+    BigInt.asIntN(
+      64,
+      take(8).reduceRight((sum, byte) => (sum << 8n) | BigInt(byte), 0n)
+    )
   const compactSize = (): number => {
     const first = take(1)[0]!
     if (first < 0xfd) return first
@@ -1391,34 +1776,44 @@ function parseRawTx(hex: string): ParsedTx | undefined {
     return value
   }
   const varBytes = (): string => toHex(take(compactSize()))
-  try {
-    const version = uint32() | 0
-    const witness = bytes.length - offset >= 2 && bytes[4] === 0x00
-    if (witness) {
-      if (bytes[5] !== 0x01) return undefined
-      take(2)
-    }
-    const bodyStart = offset
-    const vin = Array.from({ length: compactSize() }, () => {
+  const inputs = () =>
+    Array.from({ length: compactSize() }, () => {
       const txid = toHex(take(32).slice().reverse())
       const vout = uint32()
       const scriptsig = varBytes()
       return { txid, vout, scriptsig, witness: [] as string[], sequence: uint32() }
     })
-    const vout = Array.from({ length: compactSize() }, () => {
-      const value = uint32() + uint32() * 2 ** 32
-      return { value, scriptPubKey: varBytes() }
-    })
+  const outputs = () => Array.from({ length: compactSize() }, () => ({ value: int64(), scriptPubKey: varBytes() }))
+  try {
+    const version = uint32()
+    // The bytes after the version that the txid hashes with it and the lock time.
+    let bodyStart = offset
+    let flags = 0
+    let vin = inputs()
+    let vout: ParsedTx['vout'] = []
+    if (vin.length === 0 && allowWitness) {
+      flags = take(1)[0]!
+      if (flags !== 0) {
+        bodyStart = offset
+        vin = inputs()
+        vout = outputs()
+      }
+    } else {
+      vout = outputs()
+    }
     const bodyEnd = offset
-    if (witness) {
+    if (flags & 1) {
+      flags ^= 1
       for (const input of vin) input.witness = Array.from({ length: compactSize() }, varBytes)
       if (vin.every(input => input.witness.length === 0)) return undefined
     }
+    if (flags !== 0) return undefined
     const locktime = uint32()
     if (offset !== bytes.length) return undefined
-    const stripped = witness
-      ? Uint8Array.from([...bytes.subarray(0, 4), ...bytes.subarray(bodyStart, bodyEnd), ...bytes.subarray(-4)])
-      : bytes
+    const stripped = new Uint8Array(bodyEnd - bodyStart + 8)
+    stripped.set(bytes.subarray(0, 4))
+    stripped.set(bytes.subarray(bodyStart, bodyEnd), 4)
+    stripped.set(bytes.subarray(-4), stripped.length - 4)
     return {
       txid: toHex(sha256(sha256(stripped)).reverse()),
       version,
@@ -1426,11 +1821,63 @@ function parseRawTx(hex: string): ParsedTx | undefined {
       vin,
       vout,
       size: bytes.length,
-      weight: stripped.length * 3 + bytes.length,
+      strippedSize: stripped.length,
+      weight: bytes.length,
     }
   } catch {
     return undefined
   }
+}
+
+/**
+ * qbit Core `CheckTxScriptsSanity` (src/core_read.cpp:105-123): every
+ * scriptSig, except a coinbase's, and every scriptPubKey parses into valid
+ * opcodes and is at most MAX_SCRIPT_SIZE bytes.
+ */
+function scriptsSane(tx: ParsedTx): boolean {
+  const sane = (script: string) => script.length <= 2 * MAX_SCRIPT_SIZE && hasValidOps(script)
+  return (
+    (isCoinbase(tx) || tx.vin.every(input => sane(input.scriptsig))) &&
+    tx.vout.every(output => sane(output.scriptPubKey))
+  )
+}
+
+/**
+ * qbit Core `CScript::HasValidOps` (src/script/script.cpp:306-317): the script
+ * parses as `GetScriptOp` reads it (:319-365), with no opcode above
+ * MAX_OPCODE and no push above MAX_SCRIPT_ELEMENT_SIZE bytes.
+ */
+function hasValidOps(script: string): boolean {
+  const byte = (at: number) => parseInt(script.slice(2 * at, 2 * at + 2), 16)
+  const length = script.length / 2
+  let pc = 0
+  while (pc < length) {
+    const opcode = byte(pc)
+    pc += 1
+    let size = 0
+    if (opcode <= OP_PUSHDATA4) {
+      const width = opcode < OP_PUSHDATA1 ? 0 : opcode === OP_PUSHDATA1 ? 1 : opcode === OP_PUSHDATA2 ? 2 : 4
+      if (length - pc < width) return false
+      size =
+        width === 0
+          ? opcode
+          : Array.from({ length: width }, (_, i) => byte(pc + i) * 2 ** (8 * i)).reduce((a, b) => a + b, 0)
+      pc += width
+      if (length - pc < size) return false
+      pc += size
+    }
+    if (opcode > MAX_OPCODE || size > MAX_SCRIPT_ELEMENT_SIZE) return false
+  }
+  return true
+}
+
+function isNullPrevout(input: { txid: string; vout: number }): boolean {
+  return input.txid === NULL_TXID && input.vout === NULL_INDEX
+}
+
+/** qbit Core `CTransaction::IsCoinBase` (src/primitives/transaction.h:356-359): one input, whose prevout is null. */
+function isCoinbase(tx: ParsedTx): boolean {
+  return tx.vin.length === 1 && isNullPrevout(tx.vin[0]!)
 }
 
 function toHex(bytes: Uint8Array): string {

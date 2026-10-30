@@ -8,8 +8,8 @@ import { createMockEsplora, type MockBackend, type MockFault, type MockTx } from
 //   - `/txs/chain/:last_seen` skips rows until `last_seen`, so an unknown
 //     cursor yields 200 `[]` (`src/new_index/schema.rs:1031-1060`), and an
 //     unparseable one is ignored (`src/rest.rs:1154`);
-//   - `/txs/mempool` lists at most 50 rows and cannot be paged
-//     (`src/rest.rs:1316-1343`, `src/config.rs:391-394`);
+//   - `/txs/mempool` lists at most 50 rows by default, as the clients call it,
+//     and cannot be paged (`src/rest.rs:1316-1343`, `src/config.rs:391-394`);
 //   - the combined `/txs?after_txid=` route passes a mempool cursor on to the
 //     chain history when no mempool rows follow it (`src/rest.rs:992-998`), and
 //     answers a cursor found nowhere with 422 (`:982-987`);
@@ -50,7 +50,11 @@ const noSleep = () => Promise.resolve()
 const CHAIN_PAGE = 25
 const MEMPOOL_PAGE = 50
 
-/** Txids held by one node, newest first. */
+/**
+ * Txids held by one node, in the order qbit-electrs lists them: the chain
+ * newest first, the mempool by arrival, oldest first
+ * (`src/new_index/mempool.rs:155-177`, `:569-571`).
+ */
 interface Node {
   chain: string[]
   mempool: string[]
@@ -145,13 +149,13 @@ function electrs(state: Node, url: string): MockReply {
   throw new Error(`unexpected url ${url}`)
 }
 
-/** `node(confirmed, mempool)` as a testing-kit fixture: the kit lists the chain by height and the mempool in reverse order, newest first. */
+/** `node(confirmed, mempool)` as a testing-kit fixture: the kit lists the chain by height and the mempool in fixture order. */
 function fixture(confirmed: number, mempool: number): { state: Node; txs: MockTx[] } {
   const state = node(confirmed, mempool)
   const pays = [{ address: ADDR, value: 1 }]
   const txs: MockTx[] = [
     ...state.chain.map((id, n) => ({ txid: id, vout: pays, block: { height: confirmed - n } })),
-    ...[...state.mempool].reverse().map(id => ({ txid: id, vout: pays })),
+    ...state.mempool.map(id => ({ txid: id, vout: pays })),
   ]
   return { state, txs }
 }
@@ -275,7 +279,7 @@ describe('EsploraClient.getAddressHistory against the address stats', () => {
     const { fetchFn, calls } = makeFetch((_i, url) => {
       const reply = electrs(state, url)
       // A new mempool transaction arrives after every stats read.
-      if (url === STATS_URL) state.mempool.unshift(txid(0xee, arrivals++))
+      if (url === STATS_URL) state.mempool.push(txid(0xee, arrivals++))
       return reply
     })
 
