@@ -52,19 +52,14 @@ import { WALLET_MAX_FEE_RATE } from './check-balance'
  * What the wallet writes down while it pays. Each method must finish writing
  * before it returns: signing is synchronous and cannot wait for a promise.
  *
- * A pending record is rewritten in one case only: restoring one that
- * `sendPayment`, `reconcileBroadcast` or `abandonPendingPayment` refused as
- * `corrupt_pending`, whose hex is not the transaction its txid names, as
- * `AbandonPaymentErrorCode` says. No method here does that: the wallet writes
- * the record itself, in place and only while it is still pending, and only so
- * that `txidFromRawTx` of its hex is its txid, compared case-insensitively:
- *
- * - Usually its hex: the record keeps its txid and takes hex whose
- *   `txidFromRawTx` is that txid, such as `client.getTxHex(txid)` returns.
- * - When the txid is the damaged field: the record keeps its hex and takes
- *   `txidFromRawTx` of it as its txid, but only once `client.getTxHex` of that
- *   txid has returned that same transaction. Never on the hex alone: it may be
- *   an older payment that is still valid, which resubmitting would pay again.
+ * A pending record is never rewritten. One that `sendPayment`,
+ * `reconcileBroadcast` or `abandonPendingPayment` refuses as
+ * `corrupt_pending` is never repaired in place either: neither a lookup nor
+ * the signature records can tell which of its fields is the damaged one, and
+ * a repair that guesses wrong makes the record name another payment, which
+ * the wallet clears once it confirms, forgetting the one still pending. Only
+ * the sweep `AbandonPaymentErrorCode` describes for `corrupt_pending`
+ * releases it.
  */
 export interface PaymentStore {
   /**
@@ -78,14 +73,17 @@ export interface PaymentStore {
   /**
    * The signed transaction, before it is first sent. It stays pending until it
    * confirms, or another transaction spending its inputs confirms; the wallet
-   * clears it then. Until then, after a crash or an unknown outcome, settle it
+   * clears it then, reading its inputs only from hex that is its transaction,
+   * never from a record refused as `corrupt_pending`, whose hex may be another
+   * transaction's. Until then, after a crash or an unknown outcome, settle it
    * by passing the record `pendingTransaction()` returns, txid and hex, to
    * `reconcileBroadcast`, which checks that the hex is that transaction; never
    * pay again with other inputs. Only the proof `abandonPendingPayment` checks
-   * releases one that no node will take: that call checks it, or, for a record
-   * it refuses as `corrupt_pending`, the wallet does, as
-   * `AbandonPaymentErrorCode` says.
+   * releases one that no node will take, and only the sweep
+   * `AbandonPaymentErrorCode` describes one it refuses as `corrupt_pending`.
    *
+   * Write the txid and the hex as one value, in one atomic write: a write that
+   * stops halfway can leave a record whose txid and hex are of two payments.
    * `sendPayment` checks `pendingTransaction()` again right before this call,
    * with no await in between, which keeps two calls in one process from both
    * paying. A store that several processes or devices share must also make
@@ -94,10 +92,12 @@ export interface PaymentStore {
   saveTransaction(txid: string, rawTxHex: string): void
   /**
    * The transaction is no longer pending: the node definitely did not accept
-   * it, or the proof `abandonPendingPayment` checks releases it.
+   * it, or the proof `abandonPendingPayment` checks releases it. Remove the
+   * record only if its txid is `txid`: by the time a call drops its
+   * transaction, the record may hold another one, which stays pending.
    */
   dropTransaction(txid: string): void
-  /** The transaction saved with `saveTransaction`, or restored as above, that is still pending, if any. */
+  /** The transaction saved with `saveTransaction` that is still pending, if any. */
   pendingTransaction(): { txid: string; rawTxHex: string } | undefined
 }
 
@@ -154,11 +154,14 @@ export interface SendPaymentParams {
  * - `invalid_fee_rate`: `feeRate` is not a number from qbit Core's minimum
  *   relay fee rate, 0.25 sat/vB, to `WALLET_MAX_FEE_RATE`.
  * - `invalid_options`: `deadlineMs` or `pollMs` is not a number above 0 and at
- *   most 2,147,483,647, the longest delay a timer supports, or `signal` is not
- *   an `AbortSignal`. `reconcileBroadcast` applies the same rules to its
+ *   most 2,147,483,647, the longest delay a timer supports, or `signal` does
+ *   not have the shape the client uses: a boolean `aborted`, and
+ *   `addEventListener` and `removeEventListener` methods. So, as with the
+ *   client, a signal from another realm (a vm context, an iframe) or a
+ *   polyfill will do. `reconcileBroadcast` applies the same rules to its
  *   `pollMs` and `signal`, and to the time left before its `end` unless `end`
- *   has passed, and refuses a record that is not an object with a string
- *   `txid` and `rawTxHex`, such as the hex alone; its transaction stays pending.
+ *   has passed, and refuses a record that is not an object at all, such as the
+ *   hex alone; its transaction stays pending.
  * - `too_many_utxos`: the backend refuses to list the address's unspent
  *   outputs because there are more than it lists for one address.
  *   qbit-electrs refuses above its `--utxos-limit`, 500 by default, with a
@@ -184,12 +187,14 @@ export interface SendPaymentParams {
  * - `pending`: an earlier payment, `txid`, is still pending. Checked before
  *   the UTXO scan, and again after signing, right before the transaction is
  *   stored.
- * - `corrupt_pending`: as with `pending`, an earlier payment, `txid`, is still
- *   pending, but the hex the store holds for it is not that transaction, or
- *   not a whole transaction. `reconcileBroadcast` refuses such a record with
- *   `corrupt_pending` too, and `abandonPendingPayment` cannot release it.
- *   Never treat it as nothing pending: restore the record, as `PaymentStore`
- *   allows and `AbandonPaymentErrorCode` says.
+ * - `corrupt_pending`: as with `pending`, an earlier payment is still pending,
+ *   but the store's record of it is corrupt: its `txid` or `rawTxHex` is not a
+ *   string, or the hex is not the whole transaction the txid names, whichever
+ *   of the two is the damaged one. `reconcileBroadcast` and
+ *   `abandonPendingPayment` refuse such a record with `corrupt_pending` too.
+ *   Never treat it as nothing pending, and never repair it in place: only the
+ *   sweep `AbandonPaymentErrorCode` describes for `corrupt_pending` releases
+ *   it.
  */
 export type SendPaymentErrorCode =
   | 'invalid_amount'
@@ -205,7 +210,11 @@ export type SendPaymentErrorCode =
 
 export class SendPaymentError extends Error {
   readonly code: SendPaymentErrorCode
-  /** With `pending` and `corrupt_pending`: the transaction that is still pending. */
+  /**
+   * With `pending`: the transaction that is still pending. With
+   * `corrupt_pending`: the txid the record holds, which may be the damaged
+   * field, or undefined when it is not a string.
+   */
   readonly txid: string | undefined
 
   constructor(code: SendPaymentErrorCode, message: string, txid?: string) {
@@ -322,11 +331,12 @@ const NOT_ACCEPTED = new Set<QbitApiErrorKind>([
  * anything is stored or sent. The signer loads within the same deadline: if
  * it has not loaded when the deadline passes or `signal` aborts, the payment
  * rejects with a `timeout` or an `aborted` QbitApiError, while the load, which
- * later calls share, carries on. A cancel before the transaction is stored,
- * the signer's load included, rejects with an `aborted` QbitApiError whose
- * `cause` is the signal's reason, as the client's calls do, or, when signing
- * sees it between two signatures, with a `P2mrPsbtSigningError` whose `cause`
- * is that error.
+ * later calls share, carries on. A `signal` that has already aborted when the
+ * call starts starts neither the load nor any request. A cancel before the
+ * transaction is stored, the signer's load included, rejects with an `aborted`
+ * QbitApiError whose `cause` is the signal's reason, as the client's calls do,
+ * or, when signing sees it between two signatures, with a
+ * `P2mrPsbtSigningError` whose `cause` is that error.
  *
  * If signing fails, it rejects with the `P2mrPsbtSigningError` and stores or
  * sends no transaction. Starting over is safe, since nothing was sent. To
@@ -361,18 +371,22 @@ export async function sendPayment(params: SendPaymentParams): Promise<{ txid: st
 
   // 1. Find the outputs to spend, and the chain's height, while the WASM
   // signer loads (init() loads it once; later calls share it). Every step gets
-  // what is left of the one deadline. The clock is read once for both
-  // requests: had the deadline passed between two readings, msLeft would throw
-  // with the scan already started and nothing to handle its rejection. None of
-  // the three calls below throws: each turns any throw, init()'s included, into
-  // a rejection, so Promise.all handles every request they start.
+  // what is left of the one deadline. The clock is read once for all three:
+  // had the deadline passed between two readings, msLeft would throw with the
+  // scan already started and nothing to handle its rejection, or the wait for
+  // the signer would reject at once with the load and the scan started. None
+  // of the three calls below throws: each turns any throw, init()'s included,
+  // into a rejection, so Promise.all handles every request they start. When
+  // one of them fails first, the wait for a signer still loading is released,
+  // so that its timer and its listener on `signal` do not outlive the call.
   const from = p2mrAddressFromPubkey(key.pk32, network)
   const requestMs = msLeft(end)
+  const signer = waitWithin(init, requestMs, signal)
   const [pqc, rows, tipHeight] = await Promise.all([
-    waitWithin(init, end, signal),
+    signer.loaded,
     scanUtxos(client, from, { signal, deadlineMs: requestMs }, (code, message) => new SendPaymentError(code, message)),
     checkedTipHeight(client, { signal, deadlineMs: requestMs }),
-  ])
+  ]).finally(signer.release)
   const utxos = rows.filter(utxo => utxo.status?.confirmed === true) // this example spends confirmed outputs only
 
   // Spend the largest outputs first, only as many as the payment needs, and
@@ -477,12 +491,13 @@ export async function sendPayment(params: SendPaymentParams): Promise<{ txid: st
  *
  * Each round waits a poll interval, or half of what is left before `end` when
  * less than two are left, then looks the transaction up. A round with less
- * than two poll intervals left once its lookup is over is the last: unless the
- * lookup found the transaction or `end` has passed, it resubmits once with
- * what remains and stops. One reading of the clock decides that and sets that
- * resubmission's budget, so the clock reaching `end` just after the reading
- * cannot stop the resubmission before it is sent. So only the last round
- * resubmits with less than two poll intervals left.
+ * than two poll intervals left once its lookup is over is the last: if the
+ * lookup did not find the transaction, it resubmits once with what remains,
+ * unless `end` has passed by the time it would send, and stops. One reading of
+ * the clock, once the lookup is over, decides which round is the last. A
+ * resubmission's budget is timed from `end` right before it is sent, never
+ * from that reading, so a stall in between cannot stretch it past `end`. So
+ * only the last round resubmits with less than two poll intervals left.
  * One budget rule covers every other request, and `sendPayment`'s first
  * broadcast, which is round 0: each gets all but a poll interval of the time
  * left while at least two are left, and half of what is left below that, and
@@ -507,17 +522,18 @@ export async function sendPayment(params: SendPaymentParams): Promise<{ txid: st
  *
  * Before any request, it checks, in this order: `pollMs`, `signal` and the
  * time left before `end`, as `sendPayment` checks `pollMs`, `signal` and
- * `deadlineMs`, and that `pending` is an object with a string `txid` and
- * `rawTxHex`, throwing an `invalid_options` `SendPaymentError` for any of them,
- * such as for a call that passes the hex alone; then the record, throwing a
- * `corrupt_pending` `SendPaymentError` unless `rawTxHex` is the whole
- * transaction `txid`, compared case-insensitively, since resubmitting another
- * transaction, such as an older payment that is still valid, would pay it
- * again. Restore such a record as `PaymentStore` allows and
- * `AbandonPaymentErrorCode` says. Only then does an `end` that has already
- * passed, which is no mistake, reject with `unknown_outcome` without a
- * request, as when `end` passes while it polls. So a corrupt record is
- * reported even once `end` has passed.
+ * `deadlineMs`, and that `pending` is an object, throwing an `invalid_options`
+ * `SendPaymentError` for any of them, such as for a call that passes the hex
+ * alone; then the record, throwing a `corrupt_pending` `SendPaymentError`, as
+ * `sendPayment` and `abandonPendingPayment` do, unless its `txid` and
+ * `rawTxHex` are strings and `rawTxHex` is the whole transaction `txid`,
+ * compared case-insensitively, since resubmitting another transaction, such
+ * as an older payment that is still valid, would pay it again. Never repair
+ * such a record: see `AbandonPaymentErrorCode`. Only then does an `end` that
+ * has already passed, which is no mistake, or a `signal` that has already
+ * aborted, reject with `unknown_outcome` without a request, as when either
+ * happens while it polls. So a corrupt record is reported even once `end` has
+ * passed.
  */
 export async function reconcileBroadcast(
   client: EsploraClient,
@@ -530,19 +546,18 @@ export async function reconcileBroadcast(
   // Read the clock once: `end` passing between two readings is no invalid option.
   const timeLeft = end - Date.now()
   if (!(timeLeft <= 0)) checkDelay('the time left before end', timeLeft)
-  // Read once, so that the hex checked is the hex sent. The hex alone, or
-  // nothing, in the record's place reads as no fields.
-  const { txid: recordTxid, rawTxHex }: Partial<typeof pending> = pending ?? {}
-  if (typeof recordTxid !== 'string' || typeof rawTxHex !== 'string') {
+  // Not a record at all, such as the hex alone: a mistake in the call. A
+  // record with a damaged field is corrupt, as sendPayment reports it.
+  if (typeof pending !== 'object' || pending === null) {
     throw new SendPaymentError(
       'invalid_options',
-      'the pending record must be an object { txid, rawTxHex } with both strings, as PaymentStore.pendingTransaction() returns it'
+      'the pending record must be an object { txid, rawTxHex }, as PaymentStore.pendingTransaction() returns it'
     )
   }
-  const txid = txidOf(rawTxHex) // the record's txid, in lowercase, if the hex is that whole transaction
-  if (txid !== recordTxid.toLowerCase()) {
-    throw new SendPaymentError('corrupt_pending', corruptRecord(recordTxid), recordTxid)
-  }
+  // Read once, so that the hex checked is the hex sent.
+  const { txid: recordTxid, rawTxHex } = pending
+  if (!isHexOf(rawTxHex, recordTxid)) throw corruptPending(recordTxid)
+  const txid = recordTxid.toLowerCase() // the hex's own txid, which isHexOf has checked
   let absentReplies = 0
   while (Date.now() < end && !signal.aborted) {
     // Give the transaction time to propagate.
@@ -562,17 +577,17 @@ export async function reconcileBroadcast(
       lookup = QbitApiError.is(error) && error.kind === 'not_found' ? 'absent' : 'unknown'
     }
     if (lookup === 'found') return
-    // Decided once the lookup is over, from the one reading that also sets the
-    // resubmission's budget, so that only the last round resubmits in the
-    // final stretch, and then stops. Read again, the clock could reach `end`
-    // in between and stop the last round's resubmission before it is sent.
-    const left = end - Date.now()
-    const lastRound = finalStretch(left, pollMs)
+    // Decided once the lookup is over, from one reading, so that only the last
+    // round resubmits in the final stretch, and then stops.
+    const lastRound = finalStretch(end - Date.now(), pollMs)
     absentReplies = lookup === 'absent' ? absentReplies + 1 : 0
     if (absentReplies < 3 && !lastRound) continue
-    if (left <= 0) break // `end` passed during the lookup: no time is left to resubmit
     absentReplies = 0
     try {
+      // Timed from `end` right before the call, not from the reading above,
+      // so that a stall in between cannot stretch the request past `end`.
+      // Once `end` has passed, msLeft throws, and nothing is sent.
+      const left = msLeft(end)
       const deadlineMs = lastRound ? left : requestBudgetMs(left, pollMs) // the last request gets all that is left
       await client.broadcastTx(rawTxHex, { txid, signal, deadlineMs })
       return
@@ -589,57 +604,64 @@ export async function reconcileBroadcast(
  * released nothing.
  *
  * - `invalid_options`: `deadlineMs` is not a number above 0 and at most 2,147,483,647.
- * - `not_pending`: the store holds no pending transaction `txid`.
- * - `corrupt_pending`: the store holds pending transaction `txid`, but the hex
- *   it holds for it is not that transaction, or not a whole transaction.
- *   Checked before any request, and again right before the release: this
- *   call broadcast nothing and released nothing. Never treat it as nothing
- *   pending: the transaction may have been sent, and may yet confirm. Until
- *   the record holds the transaction's hex again, this call cannot release
- *   it, and `reconcileBroadcast` and `sendPayment` refuse with
- *   `corrupt_pending`. Restore the record, the one rewrite `PaymentStore`
- *   allows, then settle or release the transaction as usual.
- *   `client.getTxHex(txid)` needs no backup: it returns the hex only when it
- *   is transaction `txid`, and it answers whenever the indexer knows the
- *   transaction, in its mempool or in a block. It does not check the
- *   witnesses, which the txid does not commit to, but hex with other
- *   witnesses still spends the same inputs to the same outputs, so
- *   resubmitting it cannot pay twice. Hex from the wallet's own records, such
- *   as a backup of the store, will do once `txidFromRawTx` of it is `txid`,
- *   compared case-insensitively.
+ * - `not_pending`: the store holds no pending record, or a whole one whose
+ *   txid is not `txid`.
+ * - `corrupt_pending`: the store's pending record is corrupt: its txid or hex
+ *   is not a string, or the hex is not the whole transaction the txid names.
+ *   This is checked first, so it is reported whatever `txid` this call is
+ *   asked to release, never as `not_pending`. Checked before any request, and
+ *   again right before the release: this call broadcast nothing and released
+ *   nothing. Never treat it as nothing pending: the transaction may have been
+ *   sent, and may yet confirm, and `reconcileBroadcast` and `sendPayment`
+ *   refuse the record with `corrupt_pending` too.
  *
- *   The txid may be the damaged field instead, while the hex is the
- *   transaction that was sent, so that `getTxHex(txid)` cannot find it. Then
- *   look up the hex's own txid, `txidFromRawTx` of it, with `getTxHex`, and
- *   only if the indexer returns that same transaction, give the record that
- *   txid, as `PaymentStore` says. Never trust the hex alone: it may be an
- *   older payment that is still valid, which resubmitting would pay again.
- *   Otherwise, the wallet knows neither the transaction's inputs nor, unless
- *   the hex is that transaction, its txid: keep the record, ask again later,
- *   and failing that, take the last way out below, a transfer of every
- *   confirmed output to the wallet itself.
+ *   Never repair the record in place, as `PaymentStore` says: nothing tells
+ *   which field is the damaged one, and either may hold an earlier payment's
+ *   value, as after a write that stopped halfway. The indexer knowing a txid
+ *   proves only that it is some transaction, not that it is this record's: a
+ *   txid damaged into an earlier payment's leads `getTxHex` to that payment's
+ *   hex, which makes a whole record that `reconcileBroadcast` finds
+ *   confirmed, and so does taking the txid of hex that is an earlier
+ *   payment's. Nor can the `SignatureRecord`s tell: the newest need not be the
+ *   pending payment's, since two overlapping `sendPayment` calls both sign
+ *   before one of them is refused, `PaymentStore` sets no order for
+ *   signatures, and finishing a signing that failed, as `sendPayment` says,
+ *   signs whether or not another payment is pending. A record repaired to
+ *   name an earlier payment would be cleared once that one confirms, and the
+ *   payment still pending forgotten, so that the next payment could spend
+ *   other outputs and pay twice.
  *
- *   While no indexer knows the transaction, so that `getTxHex` answers
- *   `not_found`, and the wallet has no record of its inputs, the wallet must
- *   not clear the record: not knowing which outputs the transaction spends,
- *   it cannot tell which ones a new payment may spend without paying twice.
- *   This example's store keeps no such record: a `SignatureRecord` names an
- *   input by its index, not by the output it spends. Keep the record, and
- *   ask again later, or ask other indexers. Only the proof this call checks
- *   allows clearing it, and since this call refuses the record, the wallet
- *   must check that proof itself before it drops the record: it knows the
- *   transaction's inputs, the indexer does not know the transaction, and
- *   every input is still among the address's unspent outputs. Then, as after
- *   this call, the only safe follow-up is a replacement that spends those
- *   same inputs. Without its inputs, one way out remains: move every
- *   confirmed output the address holds to the wallet itself, in one or more
- *   transactions the wallet tracks outside this example's single pending
- *   record, and wait until they confirm. This example's payments spend only
- *   the address's own confirmed outputs, so the lost transaction can spend
- *   only those that are still unspent, and once all of them are spent it can
- *   never confirm, and the record can be cleared. A transfer to
- *   the wallet itself pays no one: if the lost transaction confirms first,
- *   the transfer is refused instead, and `getTxHex` then finds it.
+ *   The one way out is to spend every output the lost transaction could
+ *   spend, so that it can no longer confirm. This example's payments spend
+ *   only the address's own confirmed outputs, and `getAddressUtxos` lists
+ *   none that a block, or a transaction in the indexer's mempool, spends:
+ *
+ *   1. Wait until `client.getAddressMempoolTxs(address)` answers `[]`. The
+ *      indexer's mempool then holds no transaction that spends from or pays
+ *      to the address: whatever it knew of in flight has confirmed or
+ *      dropped, so `getAddressUtxos` lists every output of the address that
+ *      no block spends.
+ *   2. Move every output `getAddressUtxos` then lists to the wallet itself,
+ *      a coinbase output once it has matured, in one or more transactions
+ *      the wallet tracks outside this example's single pending record, and
+ *      wait until they confirm. Such a transfer pays no one. Where one
+ *      conflicts with the lost transaction, which another node may still
+ *      hold, at most one of the two confirms, and a transfer that does not is
+ *      refused or evicted.
+ *   3. Repeat both until, in the address's confirmed history,
+ *      `getAddressHistory(address).confirmed`, every output paid to the
+ *      address, other than the transfers' own, is spent by a transaction in
+ *      that history. Every output the lost transaction could spend is then
+ *      spent in a block, so it cannot confirm unless a reorg undoes that
+ *      block. Outputs that confirmed after it was built need not be spent,
+ *      but the record does not say when that was, so this counts them all: a
+ *      deposit, or a block mined to the address, takes another round.
+ *   4. Look in that history for a transaction, other than the transfers,
+ *      that spends from the address and that the wallet does not know as an
+ *      earlier payment. Such a transaction may be the lost one, or an
+ *      abandoned one it was to replace, and may already have made the
+ *      payment; the record keeps no height or time to tell. Only then clear
+ *      the record, and only then pay again, if the payment was not made.
  * - `known`: the indexer knows the transaction, in its mempool or in a block,
  *   so it is not stuck: settle it with `reconcileBroadcast`.
  * - `too_many_utxos`: the backend refuses to list `address`'s unspent outputs,
@@ -691,9 +713,17 @@ export class AbandonPaymentError extends Error {
  * **same** inputs, the outputs this resolves with, at a higher fee rate (a fee
  * bump): the two conflict, so at most one of them can confirm. Build it as
  * `sendPayment` builds its transaction, from exactly these outputs, then store
- * and broadcast it the same way. Never pay with a transaction built from
- * different inputs, such as a new `sendPayment` call, which picks its own: if
- * the abandoned transaction confirms as well, the recipient is paid twice.
+ * and broadcast it, and settle an unknown outcome with `reconcileBroadcast`,
+ * as `sendPayment` does, but keep it pending on any rejection, even one that
+ * makes `sendPayment` drop its own transaction. A replacement can be refused
+ * because the abandoned transaction is still in that node's mempool, or in a
+ * block: for a conflict with it, for a fee too low to replace it, or for
+ * inputs it spent. Only what clears any pending record clears it: it, or a
+ * transaction spending its inputs, confirms, or the proof
+ * `abandonPendingPayment` checks holds for it. Never pay with a transaction
+ * built from different inputs, such as a new `sendPayment` call, which picks
+ * its own: if the abandoned transaction confirms as well, the recipient is
+ * paid twice.
  */
 export async function abandonPendingPayment(params: {
   client: EsploraClient
@@ -785,11 +815,26 @@ function checkParams({ amountSats, feeRate, deadlineMs, pollMs, signal }: SendPa
   checkSignal(signal)
 }
 
-/** Throws an `invalid_options` SendPaymentError unless `signal` is an AbortSignal. */
+/**
+ * Throws an `invalid_options` SendPaymentError unless `signal` has the shape
+ * the client uses: a boolean `aborted`, and `addEventListener` and
+ * `removeEventListener` for its 'abort' event.
+ */
 function checkSignal(signal: AbortSignal): void {
-  // Anything else would fail only once the work it should cancel has started.
-  if (!(signal instanceof AbortSignal)) {
-    throw new SendPaymentError('invalid_options', 'signal must be an AbortSignal')
+  // By shape, as the client takes it: `instanceof AbortSignal` would refuse a
+  // signal from another realm or a polyfill, and throw where there is no
+  // AbortSignal global. Anything else would fail only once the work it should
+  // cancel had started.
+  const { aborted, addEventListener, removeEventListener } = (signal ?? {}) as Partial<AbortSignal>
+  if (
+    typeof aborted !== 'boolean' ||
+    typeof addEventListener !== 'function' ||
+    typeof removeEventListener !== 'function'
+  ) {
+    throw new SendPaymentError(
+      'invalid_options',
+      'signal must be an AbortSignal, or have its shape: a boolean aborted, addEventListener and removeEventListener'
+    )
   }
 }
 
@@ -909,42 +954,55 @@ async function selectInputs(
 
 /**
  * Throws a `SendPaymentError` while `store` holds a transaction that is still
- * pending: `corrupt_pending` when the hex it holds for it is not that
- * transaction, which `reconcileBroadcast` refuses too, and `pending`
+ * pending: `corrupt_pending` when its record is corrupt, which
+ * `reconcileBroadcast` and `abandonPendingPayment` refuse too, and `pending`
  * otherwise.
  */
 function refuseWhilePending(store: PaymentStore): void {
   const pending = store.pendingTransaction()
   if (pending === undefined) return
-  if (!isHexOf(pending.rawTxHex, pending.txid)) {
-    throw new SendPaymentError('corrupt_pending', corruptRecord(pending.txid), pending.txid)
-  }
-  throw new SendPaymentError('pending', `transaction ${pending.txid} is still pending`, pending.txid)
+  const { txid, rawTxHex } = pending
+  if (!isHexOf(rawTxHex, txid)) throw corruptPending(txid)
+  throw new SendPaymentError('pending', `transaction ${txid} is still pending`, txid)
 }
 
 /**
  * The hex `store` holds for its pending transaction `txid`. Throws a
- * `not_pending` AbandonPaymentError when it holds no pending transaction
- * `txid`, and `corrupt_pending` when the hex it holds for it is not that
- * transaction.
+ * `corrupt_pending` AbandonPaymentError when its pending record is corrupt,
+ * whatever `txid` is, and `not_pending` when it holds no pending record, or a
+ * whole one for another transaction.
  */
 function pendingHex(store: PaymentStore, txid: string): string {
   const pending = store.pendingTransaction()
-  if (pending === undefined || pending.txid !== txid) {
-    throw new AbandonPaymentError('not_pending', `transaction ${txid} is not pending`, txid)
+  if (pending === undefined) throw new AbandonPaymentError('not_pending', `transaction ${txid} is not pending`, txid)
+  // The record's own consistency first: had a damaged txid been compared with
+  // `txid` first, the record would read as another transaction's, and so as
+  // nothing pending for this one.
+  const { txid: recordTxid, rawTxHex } = pending
+  if (!isHexOf(rawTxHex, recordTxid)) {
+    throw new AbandonPaymentError('corrupt_pending', corruptRecord(recordTxid), txid)
   }
-  if (!isHexOf(pending.rawTxHex, txid)) throw new AbandonPaymentError('corrupt_pending', corruptRecord(txid), txid)
-  return pending.rawTxHex
+  if (recordTxid !== txid) throw new AbandonPaymentError('not_pending', `transaction ${txid} is not pending`, txid)
+  return rawTxHex
 }
 
-/** The message for a pending transaction `txid` whose stored hex is not that transaction. */
-function corruptRecord(txid: string): string {
-  return `transaction ${txid} is still pending, but the hex stored for it is not that transaction: restore the record as PaymentStore says, with getTxHex(txid) or from the wallet's own records, and never treat it as nothing pending`
+/** The `corrupt_pending` SendPaymentError for a corrupt record whose txid field holds `txid`. */
+function corruptPending(txid: unknown): SendPaymentError {
+  return new SendPaymentError('corrupt_pending', corruptRecord(txid), typeof txid === 'string' ? txid : undefined)
 }
 
-/** Whether `rawTxHex` is the whole transaction `txid`, which compares case-insensitively. */
-function isHexOf(rawTxHex: string, txid: string): boolean {
-  return txidOf(rawTxHex) === String(txid).toLowerCase()
+/** The message for a corrupt pending record whose txid field holds `txid`. */
+function corruptRecord(txid: unknown): string {
+  return `the pending record of transaction ${String(txid)} is corrupt, its txid or its hex: never treat it as nothing pending, and never repair it in place; release it only with the sweep AbandonPaymentErrorCode describes for corrupt_pending`
+}
+
+/**
+ * Whether `txid` and `rawTxHex` are strings, and `rawTxHex` is the whole
+ * transaction `txid`, which compares case-insensitively: a pending record that
+ * is not corrupt.
+ */
+function isHexOf(rawTxHex: unknown, txid: unknown): boolean {
+  return typeof txid === 'string' && typeof rawTxHex === 'string' && txidOf(rawTxHex) === txid.toLowerCase()
 }
 
 /** `txidFromRawTx(rawTxHex)`, or undefined when `rawTxHex` is not a whole transaction. */
@@ -1101,9 +1159,8 @@ function msLeft(end: number): number {
  * every request of `reconcileBroadcast` but the last round's resubmission get
  * this one rule. It is continuous in the time left and never less than half
  * of it, and it leaves the request after it a poll interval, or half of what
- * is left. Callers pass `msLeft(end)`, which throws once the deadline has
- * passed, or a time left they have already found to be at least two poll
- * intervals.
+ * is left. Callers pass `msLeft(end)`, read right before the request, which
+ * throws once the deadline has passed.
  */
 function requestBudgetMs(left: number, pollMs: number): number {
   return finalStretch(left, pollMs) ? left / 2 : left - pollMs
@@ -1140,16 +1197,29 @@ function throwIfCancelled(signal: AbortSignal): void {
 }
 
 /**
- * Settle as the promise `start()` returns does, unless `end` passes or
- * `signal` aborts first: then reject with the `timeout` QbitApiError `msLeft`
- * throws, or with the `aborted` one `cancelled` returns. If `start` throws, it
- * rejects with that error instead of throwing. Only the wait stops, not the
- * work behind the promise, and a rejection that comes after the wait stopped
- * is handled here, never left unhandled. Cleans up its timer and listener
- * either way.
+ * `loaded` settles as the promise `start()` returns does, unless `ms` pass or
+ * `signal` aborts first: then it rejects with the `timeout` QbitApiError
+ * `msLeft` throws, or with the `aborted` one `cancelled` returns. `ms` is what
+ * `msLeft` returned, from the reading that also timed the requests started
+ * alongside. A `signal` that has already aborted rejects at once, and nothing
+ * is started. If `start` throws, it rejects with that error instead of
+ * throwing. Only the wait stops, not the work behind the promise, and a
+ * rejection that comes after the wait stopped is handled here, never left
+ * unhandled. Cleans up its timer and listener when it settles, or as soon as
+ * `release` is called, after which `loaded` settles only as `start()`'s
+ * promise does.
  */
-function waitWithin<T>(start: () => Promise<T>, end: number, signal: AbortSignal): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
+function waitWithin<T>(
+  start: () => Promise<T>,
+  ms: number,
+  signal: AbortSignal
+): { loaded: Promise<T>; release: () => void } {
+  let release = () => {}
+  const loaded = new Promise<T>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(cancelled(signal)) // the call is over: start no work for it
+      return
+    }
     const settle = (finish: () => void) => {
       clearTimeout(timer)
       signal.removeEventListener('abort', onAbort)
@@ -1160,7 +1230,8 @@ function waitWithin<T>(start: () => Promise<T>, end: number, signal: AbortSignal
     // once: a throw rejects the wait, and leaves nothing started without a
     // handler, and no timer or listener behind.
     signal.addEventListener('abort', onAbort)
-    const timer = setTimeout(() => settle(() => reject(deadlinePassed())), end - Date.now())
+    const timer = setTimeout(() => settle(() => reject(deadlinePassed())), ms)
+    release = () => settle(() => {})
     try {
       start().then(
         value => settle(() => resolve(value)),
@@ -1169,8 +1240,8 @@ function waitWithin<T>(start: () => Promise<T>, end: number, signal: AbortSignal
     } catch (error) {
       settle(() => reject(error))
     }
-    if (signal.aborted) onAbort()
   })
+  return { loaded, release: () => release() }
 }
 
 /** Wait `ms`, or less if `signal` aborts. Cleans up its timer and listener either way. */

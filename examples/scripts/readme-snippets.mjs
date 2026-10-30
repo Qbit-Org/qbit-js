@@ -33,9 +33,14 @@
 // for any reason, such as outside any checkout, or when the list does not
 // include this script, as in a source tarball unpacked inside another
 // checkout. In CI (the CI environment variable set, and not to 0 or false),
-// the scan must run, so any of those reasons fails both modes instead. A
-// tracked file missing from the working tree, deleted but not yet removed with
-// `git rm`, holds no marker: it is skipped with a note.
+// the scan must run, so any of those reasons is a problem there, which fails
+// both modes instead. A tracked file missing from the working tree, deleted
+// but not yet removed with `git rm`, holds no marker: it is skipped with a
+// note.
+//
+// Every problem and every difference found is printed. --write rewrites
+// nothing until every check has passed, so a run that fails leaves the
+// READMEs as they were.
 //
 // Line endings do not count, so a CRLF checkout, or a README whose lines end
 // in a mix of CRLF and LF, checks the same as an LF one. --write keeps every
@@ -84,8 +89,10 @@ const readmes = [
 const found = []
 /** Blocks that differ from their region; --write fixes these. */
 const drift = []
-/** Markers that cannot be resolved. */
+/** Markers that cannot be resolved, and a scan that must run in CI but cannot. */
 const problems = []
+/** The READMEs --write rewrites, with their new text, once every check has passed. */
+const rewrites = []
 for (const readme of readmes) {
   const original = readFileSync(join(repoRoot, readme), 'utf8')
   // The lines without their endings, each line's own ending, which --write
@@ -141,10 +148,7 @@ for (const readme of readmes) {
     }
     index = start + expected.length
   }
-  if (mode === '--write' && changed) {
-    writeFileSync(join(repoRoot, readme), lines.map((line, i) => line + endings[i]).join(''))
-    console.log(`updated ${readme}`)
-  }
+  if (mode === '--write' && changed) rewrites.push([readme, lines.map((line, i) => line + endings[i]).join('')])
 }
 
 // A marker outside the READMEs scanned above would leave its block unchecked.
@@ -176,22 +180,23 @@ if (mode === '--check' && drift.length > 0) {
   console.error('\nRun `node examples/scripts/readme-snippets.mjs --write` to update the README blocks.')
 }
 if (problems.length > 0 || (mode === '--check' && drift.length > 0)) process.exit(1)
+for (const [readme, text] of rewrites) {
+  writeFileSync(join(repoRoot, readme), text)
+  console.log(`updated ${readme}`)
+}
 console.log(`readme snippets: ${found.length} ${mode === '--check' ? 'checked' : 'up to date'}`)
 
 /**
  * The Markdown files git tracks in this tree, from `git ls-files` run at the
  * repository root. None, after a note, when git is missing, when the command
  * fails for any reason, or when its list does not include this script, so
- * that git does not track this tree. In CI, any of those reasons exits with
- * an error instead: a scan skipped there would let a misplaced marker pass.
+ * that git does not track this tree. In CI, any of those reasons is recorded
+ * as a problem instead: a scan skipped there would let a misplaced marker pass.
  */
 function trackedMarkdown() {
   const skip = reason => {
-    if (inCi) {
-      console.error(`the scan of other Markdown files for snippet markers must run in CI, but: ${reason}`)
-      process.exit(1)
-    }
-    console.warn(`note: skipped the scan of other Markdown files for snippet markers: ${reason}`)
+    if (inCi) problems.push(`the scan of other Markdown files for snippet markers must run in CI, but: ${reason}`)
+    else console.warn(`note: skipped the scan of other Markdown files for snippet markers: ${reason}`)
     return []
   }
   let listed

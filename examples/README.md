@@ -63,8 +63,11 @@ raise the limit, or use a backend that lists them all.
 amount, fee rate, deadline, poll interval and signal before any request, and the
 backend's UTXO rows before any key is used; `reconcileBroadcast` checks its
 poll interval, signal and the time left before its `end` the same way, and that
-its record is an object with a string txid and hex. It refuses to
-start while an earlier payment is still pending, and checks again right before
+its record is an object. Both check the signal's shape, as the client uses it,
+not `instanceof AbortSignal`, so a signal from another realm or a polyfill will
+do, and with a signal that has already aborted, neither sends a request, nor
+does `sendPayment` start loading the signer. `sendPayment` refuses to start
+while an earlier payment is still pending, and checks again right before
 it stores its own transaction, so two overlapping calls cannot both pay. It
 stores the signed transaction before the first broadcast and drops it only when
 `broadcastTx` proves the node did not accept it, or throws a `TypeError`, which
@@ -78,11 +81,12 @@ the reply as parsed, without checking that it is the transaction requested.
 Each round of reconciliation waits a poll interval, or
 half of what is left when less than two are left, then looks the transaction
 up. A round with less than two poll intervals left once its lookup is over is
-the last: unless the lookup found the transaction or the deadline has passed,
-it resubmits once with what remains, and stops, so only the last round
-resubmits with less than two poll intervals left. One reading of the clock
-decides that and sets that resubmission's budget, so the deadline passing just
-after the reading cannot stop the resubmission before it is sent. One budget
+the last: if the lookup did not find the transaction, it resubmits once with
+what remains, unless the deadline has passed by the time it would send, and
+stops, so only the last round resubmits with less than two poll intervals left.
+One reading of the clock, once the lookup is over, decides which round is the
+last; a resubmission's budget is timed from the deadline right before it is
+sent, so a stall in between cannot stretch it past the deadline. One budget
 rule covers the first broadcast and every other
 lookup and resubmission: each gets all but a poll interval of the time left
 while at least two poll intervals are left, and half of what is left below
@@ -107,41 +111,40 @@ until the wallet calls `abandonPendingPayment`. That releases it only when the
 indexer does not know the txid and every input is still unspent, and resolves
 with those inputs. The only safe follow-up is a replacement that spends the
 same inputs at a higher fee, so that at most one of the two can confirm, never
-a payment built from other inputs.
+a payment built from other inputs. The replacement stays pending on any
+rejection, even one that makes `sendPayment` drop its own transaction: the
+abandoned transaction, still in a mempool or in a block, may be why the node
+refused it.
 
-A pending record whose stored hex is not its transaction, or not a whole
-transaction, is reported as `corrupt_pending`, never as nothing pending, by
-`sendPayment`, `reconcileBroadcast` and `abandonPendingPayment`, before any of
+A pending record that is corrupt, its txid or hex not a string, or its hex not
+the whole transaction its txid names, is reported as `corrupt_pending`, never
+as nothing pending, by `sendPayment`, `reconcileBroadcast` and
+`abandonPendingPayment`, whichever field is the damaged one and, for
+`abandonPendingPayment`, whatever txid it is asked to release, before any of
 them sends or releases anything: resubmitting hex that is another transaction,
 such as an older payment that is still valid, would pay it again. The
-transaction may have been sent, so the wallet must restore the record before
-it can settle or release it. That is the one rewrite of a pending record the
-`PaymentStore` contract allows, and only so that the hex is the transaction
-the txid names: usually with hex whose `txidFromRawTx` is the record's txid.
-`client.getTxHex(txid)` returns such hex without a backup whenever the indexer
-knows the transaction, since it returns the hex only when it is that
-transaction; then the usual flow applies. If the txid is the damaged field
-instead, so that `getTxHex(txid)` cannot find the transaction, the wallet looks
-up the hex's own txid with `getTxHex`, and gives the record that txid only if
-the indexer returns that same transaction. It never trusts the hex alone,
-which may be an older payment that is still valid. Otherwise the wallet knows
-neither the transaction's inputs nor, unless the hex is that transaction, its
-txid: it keeps the record, and the way out below without its inputs applies.
-While no indexer knows the
-transaction and the wallet has no record of its inputs, the wallet must not
-clear the record: it cannot tell which outputs a new payment may spend without
-paying twice. Only knowing the inputs, and seeing that the indexer does not know
-the transaction and that every input is still unspent, as
-`abandonPendingPayment` checks, allows releasing it, and then the only safe
-follow-up is a replacement that spends the same inputs. Without its inputs,
-one way out remains: move every confirmed output the address holds to the
-wallet itself, in one or more transactions the wallet tracks outside this
-example's single pending record, and wait until they confirm. This example's
-payments spend only the address's own confirmed outputs, so the lost
-transaction can spend only those that are still unspent, and once all of them
-are spent it can never confirm, and the record can be cleared. A transfer to the wallet itself pays no one: if the lost transaction
-confirms first, the transfer is refused instead, and `getTxHex` then finds the
-transaction.
+transaction may have been sent. The `PaymentStore` contract allows no rewrite
+of a pending record, and a corrupt one is never repaired in place: nothing
+tells which field is the damaged one, and either may hold an earlier payment's
+value, as after a write that stopped halfway, which is why the contract asks
+`saveTransaction` to write both in one atomic write. A lookup only shows that a txid is some
+transaction the indexer knows, not that it is the record's, and the newest
+signature records need not be the pending payment's: two overlapping
+`sendPayment` calls both sign before one is refused. A record repaired to name
+an earlier payment would be cleared once that one confirms, and the payment
+still pending forgotten, so that the next payment could pay twice.
+
+The one way out is a sweep, which `AbandonPaymentErrorCode` describes step by
+step for `corrupt_pending`: wait until the indexer lists no unconfirmed
+transaction for the address, since its list of unspent outputs leaves out any
+that a transaction in its mempool spends; move every output it then lists to
+the wallet itself, and wait until those transfers confirm; repeat until the
+address's confirmed history shows every output paid to it, but the transfers'
+own, spent in a block, so that the lost transaction can no longer confirm.
+Then look in that history for a transaction other than the transfers that
+spends from the address and that the wallet does not know as an earlier
+payment: the lost transaction may have confirmed first and made the payment.
+Only then clear the record, and pay again only if the payment was not made.
 
 <!-- snippet: examples/src/send-payment.ts#broadcast -->
 ```ts
@@ -201,7 +204,8 @@ script, as in a source tarball unpacked inside another checkout. In CI, with
 the `CI` environment variable set (to anything but `0` or `false`), that scan
 must run, so any of those reasons fails the check instead. A tracked file
 missing from the working tree holds no marker, so it skips that file with a
-note. Line endings do not count, so a CRLF
-checkout checks the same as an LF one. `--write` keeps every line outside the
+note. Either mode prints every problem and every difference it finds, and
+`--write` rewrites nothing until every check has passed. Line endings do not
+count, so a CRLF checkout checks the same as an LF one. `--write` keeps every line outside the
 blocks it changes as it was, ending included, and ends the lines it writes with
 the line ending most of the README's lines use.

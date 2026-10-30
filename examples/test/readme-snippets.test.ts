@@ -246,6 +246,34 @@ describe('readme-snippets.mjs', () => {
     expect(check(root, { ...local(), CI: 'true' }).status).toBe(0)
   })
 
+  it('prints every problem and difference, a scan CI cannot run included, and --write then rewrites nothing', () => {
+    // A block that differs from its region, and a marker the script cannot read.
+    const root = checkout()
+    const stale = withStaleBlock(read(root, README))
+    writeFileSync(join(root, README), stale)
+    const examples = `${read(root, 'examples/README.md')}\n<!--snippet: examples/src/send-payment.ts#broadcast -->\n`
+    writeFileSync(join(root, 'examples/README.md'), examples)
+    const unreadable = 'a snippet marker must be a whole line'
+
+    const written = run(root, '--write')
+
+    expect(written.status).toBe(1)
+    expect(written.stderr).toContain(unreadable)
+    expect(read(root, README)).toBe(stale)
+
+    // On a CI runner without git, where the scan of other Markdown files cannot run.
+    const ci = { ...local(), PATH: join(root, 'no-git-here'), CI: 'true' }
+    const scan = 'the scan of other Markdown files for snippet markers must run in CI, but: git is not installed'
+    for (const result of [check(root, ci), run(root, '--write', ci)]) {
+      expect(result.status).toBe(1)
+      expect(result.stderr).toContain(scan)
+      expect(result.stderr).toContain(unreadable)
+    }
+    expect(check(root, ci).stderr).toContain(`the block differs from ${REGION}`)
+    expect(read(root, README)).toBe(stale)
+    expect(read(root, 'examples/README.md')).toBe(examples)
+  })
+
   it('checks a CRLF checkout, and a README whose lines end in a mix of CRLF and LF', () => {
     const root = checkout()
     convertToCrlf(root)
