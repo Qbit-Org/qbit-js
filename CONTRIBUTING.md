@@ -140,5 +140,19 @@ and `schemaVersion`.
 - Feature and fix PRs target `main`. A `release/X.Y` branch takes only fixes,
   docs, and version and CHANGELOG updates.
 
+Every commit on `main` and `release/*` must carry a verified signature, and
+pull requests merge with a merge commit: squash and rebase merges are off. You
+don't need to sign your own commits. When a pull request is ready, a
+maintainer squashes it into one commit, signs it and merges it. That commit's
+message is the pull request's title and description, then a list of the
+squashed commits with their `Co-authored-by` and `Signed-off-by` trailers. Put
+credits in your commits, not in the description.
+
+A back-merge pull request from `release/X.Y` or `backmerge/X.Y` (see
+[RELEASING.md](RELEASING.md)) is the exception. It is merged as it is, with a
+merge commit, so that the release commits join `main`'s history, and every
+commit in it must already carry a verified signature. That includes the merge
+of `main` that a `backmerge/X.Y` branch adds.
+
 [RELEASING.md](RELEASING.md) covers versioning, release branches, back-merges,
 tags and publishing.
