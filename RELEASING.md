@@ -77,7 +77,9 @@ and published. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
   lacks, and merge it at least once per published version and before the next
   line is cut, so `main` never lacks a released fix. If it conflicts, resolve
   on a short-lived `backmerge/X.Y` branch cut from `release/X.Y` with `main`
-  merged in, not on `release/X.Y` itself.
+  merged in, not on `release/X.Y` itself. Sign the commits you make on that
+  branch: a back-merge merges as it is, and `main` takes only commits with a
+  verified signature ([CONTRIBUTING.md](CONTRIBUTING.md#changes-and-releases)).
 - A fix that lands on `main` first and is also needed on an active line is
   cherry-picked (`git cherry-pick -x`) onto `release/X.Y` in its own PR.
 - `package.json` versions on `main` are never published. A back-merge may carry
@@ -253,6 +255,13 @@ short-lived token, and trusted publishing takes over from the next release.
      Actions), Block force pushes and Restrict deletions, and no bypass
      actors. The workflow's release-branch check means "reviewed" only while
      every change to `release/X.Y` comes through such a PR.
+
+   The rulesets as they are live are in
+   [`.github/rulesets/`](.github/rulesets/), whose README says how to apply
+   them and check them against GitHub. They differ from the list above: a
+   `main` ruleset and a `signed-commits` ruleset have been added, pull
+   requests merge with merge commits only, and the release maintainers team
+   is a bypass actor of the `release/*` pull-request ruleset too.
 3. Create the environment `npm` (Settings → Environments):
    - Deployment branches and tags: Selected branches and tags, with the tag
      rule `v*`.
