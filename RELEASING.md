@@ -69,15 +69,21 @@ and published. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 - `main` is the integration branch. Feature and fix PRs target `main`.
 - `release/X.Y` stabilizes one minor line. It is cut from `main` when the line
-  starts stabilizing and takes only fixes, docs, and version and CHANGELOG
-  updates, each through a PR with a green `verify` check. Never merge `main`
-  into a release branch.
-- **Fixes flow back to `main`** through a back-merge PR from `release/X.Y` into
-  `main`. Keep one draft back-merge PR open while the line has fixes `main`
-  lacks, and merge it at least once per published version and before the next
-  line is cut, so `main` never lacks a released fix. If it conflicts, resolve
-  on a short-lived `backmerge/X.Y` branch cut from `release/X.Y` with `main`
-  merged in, not on `release/X.Y` itself. Sign the commits you make on that
+  starts stabilizing, at a commit whose `verify` check is green (nothing
+  enforces that at the cut). It takes only fixes, docs, and version and
+  CHANGELOG updates, each through a PR with green `verify` and
+  `signed-landing` checks. Never merge `main` into a release branch.
+- **Fixes flow back to `main`** through a back-merge PR from a `backmerge/X.Y`
+  branch into `main`: cut that branch from `release/X.Y` and merge `main` into
+  it. `main` requires branches to be up to date and nobody can bypass that, so
+  a PR from `release/X.Y` itself could not merge once `main` has moved on.
+  Keep one draft back-merge PR open while the line has fixes `main` lacks, and
+  merge it at least once per published version and before the next line is
+  cut, so `main` never lacks a released fix. Before merging it, merge
+  `release/X.Y` and `main` into `backmerge/X.Y` again, which is also where a
+  conflict is resolved. Make those merges locally, never with GitHub's
+  "Update branch" button, and finish one that stopped on conflicts with
+  `git commit -S`. Sign the commits you make on that
   branch: a back-merge merges as it is, and `main` takes only commits with a
   verified signature ([CONTRIBUTING.md](CONTRIBUTING.md#changes-and-releases)).
 - A fix that lands on `main` first and is also needed on an active line is
@@ -260,8 +266,10 @@ short-lived token, and trusted publishing takes over from the next release.
    [`.github/rulesets/`](.github/rulesets/), whose README says how to apply
    them and check them against GitHub. They differ from the list above: a
    `main` ruleset and a `signed-commits` ruleset have been added, pull
-   requests merge with merge commits only, and the release maintainers team
-   is a bypass actor of the `release/*` pull-request ruleset too.
+   requests merge with merge commits only, the required status checks are in
+   two rulesets of their own that nobody can bypass and include
+   `signed-landing`, and the release maintainers team is a bypass actor of
+   the `release/*` pull-request ruleset too, for merging a pull request only.
 3. Create the environment `npm` (Settings → Environments):
    - Deployment branches and tags: Selected branches and tags, with the tag
      rule `v*`.
