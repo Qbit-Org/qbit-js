@@ -3,6 +3,7 @@ import {
   P2MR_PROGRAM_BYTES,
   P2MR_LEAF_VERSION_MASK,
   P2MR_LEAF_VERSION_V1,
+  OP_0,
   OP_1,
   OP_2,
   OP_16,
@@ -838,6 +839,57 @@ interface P2mrSigningTemplate {
   threshold: number
 }
 
+/** `OP_IF` and `OP_ENDIF`, for {@link isUnexecutedPushBranches}. */
+const OP_IF = 0x63
+const OP_ENDIF = 0x68
+/** Consensus limit on the size of one script push (`MAX_SCRIPT_ELEMENT_SIZE`), checked for every push, executed or not. */
+const MAX_SCRIPT_ELEMENT_BYTES = 520
+
+/**
+ * Whether `script` is one or more branches `OP_0 OP_IF <push>* OP_ENDIF` and
+ * nothing else, where every push is complete and at most 520 bytes. `OP_0`
+ * leaves the branch unexecuted, so the branches change nothing the leaf
+ * before them computes: a leaf `pk(K)` followed by them is satisfied by the
+ * same single signature, which is how a data envelope is carried in a leaf.
+ *
+ * Only push opcodes (`0x00`-`0x4e`, `OP_1NEGATE`, `OP_1`-`OP_16`) are allowed
+ * inside, so no `OP_SUCCESSx` (which `0x50` is) can make the leaf spendable by
+ * anyone, and no push can run past the script or past 520 bytes, the two cases
+ * in which consensus rejects the whole script.
+ */
+function isUnexecutedPushBranches(script: Uint8Array): boolean {
+  let offset = 0
+  let branches = 0
+  while (offset < script.length) {
+    if (script[offset] !== OP_0 || script[offset + 1] !== OP_IF) return false
+    offset += 2
+    for (;;) {
+      const opcode = script[offset]
+      if (opcode === undefined) return false
+      offset += 1
+      if (opcode === OP_ENDIF) break
+      let length: number
+      if (opcode <= 0x4b) {
+        length = opcode
+      } else if (opcode >= 0x4c && opcode <= 0x4e) {
+        const width = opcode === 0x4c ? 1 : opcode === 0x4d ? 2 : 4
+        if (offset + width > script.length) return false
+        length = 0
+        for (let i = width - 1; i >= 0; i--) length = length * 256 + script[offset + i]!
+        offset += width
+      } else if (opcode === 0x4f || (opcode >= OP_1 && opcode <= OP_16)) {
+        continue
+      } else {
+        return false
+      }
+      if (length > MAX_SCRIPT_ELEMENT_BYTES || offset + length > script.length) return false
+      offset += length
+    }
+    branches += 1
+  }
+  return branches > 0
+}
+
 /**
  * The pubkeys (in script order) and threshold of a P2MR leaf that qbit Core
  * would sign and finalize, or `undefined` when Core builds no signing plan for
@@ -845,7 +897,10 @@ interface P2mrSigningTemplate {
  * `BuildP2MRScriptSigningPlan` (src/script/sign.cpp:503-511):
  *
  * - the leaf version is `P2MR_LEAF_VERSION_V1` (0xc0) (sign.cpp:506);
- * - the script is exactly `pk(K)`: `0x20 K OP_CHECKSIGPQC` (sign.cpp:313-320);
+ * - the script is exactly `pk(K)`: `0x20 K OP_CHECKSIGPQC` (sign.cpp:313-320),
+ *   optionally followed by unexecuted push-only branches `OP_0 OP_IF <push>*
+ *   OP_ENDIF` ({@link isUnexecutedPushBranches}), which Core does not plan for
+ *   but which leave the leaf satisfied by the same signature;
  * - or a `multi_a` matched by `p2mr::MatchMultiA` (src/script/p2mr.h:40-70,
  *   called at sign.cpp:323): n >= 1 groups of `0x20 K`, each followed by
  *   OP_CHECKSIGPQC for the first key and OP_CHECKSIGADD for the rest, with
@@ -865,9 +920,10 @@ function p2mrSigningTemplate(leafVersion: number, script: Uint8Array): P2mrSigni
 
   if (leafVersion !== P2MR_LEAF_VERSION_V1) return undefined
   if (
-    script.length === keyGroupBytes &&
+    script.length >= keyGroupBytes &&
     script[0] === P2MR_PROGRAM_BYTES &&
-    script[keyGroupBytes - 1] === OP_CHECKSIGPQC
+    script[keyGroupBytes - 1] === OP_CHECKSIGPQC &&
+    (script.length === keyGroupBytes || isUnexecutedPushBranches(script.subarray(keyGroupBytes)))
   ) {
     return { keys: [script.subarray(1, keyGroupBytes - 1)], threshold: 1 }
   }

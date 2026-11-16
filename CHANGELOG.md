@@ -19,6 +19,14 @@ behave differently, so read those entries before taking a patch.
   `validateP2mrSigningPlans` refuse a plan without `SIGHASH_ANYONECANPAY`, and
   `finalizeP2mrPsbt` refuses the PSBT, with the same `INVALID_AMOUNT` error
   as before.
+- `validateP2mrSigningPlans`, `signP2mrPsbt` and `finalizeP2mrPsbt` treat a leaf
+  `pk(K)` followed by unexecuted push-only branches (`OP_0 OP_IF <push>*
+  OP_ENDIF`) as a `pk(K)` leaf, so a leaf that carries a data envelope can be
+  signed and finalized with the one signature and the witness of `pk(K)`. They
+  threw `INVALID_PSBT` ("not a v1 pk/multi_a template") for it. qbit Core's
+  wallet builds no plan for this shape, so this goes beyond what it signs. Any
+  other opcode, a truncated or oversized push and a `multi_a` leaf with a
+  branch are still refused.
 
 ## 0.1.1 (2026-10-30)
 

@@ -63,6 +63,18 @@ recover from partial signing, enforce sighash types and pick a witness.
   spent, but on the leaf finalize uses, including the plan's own `multi_a`
   leaf, it makes finalize produce a transaction that does not verify
 
+## Data branches after a `pk` leaf
+
+One leaf shape is signed and finalized here that qbit Core's wallet builds no
+plan for: `pk(K)` followed by one or more unexecuted push-only branches,
+`OP_0 OP_IF <push>* OP_ENDIF`, with every push complete and at most 520 bytes.
+`OP_0` keeps each branch from running, so the leaf is satisfied by the same
+single signature and witness as `pk(K)`, and a data envelope can sit in it.
+Any other opcode in or after a branch, a truncated or oversized push, and a
+`multi_a` leaf followed by a branch are refused as before, with
+`INVALID_PSBT`. `OP_RESERVED` (`0x50`) is one of those: it is an `OP_SUCCESS`,
+which would let anyone spend the leaf.
+
 ## Non-default sighash types
 
 Non-default sighash types (`NONE`, `SINGLE`, and the `ANYONECANPAY` variants)
