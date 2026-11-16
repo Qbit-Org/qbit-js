@@ -84,8 +84,13 @@ and published. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
   conflict is resolved. Make those merges locally, never with GitHub's
   "Update branch" button, and finish one that stopped on conflicts with
   `git commit -S`. Sign the commits you make on that
-  branch: a back-merge merges as it is, and `main` takes only commits with a
-  verified signature ([CONTRIBUTING.md](CONTRIBUTING.md#changes-and-releases)).
+  branch: a back-merge merges as it is, `main` takes only commits with a
+  verified signature, and `signed-landing` passes a back-merge only when a
+  person signed its head commit
+  ([CONTRIBUTING.md](CONTRIBUTING.md#changes-and-releases)). If `main` has
+  nothing the branch lacks, `git merge` makes no commit, and the tip can be
+  the commit GitHub made on `release/X.Y`: put an empty commit you sign on top
+  (`git commit -S --allow-empty`), because the check judges the head commit.
 - A fix that lands on `main` first and is also needed on an active line is
   cherry-picked (`git cherry-pick -x`) onto `release/X.Y` in its own PR.
 - `package.json` versions on `main` are never published. A back-merge may carry

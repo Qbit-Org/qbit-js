@@ -53,14 +53,24 @@ open pull request usually means it hasn't been squashed and signed yet. If its
 message says it could not check, do what the message says, which is usually to
 re-run it. GitHub's signature rule can't tell that by itself, because it
 accepts any verified signature, GitHub's own included, such as on a web edit
-or an "Update branch" merge. A pull request from a `backmerge/*` branch, or
-from a `release/*` branch (one release line merged into another, such as
-`release/0.1.1` into `release/0.1`), merges as it is, and passes without being
-judged. Only the release maintainers team can create a `release/*` branch;
-anyone with write access can create a `backmerge/*` one. That goes by the name
-alone, and only for a branch in this repository: whoever can create a branch
-with such a name can open a pull request that isn't judged, so keep those
-names for that use. The check is required by a ruleset with no bypass actors,
+or an "Update branch" merge. A pull request from a `backmerge/*` or
+`release/*` branch of this repository (`AS_IS_HEADS` in the workflow) merges
+as it is, with any number of commits, and the check judges its head commit
+instead: it passes when a person signed that commit with an OpenPGP key that
+is on their own GitHub account. The signature covers the commit's tree and its
+parents, so whoever signed the head answers for everything the pull request
+brings. A head commit that GitHub made fails: a squash merge's commit, an
+"Update branch" merge, a web edit or a web conflict resolution. The tip of a
+release line is usually the commit GitHub made when it merged the line's last
+pull request, so a release line reaches another branch through a `backmerge/*`
+branch cut from it, whose last commit is a merge that a maintainer makes and
+signs. That holds for `main`, and for one release line merged into another,
+such as `release/0.1.1` into `release/0.1`. When the target has nothing that
+branch lacks, `git merge` makes no commit and the tip is still GitHub's, so
+the maintainer puts an empty commit they sign on top
+(`git commit -S --allow-empty`), because the check judges the head commit. A
+fork's branch never merges as it is. The check is required by a ruleset with
+no bypass actors,
 so the merge button works only once it is green. It always runs from the
 default branch's copy of the workflow, `main`'s, whatever branch the pull
 request targets, so a pull request can't change the rule it is judged by. Its
