@@ -11,6 +11,7 @@ import {
   OP_NUMEQUAL,
   PQC_SIGNATURE_BYTES,
   SIGHASH_DEFAULT,
+  SIGHASH_INPUT_MASK,
   PSBT_IN_WITNESS_UTXO,
   PSBT_IN_FINAL_SCRIPTWITNESS,
   PSBT_IN_PROPRIETARY,
@@ -272,6 +273,9 @@ interface PreparedP2mrSigningPlan {
  * same outpoint, or a PSBT {@link decodePsbt} rejects.
  * @throws {QbitProtocolError} `INVALID_SCRIPT` for an output restricted-output
  * mode rejects, or `INVALID_SIGHASH` for a sighash rule.
+ * @throws {QbitProtocolError} `INVALID_AMOUNT` for a plan without
+ * `SIGHASH_ANYONECANPAY` on a PSBT whose outputs exceed its inputs, since such
+ * a signature commits to every input and the transaction could never be valid.
  * @throws {QbitProtocolError} `INVALID_BYTES` for a plan's `pubkey` or
  * `leafHash` that is not a 32-byte `Uint8Array`, or any other code
  * {@link decodePsbt} throws, such as `INVALID_AMOUNT`.
@@ -530,6 +534,8 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  * none is.
  * @throws {QbitProtocolError} `INVALID_SIGHASH` for a signature whose type
  * breaks the rules above.
+ * @throws {QbitProtocolError} `INVALID_AMOUNT` if every input has a witness
+ * UTXO and the outputs exceed the inputs: the transaction could never be valid.
  * @throws {QbitProtocolError} Any other code {@link decodePsbt} throws, such
  * as `INVALID_AMOUNT`.
  *
@@ -550,6 +556,12 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  */
 export function finalizeP2mrPsbt(psbt: Psbt): Psbt {
   const summary = decodePsbt(psbt)
+  if (summary.inputs.every(input => input.witnessUtxo !== undefined)) {
+    assertInputsCoverOutputs(
+      summary.outputs,
+      summary.inputs.map(input => input.witnessUtxo!)
+    )
+  }
   const result: Psbt = {
     global: psbt.global.map(cloneEntry),
     inputs: psbt.inputs.map(map => map.map(cloneEntry)),
@@ -578,6 +590,21 @@ interface PreparedP2mrSigning {
   tx: P2mrTransaction
   spentOutputs: readonly P2mrSpentOutput[]
   plans: PreparedP2mrSigningPlan[]
+}
+
+/**
+ * Refuse a PSBT whose outputs exceed its inputs where the spend can never be
+ * valid: a signature that commits to every input (no `ANYONECANPAY`) and the
+ * finalized transaction. Core refuses such a transaction (`bad-txns-in-belowout`).
+ * `decodePsbt` leaves the PSBT alone, since an `ANYONECANPAY` signer covers only
+ * its own input and the next party adds the rest.
+ */
+function assertInputsCoverOutputs(outputs: readonly { value: bigint }[], spentOutputs: readonly { value: bigint }[]) {
+  const sent = outputs.reduce((sum, output) => sum + output.value, 0n)
+  const spent = spentOutputs.reduce((sum, spentOutput) => sum + spentOutput.value, 0n)
+  if (sent > spent) {
+    throw new QbitProtocolError('INVALID_AMOUNT', `total output value ${sent} exceeds total input value ${spent}`)
+  }
 }
 
 function prepareP2mrSigningPlans(
@@ -619,6 +646,10 @@ function prepareP2mrSigningPlans(
         `input ${key.inputIndex}: sighash type ${formatSighashType(hashType)} requires allowNonDefaultSighash: true; ` +
           'only SIGHASH_DEFAULT is accepted without an explicit opt-in'
       )
+    }
+
+    if ((hashType & SIGHASH_INPUT_MASK) === 0) {
+      assertInputsCoverOutputs(tx.outputs, spentOutputs)
     }
 
     const target = `${key.inputIndex}:${bytesToHex(pubkey)}:${bytesToHex(leafHash)}`

@@ -17,6 +17,7 @@ import {
   bytesToHex,
   createP2mrPsbt,
   decodePsbt,
+  finalizeP2mrPsbt,
   hexToBytes,
   p2mrSighash,
   parsePsbt,
@@ -566,12 +567,22 @@ describe('PSBT parsing and decoding reject out-of-range amounts', () => {
     }
   )
 
-  it('rejects outputs that exceed the inputs (negative fee)', () => {
+  it('decodes outputs that exceed the inputs without a fee', () => {
+    const summary = decodePsbt(rawPsbt([100_001n], [100_000n]))
+    expect(summary.outputs).toHaveLength(1)
+    expect(summary.fee).toBeUndefined()
+  })
+
+  it('refuses to sign or finalize outputs that exceed the inputs', () => {
+    const psbt = rawPsbt([100_001n], [100_000n])
+    const pubkey = new Uint8Array(32).fill(1)
+    const leafHash = new Uint8Array(32).fill(2)
     expectProtocolError(
-      () => decodePsbt(rawPsbt([100_001n], [100_000n])),
+      () => validateP2mrSigningPlans({ psbt, keys: [{ inputIndex: 0, pubkey, leafHash }] }),
       'INVALID_AMOUNT',
       /exceeds total input value/
     )
+    expectProtocolError(() => finalizeP2mrPsbt(psbt), 'INVALID_AMOUNT', /exceeds total input value/)
   })
 
   it('rejects totals outside MoneyRange even when each amount is in range', () => {

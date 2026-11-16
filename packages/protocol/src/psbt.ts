@@ -222,8 +222,9 @@ export interface PsbtSummary {
   outputs: readonly P2mrTransactionOutput[]
   /**
    * Sum of spent amounts minus output amounts; undefined unless every input has
-   * a witness UTXO. `decodePsbt` throws `INVALID_AMOUNT` rather than report a
-   * fee when the totals leave `MoneyRange` or the outputs exceed the inputs.
+   * a witness UTXO, and undefined while the outputs exceed the inputs (a PSBT
+   * still being built has no fee yet). `decodePsbt` throws `INVALID_AMOUNT`
+   * rather than report a fee when the totals leave `MoneyRange`.
    */
   fee?: bigint
 }
@@ -389,7 +390,10 @@ export function combinePsbts(psbts: readonly Psbt[]): Psbt {
 /**
  * Decode a PSBT into a human-readable summary for approval/inspection UIs.
  * Throws `INVALID_AMOUNT` instead of returning a misleading summary when an
- * amount or total is outside `MoneyRange` or the outputs exceed the inputs.
+ * amount or total is outside `MoneyRange`. A PSBT whose outputs exceed its
+ * inputs decodes without a `fee`, as a PSBT still being built (a one-input
+ * `SIGHASH_SINGLE|ANYONECANPAY` listing) does; `signP2mrPsbt` and
+ * `finalizeP2mrPsbt` refuse it where the result could never be valid.
  *
  * `psbt` need not come from `parsePsbt`, so right after reading the unsigned
  * transaction this checks the shape `parsePsbt` guarantees for wire bytes, as
@@ -418,11 +422,11 @@ export function combinePsbts(psbts: readonly Psbt[]): Psbt {
  *
  * @param psbt - The PSBT, from {@link parsePsbt} or built by hand.
  * @returns The transaction's fields, each input's decoded fields, and the fee
- * when every input has a witness UTXO.
+ * when every input has a witness UTXO and the outputs do not exceed the inputs.
  * @throws {QbitProtocolError} `INVALID_PSBT` for a malformed PSBT or record,
  * a map shape `parsePsbt` would not produce, or conflicting P2MR signatures.
  * @throws {QbitProtocolError} `INVALID_AMOUNT` for an amount or total outside
- * `MoneyRange`, or outputs that exceed the inputs.
+ * `MoneyRange`.
  * @throws {QbitProtocolError} `INVALID_SCRIPT` for a malformed P2MR signature
  * item or an odd leaf version, or `INVALID_BYTES` for a `qbit` Merkle root
  * that is not 32 bytes.
@@ -491,17 +495,18 @@ export function decodePsbt(psbt: Psbt): PsbtSummary {
 
   const summary: PsbtSummary = { version: tx.version, locktime: tx.locktime, inputs, outputs: tx.outputs }
   // Every amount passed MoneyRange when parsed; the totals must too (Core's
-  // CheckTransaction / CheckTxInputs), and a fee below zero means the outputs
-  // overspend the inputs. Throw rather than show an approval UI a bogus fee.
+  // CheckTransaction / CheckTxInputs). Outputs above the inputs are not an
+  // error here: a PSBT that is still being built, such as a one-input listing
+  // signed with SIGHASH_SINGLE|ANYONECANPAY, has the outputs its signer
+  // covered and the inputs the next party adds. It has no fee yet.
   const sent = tx.outputs.reduce((sum, output) => sum + output.value, 0n)
   assertMoneyRange(sent, 'total output value')
   if (inputs.every(input => input.witnessUtxo !== undefined)) {
     const spent = inputs.reduce((sum, input) => sum + input.witnessUtxo!.value, 0n)
     assertMoneyRange(spent, 'total input value')
-    if (sent > spent) {
-      throw new QbitProtocolError('INVALID_AMOUNT', `total output value ${sent} exceeds total input value ${spent}`)
+    if (sent <= spent) {
+      summary.fee = spent - sent
     }
-    summary.fee = spent - sent
   }
   return summary
 }

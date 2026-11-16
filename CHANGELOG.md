@@ -6,6 +6,20 @@ version (see [RELEASING.md](RELEASING.md)). Versions follow SemVer. Below 1.0,
 RELEASING.md lets a patch carry although it can make existing code fail or
 behave differently, so read those entries before taking a patch.
 
+## Unreleased
+
+### @qbit-oss/protocol
+
+- `decodePsbt` decodes a PSBT whose outputs exceed its inputs, with no `fee`,
+  instead of throwing `INVALID_AMOUNT`. A transaction that is still being built
+  can have such a PSBT: a one-input listing signed `SIGHASH_SINGLE|ANYONECANPAY`
+  (`0x83`) covers its own input and the output at the same index, and the next
+  party adds the other inputs and outputs. Totals outside `MoneyRange` still
+  throw. Where the result could never be valid, `signP2mrPsbt` and
+  `validateP2mrSigningPlans` refuse a plan without `SIGHASH_ANYONECANPAY`, and
+  `finalizeP2mrPsbt` refuses the PSBT, with the same `INVALID_AMOUNT` error
+  as before.
+
 ## 0.1.1 (2026-10-30)
 
 This release fixes bugs, most of them where the packages did not do what qbit

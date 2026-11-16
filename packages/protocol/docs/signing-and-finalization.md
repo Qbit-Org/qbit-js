@@ -70,3 +70,9 @@ do not commit to every input and output, so a signature made with one can be
 lifted into a transaction the user never saw. Applications must surface the
 type (`decodePsbt(...).inputs[i].sighashType` and the signing key's `hashType`)
 in their approval flow before opting in with `allowNonDefaultSighash: true`.
+
+A PSBT whose outputs exceed its inputs, such as a one-input listing signed
+`SIGHASH_SINGLE|ANYONECANPAY` for a buyer to complete, decodes without a `fee`.
+Signing it needs a plan with `SIGHASH_ANYONECANPAY`, since every other type
+commits to all inputs and no transaction with them could be valid, and
+`finalizeP2mrPsbt` refuses it. Both throw `INVALID_AMOUNT`.
