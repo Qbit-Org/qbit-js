@@ -84,8 +84,13 @@ and published. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
   conflict is resolved. Make those merges locally, never with GitHub's
   "Update branch" button, and finish one that stopped on conflicts with
   `git commit -S`. Sign the commits you make on that
-  branch: a back-merge merges as it is, and `main` takes only commits with a
-  verified signature ([CONTRIBUTING.md](CONTRIBUTING.md#changes-and-releases)).
+  branch: a back-merge merges as it is, `main` takes only commits with a
+  verified signature, and `signed-landing` passes a back-merge only when a
+  person signed its head commit
+  ([CONTRIBUTING.md](CONTRIBUTING.md#changes-and-releases)). If `main` has
+  nothing the branch lacks, `git merge` makes no commit, and the tip can be
+  the commit GitHub made on `release/X.Y`: put an empty commit you sign on top
+  (`git commit -S --allow-empty`), because the check judges the head commit.
 - A fix that lands on `main` first and is also needed on an active line is
   cherry-picked (`git cherry-pick -x`) onto `release/X.Y` in its own PR.
 - `package.json` versions on `main` are never published. A back-merge may carry
@@ -266,8 +271,9 @@ short-lived token, and trusted publishing takes over from the next release.
    [`.github/rulesets/`](.github/rulesets/), whose README says how to apply
    them and check them against GitHub. They differ from the list above: a
    `main` ruleset and a `signed-commits` ruleset have been added, pull
-   requests merge with merge commits only, the required status checks are in
-   two rulesets of their own that nobody can bypass and include
+   requests land with GitHub's squash merge, or as they are with a merge
+   commit from a `backmerge/*` or `release/*` branch, the required status
+   checks are in two rulesets of their own that nobody can bypass and include
    `signed-landing`, and the release maintainers team is a bypass actor of
    the `release/*` pull-request ruleset too, for merging a pull request only.
 3. Create the environment `npm` (Settings → Environments):
