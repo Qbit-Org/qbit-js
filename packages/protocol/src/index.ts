@@ -125,7 +125,15 @@ export {
   createP2mrPsbt,
   extractP2mrTransaction,
 } from './psbt'
-export type { PsbtKeyValue, Psbt, PsbtLimitOptions, PsbtInputSummary, PsbtSummary, P2mrPsbtInput } from './psbt'
+export type {
+  PsbtKeyValue,
+  Psbt,
+  PsbtLimitOptions,
+  PsbtDecodeOptions,
+  PsbtInputSummary,
+  PsbtSummary,
+  P2mrPsbtInput,
+} from './psbt'
 export { validateP2mrSigningPlans, signP2mrPsbt, finalizeP2mrPsbt } from './signing'
 export type {
   P2mrPsbtSignContext,

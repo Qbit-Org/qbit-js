@@ -70,3 +70,23 @@ do not commit to every input and output, so a signature made with one can be
 lifted into a transaction the user never saw. Applications must surface the
 type (`decodePsbt(...).inputs[i].sighashType` and the signing key's `hashType`)
 in their approval flow before opting in with `allowNonDefaultSighash: true`.
+
+## Partially funded listings
+
+A seller can sign one input and its matching payout using
+`SIGHASH_SINGLE | SIGHASH_ANYONECANPAY` before the buyer supplies funding.
+Use `decodePsbt(psbt, { allowOutputsAboveInputs: true })` for this approval
+screen. With all witness UTXOs present, a deficit produces a positive
+`shortfall` in base units, excluding network fees. A funded transaction has a
+`fee` (possibly zero). When any input value is unknown, both fields are absent.
+
+Show the payout, committed input and funding shortfall before signing. Pass
+both `allowOutputsAboveInputs: true` and `allowNonDefaultSighash: true` to
+`validateP2mrSigningPlans` and `signP2mrPsbt`. The SDK permits a deficit
+only when every plan explicitly uses a valid `ANYONECANPAY` type. This is
+signing policy. Finalize after the buyer adds funding and the network fee.
+
+The shortfall describes the PSBT currently on screen. Explain which fields
+the requested sighash commits to. For a fixed-price listing, `SINGLE |
+ANYONECANPAY` commits to the seller's input and matching payout. `NONE |
+ANYONECANPAY` commits to no payout and is unsuitable for that approval flow.
