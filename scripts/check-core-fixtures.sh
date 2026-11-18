@@ -42,6 +42,10 @@ for generator in sighash psbt; do
     --out "$work/out/p2mr-$generator.json"
 done
 
+# Independently check the signing digests of captured regtest PSBTs.
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$work/qbit/test/functional" \
+  python3 "$generators/check-signed-psbt-digests.py" "$fixtures"/p2mr-*.json
+
 status=0
 for name in p2mr-sighash.json p2mr-psbt.json; do
   if cmp "$fixtures/$name" "$work/out/$name"; then
