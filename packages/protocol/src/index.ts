@@ -142,6 +142,7 @@ export type {
   P2mrSigningPlanRef,
   P2mrPsbtOnSignedFn,
   P2mrSigningOptions,
+  P2mrLeafOptions,
   SignP2mrPsbtResult,
 } from './signing'
 export {

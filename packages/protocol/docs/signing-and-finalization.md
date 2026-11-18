@@ -34,7 +34,7 @@ recover from partial signing, enforce sighash types and pick a witness.
   `PSBT_IN_SIGHASH_TYPE`, or is not `SIGHASH_DEFAULT` when that field is
   absent, exactly as qbit Core's `FinalizePSBT` → `SignPSBTInput` does
   (`src/psbt.cpp:530,548-568,589-596,697` @ v1.0.0)
-- signing and finalization agree as they do in qbit Core: `finalizeP2mrPsbt`
+- by default, signing and finalization agree as they do in qbit Core: `finalizeP2mrPsbt`
   builds Core's witness for a committed v1 `pk` or `multi_a` leaf that has
   enough signatures (the smallest witness when several do), and ignores
   unrelated leaves and signatures (`src/script/sign.cpp:503-631,699-741`). A
@@ -62,6 +62,26 @@ recover from partial signing, enforce sighash types and pick a witness.
   the PSBT counts as a valid one. On a leaf finalize prefers it gets the plan refused before a key use is
   spent, but on the leaf finalize uses, including the plan's own `multi_a`
   leaf, it makes finalize produce a transaction that does not verify
+
+## Data branches after a `pk` leaf
+
+Wallets can recognize a single-key data leaf by
+`decodePsbt(psbt).inputs[i].leafScripts[j].hasDataBranches === true`. Display
+the script or decoded content of every eligible data leaf on every input.
+After approval, pass `allowDataBranches: true` to signing, plan validation
+and finalization. Use the same options at all three steps. Switching options
+can change the selected witness and leave a previously collected signature unused.
+Qbit Core's wallet does not build a signing or finalization plan for this template.
+A complete Core-supported leaf always wins, even if a data leaf is smaller.
+
+The extended template is `pk(K)` followed by one or more unexecuted push-only branches,
+`OP_0 OP_IF <push>* OP_ENDIF`, with every push complete and at most 520 bytes.
+`OP_0` keeps each branch from running, so the leaf is satisfied by the same
+single signature and witness as `pk(K)`, and a data envelope can sit in it.
+Any other opcode in or after a branch, a truncated or oversized push, and a
+`multi_a` leaf followed by a branch are refused as before, with
+`INVALID_PSBT`. `OP_RESERVED` (`0x50`) is one of those: it is an `OP_SUCCESS`,
+which would let anyone spend the leaf.
 
 ## Non-default sighash types
 
