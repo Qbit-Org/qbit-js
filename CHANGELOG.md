@@ -6,7 +6,7 @@ version (see [RELEASING.md](RELEASING.md)). Versions follow SemVer. Below 1.0,
 RELEASING.md lets a patch carry although it can make existing code fail or
 behave differently, so read those entries before taking a patch.
 
-## Unreleased
+## 0.1.2 (2026-11-18)
 
 ### @qbit-oss/protocol
 
