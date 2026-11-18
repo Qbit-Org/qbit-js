@@ -138,7 +138,8 @@ and `schemaVersion`.
   backward-compatible fix or addition, or a behaviour change, bumps PATCH
   (`0.1.0` → `0.1.1`). From 1.0.0 on, a breaking change bumps MAJOR.
 - Feature and fix PRs target `main`. A `release/X.Y` branch takes only fixes,
-  docs, and version and CHANGELOG updates.
+  docs, and version and CHANGELOG updates. The active 0.1 branch is
+  `release/0.1.x`.
 
 Every commit on `main` and `release/*` must carry a verified signature, and
 pull requests land with GitHub's squash merge: rebase merges are off. You
