@@ -206,6 +206,15 @@ export interface PsbtInputSummary {
 }
 
 /**
+ * Options for inspecting a partially funded PSBT with {@link decodePsbt}.
+ * @category PSBT
+ */
+export interface PsbtDecodeOptions {
+  /** Report a known funding shortfall when the outputs exceed the inputs. Defaults to false. */
+  allowOutputsAboveInputs?: boolean
+}
+
+/**
  * A summary of a PSBT for approval and inspection UIs, as {@link decodePsbt}
  * returns it.
  *
@@ -222,10 +231,11 @@ export interface PsbtSummary {
   outputs: readonly P2mrTransactionOutput[]
   /**
    * Sum of spent amounts minus output amounts; undefined unless every input has
-   * a witness UTXO. `decodePsbt` throws `INVALID_AMOUNT` rather than report a
-   * fee when the totals leave `MoneyRange` or the outputs exceed the inputs.
+   * a witness UTXO and the inputs cover the outputs.
    */
   fee?: bigint
+  /** Additional input value needed, excluding fees. Present only for a known deficit with explicit opt-in. */
+  shortfall?: bigint
 }
 
 /**
@@ -386,10 +396,12 @@ export function combinePsbts(psbts: readonly Psbt[]): Psbt {
   return combined
 }
 
+/** Decode strictly, including when used as a one-argument callback. @category PSBT */
+export function decodePsbt(psbt: Psbt): PsbtSummary
 /**
  * Decode a PSBT into a human-readable summary for approval/inspection UIs.
  * Throws `INVALID_AMOUNT` instead of returning a misleading summary when an
- * amount or total is outside `MoneyRange` or the outputs exceed the inputs.
+ * amount or total is outside `MoneyRange`, or the outputs exceed the inputs without explicit opt-in.
  *
  * `psbt` need not come from `parsePsbt`, so right after reading the unsigned
  * transaction this checks the shape `parsePsbt` guarantees for wire bytes, as
@@ -417,12 +429,12 @@ export function combinePsbts(psbts: readonly Psbt[]): Psbt {
  * (psbt.h:318-328).
  *
  * @param psbt - The PSBT, from {@link parsePsbt} or built by hand.
- * @returns The transaction's fields, each input's decoded fields, and the fee
- * when every input has a witness UTXO.
+ * @param options - Set `allowOutputsAboveInputs` to report a known funding shortfall.
+ * @returns The transaction fields and input details, plus a fee or shortfall when all input values are known.
  * @throws {QbitProtocolError} `INVALID_PSBT` for a malformed PSBT or record,
  * a map shape `parsePsbt` would not produce, or conflicting P2MR signatures.
  * @throws {QbitProtocolError} `INVALID_AMOUNT` for an amount or total outside
- * `MoneyRange`, or outputs that exceed the inputs.
+ * `MoneyRange`, or outputs that exceed the inputs without explicit opt-in.
  * @throws {QbitProtocolError} `INVALID_SCRIPT` for a malformed P2MR signature
  * item or an odd leaf version, or `INVALID_BYTES` for a `qbit` Merkle root
  * that is not 32 bytes.
@@ -433,7 +445,8 @@ export function combinePsbts(psbts: readonly Psbt[]): Psbt {
  *
  * @category PSBT
  */
-export function decodePsbt(psbt: Psbt): PsbtSummary {
+export function decodePsbt(psbt: Psbt, options?: PsbtDecodeOptions): PsbtSummary
+export function decodePsbt(psbt: Psbt, options: PsbtDecodeOptions = {}): PsbtSummary {
   const tx = psbtUnsignedTransaction(psbt)
   assertPsbtMapShape(psbt, tx)
   const inputs: PsbtInputSummary[] = tx.inputs.map((input, index) => {
@@ -492,16 +505,20 @@ export function decodePsbt(psbt: Psbt): PsbtSummary {
   const summary: PsbtSummary = { version: tx.version, locktime: tx.locktime, inputs, outputs: tx.outputs }
   // Every amount passed MoneyRange when parsed; the totals must too (Core's
   // CheckTransaction / CheckTxInputs), and a fee below zero means the outputs
-  // overspend the inputs. Throw rather than show an approval UI a bogus fee.
+  // overspend the inputs. A funding shortfall is reported only on explicit request.
   const sent = tx.outputs.reduce((sum, output) => sum + output.value, 0n)
   assertMoneyRange(sent, 'total output value')
   if (inputs.every(input => input.witnessUtxo !== undefined)) {
     const spent = inputs.reduce((sum, input) => sum + input.witnessUtxo!.value, 0n)
     assertMoneyRange(spent, 'total input value')
     if (sent > spent) {
-      throw new QbitProtocolError('INVALID_AMOUNT', `total output value ${sent} exceeds total input value ${spent}`)
+      if (options?.allowOutputsAboveInputs !== true) {
+        throw new QbitProtocolError('INVALID_AMOUNT', `total output value ${sent} exceeds total input value ${spent}`)
+      }
+      summary.shortfall = sent - spent
+    } else {
+      summary.fee = spent - sent
     }
-    summary.fee = spent - sent
   }
   return summary
 }
@@ -673,7 +690,7 @@ export interface P2mrPsbtInput {
  *
  * @remarks
  * It does not check that the inputs cover the outputs ({@link decodePsbt}
- * does) or that each leaf is in its witness UTXO's tree (the signing helpers
+ * does by default) or that each leaf is in its witness UTXO's tree (the signing helpers
  * do). See
  * [Consensus checks](https://github.com/Qbit-Org/qbit-js/blob/main/packages/protocol/docs/consensus-checks.md).
  *

@@ -699,3 +699,28 @@ describe('transaction version is uint32, as in qbit Core', () => {
     ).toBe(bytesToHex(expected))
   })
 })
+
+describe('partial funding opt-in preserves MoneyRange', () => {
+  const options = { allowOutputsAboveInputs: true }
+  it('keeps input and output totals bounded', () => {
+    expectProtocolError(
+      () => decodePsbt(rawPsbt([QBIT_MAX_MONEY, 1n], [0n]), options),
+      'INVALID_AMOUNT',
+      /total output value/
+    )
+    expectProtocolError(
+      () => decodePsbt(rawPsbt([0n], [QBIT_MAX_MONEY, 1n]), options),
+      'INVALID_AMOUNT',
+      /total input value/
+    )
+  })
+  it('can report the maximum in-range shortfall', () => {
+    expect(decodePsbt(rawPsbt([QBIT_MAX_MONEY], [0n]), options).shortfall).toBe(QBIT_MAX_MONEY)
+  })
+
+  it('reports a zero fee when the totals match', () => {
+    const summary = decodePsbt(rawPsbt([50n], [50n]), options)
+    expect(summary.fee).toBe(0n)
+    expect(summary).not.toHaveProperty('shortfall')
+  })
+})

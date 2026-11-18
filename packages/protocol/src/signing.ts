@@ -11,6 +11,7 @@ import {
   OP_NUMEQUAL,
   PQC_SIGNATURE_BYTES,
   SIGHASH_DEFAULT,
+  SIGHASH_ANYONECANPAY,
   PSBT_IN_WITNESS_UTXO,
   PSBT_IN_FINAL_SCRIPTWITNESS,
   PSBT_IN_PROPRIETARY,
@@ -196,6 +197,12 @@ export interface P2mrSigningOptions {
    */
   allowNonDefaultSighash?: boolean
   /**
+   * Allow a known funding shortfall. Requires `allowNonDefaultSighash` and one or more
+   * signing plans, each explicitly using a valid `ANYONECANPAY` type. Finalization
+   * always requires the inputs to cover the outputs.
+   */
+  allowOutputsAboveInputs?: boolean
+  /**
    * `false` skips the restricted-output check, matching qbit Core's regtest
    * `-p2mronly=0`. By default every output of the unsigned transaction must be
    * one Core's restricted-output mode allows (see
@@ -272,6 +279,8 @@ interface PreparedP2mrSigningPlan {
  * same outpoint, or a PSBT {@link decodePsbt} rejects.
  * @throws {QbitProtocolError} `INVALID_SCRIPT` for an output restricted-output
  * mode rejects, or `INVALID_SIGHASH` for a sighash rule.
+ * @throws {QbitProtocolError} `INVALID_AMOUNT` for a known shortfall unless both
+ * funding and non-default sighash opt-ins are enabled and all plans explicitly use ANYONECANPAY.
  * @throws {QbitProtocolError} `INVALID_BYTES` for a plan's `pubkey` or
  * `leafHash` that is not a 32-byte `Uint8Array`, or any other code
  * {@link decodePsbt} throws, such as `INVALID_AMOUNT`.
@@ -586,7 +595,21 @@ function prepareP2mrSigningPlans(
   options: P2mrSigningOptions = {}
 ): PreparedP2mrSigning {
   const tx = psbtUnsignedTransaction(psbt)
-  const summary = decodePsbt(psbt)
+  // Approval and signing must use the same hash type, even if a caller supplies accessors.
+  const partialPlans =
+    options.allowOutputsAboveInputs === true && options.allowNonDefaultSighash === true
+      ? Array.from(keys, ({ inputIndex, pubkey, leafHash, hashType }) => ({
+          inputIndex,
+          pubkey,
+          leafHash,
+          hashType: hashType ?? SIGHASH_DEFAULT,
+        }))
+      : undefined
+  const allowOutputsAboveInputs =
+    partialPlans !== undefined &&
+    partialPlans.length > 0 &&
+    partialPlans.every(({ hashType }) => isValidP2mrSighashType(hashType) && (hashType & SIGHASH_ANYONECANPAY) !== 0)
+  const summary = decodePsbt(psbt, { allowOutputsAboveInputs })
   assertRestrictedOutputModeOutputs(tx.outputs, options.restrictedOutputMode)
   assertTransactionShape(tx)
   const spentOutputs = extractSpentOutputs(psbt)
@@ -595,7 +618,7 @@ function prepareP2mrSigningPlans(
   const inputHashTypes = new Map<number, number>()
   const plans: PreparedP2mrSigningPlan[] = []
 
-  for (const key of keys) {
+  for (const key of partialPlans ?? keys) {
     if (!Number.isInteger(key.inputIndex) || key.inputIndex < 0 || key.inputIndex >= tx.inputs.length) {
       throw new QbitProtocolError('INVALID_PSBT', 'signing key inputIndex out of range')
     }

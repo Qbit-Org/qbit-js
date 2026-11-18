@@ -6,6 +6,16 @@ version (see [RELEASING.md](RELEASING.md)). Versions follow SemVer. Below 1.0,
 RELEASING.md lets a patch carry although it can make existing code fail or
 behave differently, so read those entries before taking a patch.
 
+## Unreleased
+
+### @qbit-oss/protocol
+
+- A partial PSBT with known input values can be inspected with
+  `decodePsbt(psbt, { allowOutputsAboveInputs: true })`. If outputs exceed
+  inputs, the summary reports the missing amount as `shortfall`. Signing and
+  plan validation require both this opt-in and `allowNonDefaultSighash`, and
+  every plan must use `ANYONECANPAY`. Finalization still requires full funding.
+
 ## 0.1.1 (2026-10-30)
 
 This release fixes bugs, most of them where the packages did not do what qbit
