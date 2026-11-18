@@ -34,7 +34,7 @@ recover from partial signing, enforce sighash types and pick a witness.
   `PSBT_IN_SIGHASH_TYPE`, or is not `SIGHASH_DEFAULT` when that field is
   absent, exactly as qbit Core's `FinalizePSBT` → `SignPSBTInput` does
   (`src/psbt.cpp:530,548-568,589-596,697` @ v1.0.0)
-- signing and finalization agree as they do in qbit Core: `finalizeP2mrPsbt`
+- by default, signing and finalization agree as they do in qbit Core: `finalizeP2mrPsbt`
   builds Core's witness for a committed v1 `pk` or `multi_a` leaf that has
   enough signatures (the smallest witness when several do), and ignores
   unrelated leaves and signatures (`src/script/sign.cpp:503-631,699-741`). A
@@ -63,6 +63,26 @@ recover from partial signing, enforce sighash types and pick a witness.
   spent, but on the leaf finalize uses, including the plan's own `multi_a`
   leaf, it makes finalize produce a transaction that does not verify
 
+## Data branches after a `pk` leaf
+
+Wallets can recognize a single-key data leaf by
+`decodePsbt(psbt).inputs[i].leafScripts[j].hasDataBranches === true`. Display
+the script or decoded content of every eligible data leaf on every input.
+After approval, pass `allowDataBranches: true` to signing, plan validation
+and finalization. Use the same options at all three steps. Switching options
+can change the selected witness and leave a previously collected signature unused.
+Qbit Core's wallet does not build a signing or finalization plan for this template.
+A complete Core-supported leaf always wins, even if a data leaf is smaller.
+
+The extended template is `pk(K)` followed by one or more unexecuted push-only branches,
+`OP_0 OP_IF <push>* OP_ENDIF`, with every push complete and at most 520 bytes.
+`OP_0` keeps each branch from running, so the leaf is satisfied by the same
+single signature and witness as `pk(K)`, and a data envelope can sit in it.
+Any other opcode in or after a branch, a truncated or oversized push, and a
+`multi_a` leaf followed by a branch are refused as before, with
+`INVALID_PSBT`. `OP_RESERVED` (`0x50`) is one of those: it is an `OP_SUCCESS`,
+which would let anyone spend the leaf.
+
 ## Non-default sighash types
 
 Non-default sighash types (`NONE`, `SINGLE`, and the `ANYONECANPAY` variants)
@@ -70,3 +90,23 @@ do not commit to every input and output, so a signature made with one can be
 lifted into a transaction the user never saw. Applications must surface the
 type (`decodePsbt(...).inputs[i].sighashType` and the signing key's `hashType`)
 in their approval flow before opting in with `allowNonDefaultSighash: true`.
+
+## Partially funded listings
+
+A seller can sign one input and its matching payout using
+`SIGHASH_SINGLE | SIGHASH_ANYONECANPAY` before the buyer supplies funding.
+Use `decodePsbt(psbt, { allowOutputsAboveInputs: true })` for this approval
+screen. With all witness UTXOs present, a deficit produces a positive
+`shortfall` in base units, excluding network fees. A funded transaction has a
+`fee` (possibly zero). When any input value is unknown, both fields are absent.
+
+Show the payout, committed input and funding shortfall before signing. Pass
+both `allowOutputsAboveInputs: true` and `allowNonDefaultSighash: true` to
+`validateP2mrSigningPlans` and `signP2mrPsbt`. The SDK permits a deficit
+only when every plan explicitly uses a valid `ANYONECANPAY` type. This is
+signing policy. Finalize after the buyer adds funding and the network fee.
+
+The shortfall describes the PSBT currently on screen. Explain which fields
+the requested sighash commits to. For a fixed-price listing, `SINGLE |
+ANYONECANPAY` commits to the seller's input and matching payout. `NONE |
+ANYONECANPAY` commits to no payout and is unsuitable for that approval flow.

@@ -1,5 +1,5 @@
 import type { getQbitNetwork, qbitNetworks } from './networks'
-import type { Psbt } from './psbt'
+import type { Psbt, decodePsbt } from './psbt'
 import type { P2mrPsbtSignFn, P2mrSigningPlanRef } from './signing'
 
 /**
@@ -40,7 +40,7 @@ import type { P2mrPsbtSignFn, P2mrSigningPlanRef } from './signing'
  *   or `SIGHASH_SINGLE` without a matching output. An invalid
  *   `PSBT_IN_SIGHASH_TYPE` record is `INVALID_PSBT`.
  * - `INVALID_AMOUNT`: an amount or total outside `MoneyRange`, or outputs that
- *   exceed the inputs.
+ *   exceed the inputs during strict decoding, signing or finalization. See {@link decodePsbt}.
  * - `INVALID_INTEGER`: a transaction integer field outside its uint32 or uint8
  *   range.
  * - `SIGNING_FAILED`: a {@link P2mrPsbtSigningError}.

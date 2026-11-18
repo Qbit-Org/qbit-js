@@ -11,6 +11,7 @@ import {
   OP_NUMEQUAL,
   PQC_SIGNATURE_BYTES,
   SIGHASH_DEFAULT,
+  SIGHASH_ANYONECANPAY,
   PSBT_IN_WITNESS_UTXO,
   PSBT_IN_FINAL_SCRIPTWITNESS,
   PSBT_IN_PROPRIETARY,
@@ -182,11 +183,24 @@ export interface P2mrSigningPlanRef {
 export type P2mrPsbtOnSignedFn = (event: P2mrSigningPlanRef & { field: { key: Uint8Array; value: Uint8Array } }) => void
 
 /**
+ * Optional templates used to validate signing plans and select a P2MR witness.
+ * @category Signing
+ */
+export interface P2mrLeafOptions {
+  /**
+   * Allow single-key v1 leaves with unexecuted push-only data branches after the signature check.
+   * This applies to all inputs. Review every eligible data leaf first and use the same
+   * option for preflight, signing and finalization. A complete Core template always takes priority.
+   */
+  allowDataBranches?: boolean
+}
+
+/**
  * Options shared by {@link signP2mrPsbt} and {@link validateP2mrSigningPlans}.
  *
  * @category Signing
  */
-export interface P2mrSigningOptions {
+export interface P2mrSigningOptions extends P2mrLeafOptions {
   /**
    * Permit sighash types other than `SIGHASH_DEFAULT`. Off by default because
    * `NONE`, `SINGLE` and the `ANYONECANPAY` variants do not commit to every
@@ -195,6 +209,12 @@ export interface P2mrSigningOptions {
    * approval flow has shown the requested type to the user.
    */
   allowNonDefaultSighash?: boolean
+  /**
+   * Allow a known funding shortfall. Requires `allowNonDefaultSighash` and one or more
+   * signing plans, each explicitly using a valid `ANYONECANPAY` type. Finalization
+   * always requires the inputs to cover the outputs.
+   */
+  allowOutputsAboveInputs?: boolean
   /**
    * `false` skips the restricted-output check, matching qbit Core's regtest
    * `-p2mronly=0`. By default every output of the unsigned transaction must be
@@ -233,8 +253,8 @@ interface PreparedP2mrSigningPlan {
  * and refuses a transaction without outputs or with two inputs spending the
  * same outpoint, which Core's `CheckTransaction` rejects.
  *
- * Each plan's leaf must be a committed v1 `pk` or `multi_a` leaf containing
- * the key, with no signature yet for that (pubkey, leaf hash); its input must
+ * Each plan's leaf must be a committed v1 `pk` or `multi_a` leaf (or an opted-in single-key
+ * data leaf) containing the key, with no signature yet for that (pubkey, leaf hash); its input must
  * have no final scriptwitness (`0x08`) or non-empty final scriptSig (`0x07`);
  * and the sighash types must agree. The plans are then checked together
  * against the signatures already on each input: `finalizeP2mrPsbt`'s own leaf
@@ -253,8 +273,8 @@ interface PreparedP2mrSigningPlan {
  * sign a `multi_a` leaf in turn.
  *
  * Once every accepted plan is signed, finalize either uses each of the call's
- * signatures or, with no leaf complete yet, waits for more. Signatures added
- * later, or a plan the signer skips, can make it choose another leaf. Neither
+ * signatures or, with no leaf complete yet, waits for more. Changing the leaf options,
+ * adding signatures later or skipping a plan can make finalize choose a different leaf. Neither
  * this check nor finalize verifies signatures, so an invalid signature already
  * on the PSBT counts as a valid one: on a leaf finalize prefers, it gets the
  * plan refused before a key use is spent, but on the leaf finalize uses,
@@ -272,6 +292,8 @@ interface PreparedP2mrSigningPlan {
  * same outpoint, or a PSBT {@link decodePsbt} rejects.
  * @throws {QbitProtocolError} `INVALID_SCRIPT` for an output restricted-output
  * mode rejects, or `INVALID_SIGHASH` for a sighash rule.
+ * @throws {QbitProtocolError} `INVALID_AMOUNT` for a known shortfall unless both
+ * funding and non-default sighash opt-ins are enabled and all plans explicitly use ANYONECANPAY.
  * @throws {QbitProtocolError} `INVALID_BYTES` for a plan's `pubkey` or
  * `leafHash` that is not a 32-byte `Uint8Array`, or any other code
  * {@link decodePsbt} throws, such as `INVALID_AMOUNT`.
@@ -303,7 +325,7 @@ export function validateP2mrSigningPlans(
  * is refused, and the plans are validated as `validateP2mrSigningPlans` validates them
  * before the first signer call, so no key is used for a plan whose signature
  * `finalizeP2mrPsbt` would leave out of the witness it builds from the PSBT's
- * signatures and this call's (`validateP2mrSigningPlans` says what this does
+ * signatures and this call's using the same leaf options (`validateP2mrSigningPlans` says what this does
  * not cover); those failures throw a plain `QbitProtocolError` with nothing
  * signed. Both callbacks must be synchronous. Each signature is then checked
  * to be a `Uint8Array` (from any realm) of the expected length and stored as
@@ -483,6 +505,8 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
   )
 }
 
+/** Finalize with Core templates, including when used as a one-argument callback. @category Signing */
+export function finalizeP2mrPsbt(psbt: Psbt): Psbt
 /**
  * Finalize P2MR inputs: build the witness qbit Core's `FinalizePSBT` builds
  * (`src/psbt.cpp:697` and `src/script/sign.cpp:699-741` @ v1.0.0, `7ebcddb6`),
@@ -500,7 +524,8 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  * leaves whose control block commits to the witness UTXO's program, each v1
  * `pk(K)` or `multi_a` leaf with signatures for `threshold` of its keys can be
  * finalized; the one with the smallest witness is used, ties going to the
- * bytewise-smallest script. Its witness is `[signature, leaf_script,
+ * bytewise-smallest script. With `allowDataBranches` a signed single-key data
+ * leaf can be used when no Core template is complete. Its witness is `[signature, leaf_script,
  * control_block]` for `pk`, and for `multi_a` one item per key, last key
  * first, each a signature until `threshold` are placed and empty otherwise,
  * then the script and control block. The shortest committing control block of
@@ -521,6 +546,7 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  * will finalize it.
  *
  * @param psbt - The signed PSBT.
+ * @param options - Allow a data-bearing single-key leaf when no Core template can finalize.
  * @returns A new PSBT in which every input has a final scriptwitness; the
  * input PSBT is not modified.
  * @throws {QbitProtocolError} `INVALID_PSBT` if any input cannot be finalized,
@@ -548,7 +574,8 @@ function isThenable(value: unknown): value is PromiseLike<unknown> {
  *
  * @category Signing
  */
-export function finalizeP2mrPsbt(psbt: Psbt): Psbt {
+export function finalizeP2mrPsbt(psbt: Psbt, options?: P2mrLeafOptions): Psbt
+export function finalizeP2mrPsbt(psbt: Psbt, options: P2mrLeafOptions = {}): Psbt {
   const summary = decodePsbt(psbt)
   const result: Psbt = {
     global: psbt.global.map(cloneEntry),
@@ -562,7 +589,7 @@ export function finalizeP2mrPsbt(psbt: Psbt): Psbt {
       return
     }
     assertNoP2mrFinalScriptSig(map, index)
-    const finalWitness = p2mrFinalWitness(summary.inputs[index]!, index)
+    const finalWitness = p2mrFinalWitness(summary.inputs[index]!, index, options)
     // Core omits an empty final scriptSig (psbt.h:503-507), so it is dropped too.
     const kept = map.filter(entry => !isCoreNonFinalInputField(entry) && !isFinalScriptSig(entry))
     kept.push({ key: Uint8Array.of(PSBT_IN_FINAL_SCRIPTWITNESS), value: finalWitness })
@@ -586,7 +613,21 @@ function prepareP2mrSigningPlans(
   options: P2mrSigningOptions = {}
 ): PreparedP2mrSigning {
   const tx = psbtUnsignedTransaction(psbt)
-  const summary = decodePsbt(psbt)
+  // Approval and signing must use the same hash type, even if a caller supplies accessors.
+  const partialPlans =
+    options.allowOutputsAboveInputs === true && options.allowNonDefaultSighash === true
+      ? Array.from(keys, ({ inputIndex, pubkey, leafHash, hashType }) => ({
+          inputIndex,
+          pubkey,
+          leafHash,
+          hashType: hashType ?? SIGHASH_DEFAULT,
+        }))
+      : undefined
+  const allowOutputsAboveInputs =
+    partialPlans !== undefined &&
+    partialPlans.length > 0 &&
+    partialPlans.every(({ hashType }) => isValidP2mrSighashType(hashType) && (hashType & SIGHASH_ANYONECANPAY) !== 0)
+  const summary = decodePsbt(psbt, { allowOutputsAboveInputs })
   assertRestrictedOutputModeOutputs(tx.outputs, options.restrictedOutputMode)
   assertTransactionShape(tx)
   const spentOutputs = extractSpentOutputs(psbt)
@@ -595,7 +636,7 @@ function prepareP2mrSigningPlans(
   const inputHashTypes = new Map<number, number>()
   const plans: PreparedP2mrSigningPlan[] = []
 
-  for (const key of keys) {
+  for (const key of partialPlans ?? keys) {
     if (!Number.isInteger(key.inputIndex) || key.inputIndex < 0 || key.inputIndex >= tx.inputs.length) {
       throw new QbitProtocolError('INVALID_PSBT', 'signing key inputIndex out of range')
     }
@@ -665,7 +706,7 @@ function prepareP2mrSigningPlans(
         )
       }
     }
-    validateP2mrSigningPlan(input, key.inputIndex, pubkey, leafHash)
+    validateP2mrSigningPlan(input, key.inputIndex, pubkey, leafHash, options)
 
     plans.push({
       inputIndex: key.inputIndex,
@@ -683,7 +724,7 @@ function prepareP2mrSigningPlans(
     })
   }
 
-  assertFinalizeUsesP2mrPlans(summary, plans)
+  assertFinalizeUsesP2mrPlans(summary, plans, options)
   return { tx, spentOutputs, plans }
 }
 
@@ -698,7 +739,11 @@ function prepareP2mrSigningPlans(
  * reveals one leaf and Core signs only its best partial plan (sign.cpp:743-756);
  * plans on one leaf pass, so co-signers can complete a `multi_a` leaf in turn.
  */
-function assertFinalizeUsesP2mrPlans(summary: PsbtSummary, plans: readonly PreparedP2mrSigningPlan[]): void {
+function assertFinalizeUsesP2mrPlans(
+  summary: PsbtSummary,
+  plans: readonly PreparedP2mrSigningPlan[],
+  options: P2mrLeafOptions
+): void {
   const placeholder = new Uint8Array(PQC_SIGNATURE_BYTES)
   const planned = new Map<number, P2mrPsbtScriptSigField[]>()
   for (const { inputIndex, pubkey, leafHash, hashType } of plans) {
@@ -716,7 +761,7 @@ function assertFinalizeUsesP2mrPlans(summary: PsbtSummary, plans: readonly Prepa
     const input = summary.inputs[inputIndex]!
     const root = requireP2mrInputRoot(input, inputIndex)
     // The preflight refused a plan that repeats an existing signature, so no placeholder replaces one.
-    const { witness } = selectP2mrWitness(input, [...input.scriptSigs, ...sigs], root)
+    const { witness } = selectP2mrWitness(input, [...input.scriptSigs, ...sigs], root, options)
     if (witness === undefined) {
       // A witness reveals one leaf and a signature commits to its leaf hash, so plans on two leaves
       // that complete neither spend a key use that finalize can never place (sign.cpp:743-756).
@@ -746,7 +791,8 @@ function validateP2mrSigningPlan(
   input: PsbtInputSummary,
   inputIndex: number,
   pubkey: Uint8Array,
-  leafHash: Uint8Array
+  leafHash: Uint8Array,
+  options: P2mrLeafOptions
 ): void {
   const root = requireP2mrInputRoot(input, inputIndex)
   const leafHashHex = bytesToHex(leafHash)
@@ -757,14 +803,15 @@ function validateP2mrSigningPlan(
       `input ${inputIndex}: signing leaf hash does not match a PSBT leaf script`
     )
   }
-  const { leafVersion, script } = leaf
-  if (!p2mrSigningTemplateHasKey(leafVersion, script, pubkey)) {
-    if (p2mrSigningTemplate(leafVersion, script) === undefined) {
-      throw new QbitProtocolError(
-        'INVALID_PSBT',
-        `input ${inputIndex}: signing leaf is not a v1 pk/multi_a template containing this key`
-      )
-    }
+  const { leafVersion } = leaf
+  const template = signingTemplateForLeaf(leaf, options)
+  if (template === undefined) {
+    throw new QbitProtocolError(
+      'INVALID_PSBT',
+      `input ${inputIndex}: signing leaf is not a v1 pk/multi_a template containing this key`
+    )
+  }
+  if (!template.keys.some(key => bytesEqual(key, pubkey))) {
     throw new QbitProtocolError(
       'INVALID_PSBT',
       `input ${inputIndex}: signing pubkey is not used by the selected P2MR leaf script`
@@ -866,29 +913,14 @@ function p2mrSigningTemplate(leafVersion: number, script: Uint8Array): P2mrSigni
   return { keys, threshold }
 }
 
-/**
- * Whether qbit Core would sign `pubkey` in this leaf: the leaf is a v1 `pk(K)`
- * or Core-shaped `multi_a` (threshold <= 35) template, as accepted by
- * {@link p2mrSigningTemplate}, and `pubkey` is one of its keys.
- *
- * The signing preflight uses this instead of scanning the script for
- * `<pubkey> OP_CHECKSIGPQC|OP_CHECKSIGADD`, which also matched leaves that
- * Core never signs: a non-v1 leaf version (whose script consensus does not
- * execute), the key inside an OP_PUSHDATA payload, a non-minimal key push,
- * extra opcodes, or a threshold above 35. Core's wallet does not sign these
- * leaves: such a signature is never checked, can never verify, or sits in an
- * invalid or nonstandard witness.
- *
- * It also keeps OP_CODESEPARATOR out of signed leaves. The sighash is computed
- * with codeSeparatorPos 0xffffffff, as Core's signer hard-codes
- * (sign.cpp:118), while Core's interpreter commits to the position of the last
- * executed OP_CODESEPARATOR (src/script/interpreter.cpp:1170-1177), so a
- * signature checked after one would not verify. Neither template contains
- * OP_CODESEPARATOR, so the fixed position is right for every accepted leaf.
- */
-function p2mrSigningTemplateHasKey(leafVersion: number, script: Uint8Array, pubkey: Uint8Array): boolean {
-  const template = p2mrSigningTemplate(leafVersion, script)
-  return template !== undefined && template.keys.some(key => bytesEqual(key, pubkey))
+/** Leaf records in this group have already been classified by the PSBT decoder. */
+function signingTemplateForLeaf(leaf: P2mrInputLeaf, options: P2mrLeafOptions): P2mrSigningTemplate | undefined {
+  if (leaf.hasDataBranches) {
+    return options?.allowDataBranches === true
+      ? { keys: [leaf.script.subarray(1, 1 + P2MR_PROGRAM_BYTES)], threshold: 1 }
+      : undefined
+  }
+  return p2mrSigningTemplate(leaf.leafVersion, leaf.script)
 }
 
 /**
@@ -897,6 +929,7 @@ function p2mrSigningTemplateHasKey(leafVersion: number, script: Uint8Array, pubk
  */
 interface P2mrInputLeaf {
   script: Uint8Array
+  hasDataBranches: boolean
   leafVersion: number
   leafHash: Uint8Array
   controlBlocks: Uint8Array[]
@@ -915,7 +948,7 @@ function groupP2mrInputLeaves(
   wanted: ReadonlySet<string>
 ): Map<string, P2mrInputLeaf> {
   const leaves = new Map<string, P2mrInputLeaf>()
-  for (const { script, leafVersion, controlBlock } of leafScripts) {
+  for (const { script, leafVersion, controlBlock, hasDataBranches } of leafScripts) {
     const leafHash = p2mrLeafHash(leafVersion, script)
     const leafHashHex = bytesToHex(leafHash)
     if (!wanted.has(leafHashHex)) continue
@@ -923,7 +956,13 @@ function groupP2mrInputLeaves(
     if (existing !== undefined) {
       existing.controlBlocks.push(controlBlock)
     } else {
-      leaves.set(leafHashHex, { script, leafVersion, leafHash, controlBlocks: [controlBlock] })
+      leaves.set(leafHashHex, {
+        script,
+        leafVersion,
+        leafHash,
+        hasDataBranches: hasDataBranches === true,
+        controlBlocks: [controlBlock],
+      })
     }
   }
   return leaves
@@ -940,7 +979,7 @@ interface P2mrWitnessChoice {
 interface P2mrWitnessSelection {
   /** `undefined` when no committed leaf has enough signatures. */
   witness: P2mrWitnessChoice | undefined
-  /** Some v1 `pk` or `multi_a` leaf has a signature for one of its keys. */
+  /** Some eligible leaf has a signature for one of its keys. */
   signedLeaf: boolean
   /** Some such leaf also has a control block that commits to the root. */
   committedLeaf: boolean
@@ -956,7 +995,7 @@ interface P2mrWitnessSelection {
  *   leaf ({@link p2mrSigningTemplate}) with at least one signature gets a plan,
  *   and the plan is complete when signatures for `threshold` of its keys are
  *   present (`BuildP2MRScriptSigningPlan`, sign.cpp:503-590). Signatures and
- *   leaves for anything else are ignored;
+ *   leaves for anything else are ignored by default;
  * - of the complete plans, the one with the smallest witness wins, ties going
  *   to the bytewise-smallest script (sign.cpp:716-741). Its stack holds, from
  *   the last key to the first, a signature while fewer than `threshold` are
@@ -965,7 +1004,9 @@ interface P2mrWitnessSelection {
  *
  * `finalizeP2mrPsbt` runs this on the input's signatures, and the signing
  * preflight on those plus a placeholder for each planned signature, so a plan
- * passes only when the witness finalize will choose places it.
+ * passes only when the witness finalize will choose places it. When enabled,
+ * single-key data leaves are ranked separately and used only if no Core
+ * template is complete. Within that group the same size and tie rules apply.
  *
  * The stack-size and weight checks of `BuildP2MRScriptSigningPlan`
  * (sign.cpp:565-577) always pass for these templates: at most 999 keys and 35
@@ -977,7 +1018,8 @@ interface P2mrWitnessSelection {
 function selectP2mrWitness(
   input: PsbtInputSummary,
   sigs: readonly P2mrPsbtScriptSigField[],
-  root: Uint8Array
+  root: Uint8Array,
+  options: P2mrLeafOptions
 ): P2mrWitnessSelection {
   const sigsById = new Map<string, P2mrPsbtScriptSigField>()
   const signedLeafHashes = new Set<string>()
@@ -987,11 +1029,12 @@ function selectP2mrWitness(
     signedLeafHashes.add(leafHashHex)
   }
 
-  let best: (P2mrWitnessChoice & { size: number }) | undefined
+  let bestCore: (P2mrWitnessChoice & { size: number }) | undefined
+  let bestData: typeof bestCore
   let signedLeaf = false
   let committedLeaf = false
   for (const [leafHashHex, leaf] of groupP2mrInputLeaves(input.leafScripts, signedLeafHashes)) {
-    const template = p2mrSigningTemplate(leaf.leafVersion, leaf.script)
+    const template = signingTemplateForLeaf(leaf, options)
     if (template === undefined) continue
     const { keys, threshold } = template
     const stack: (P2mrPsbtScriptSigField | undefined)[] = []
@@ -1014,11 +1057,14 @@ function selectP2mrWitness(
     itemLengths.push(leaf.script.length, controlBlock.length)
     let size = compactSize(itemLengths.length).length
     for (const length of itemLengths) size += compactSize(length).length + length
+    const best = leaf.hasDataBranches ? bestData : bestCore
     if (best === undefined || size < best.size || (size === best.size && compareBytes(leaf.script, best.script) < 0)) {
-      best = { stack, script: leaf.script, controlBlock, size }
+      const choice = { stack, script: leaf.script, controlBlock, size }
+      if (leaf.hasDataBranches) bestData = choice
+      else bestCore = choice
     }
   }
-  return { witness: best, signedLeaf, committedLeaf }
+  return { witness: bestCore ?? bestData, signedLeaf, committedLeaf }
 }
 
 /**
@@ -1029,7 +1075,7 @@ function selectP2mrWitness(
  * the signature is not used. The witness is then the one
  * {@link selectP2mrWitness} chooses.
  */
-function p2mrFinalWitness(input: PsbtInputSummary, inputIndex: number): Uint8Array {
+function p2mrFinalWitness(input: PsbtInputSummary, inputIndex: number, options: P2mrLeafOptions): Uint8Array {
   const root = requireP2mrInputRoot(input, inputIndex)
   const requiredHashType = input.sighashType ?? SIGHASH_DEFAULT
   for (const sig of input.scriptSigs) {
@@ -1049,7 +1095,7 @@ function p2mrFinalWitness(input: PsbtInputSummary, inputIndex: number): Uint8Arr
     throw new QbitProtocolError('INVALID_PSBT', `input ${inputIndex}: no P2MR script signature to finalize`)
   }
 
-  const { witness, signedLeaf, committedLeaf } = selectP2mrWitness(input, input.scriptSigs, root)
+  const { witness, signedLeaf, committedLeaf } = selectP2mrWitness(input, input.scriptSigs, root, options)
   if (witness === undefined) {
     if (!signedLeaf) {
       throw new QbitProtocolError(

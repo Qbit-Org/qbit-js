@@ -318,6 +318,38 @@ describe('shape 4: a tree with several leaves present', () => {
     expect(finalWitness(finalized)).toEqual([hex(signatureOf(keyA)), hex(leafA), hex(controlA)])
   })
 
+  it('prefers a complete Core template even when a data leaf has a shorter witness', () => {
+    const v1 = P2MR_LEAF_VERSION_V1
+    const core = multiALeafScript(2, [keyA, keyB])
+    const data = Uint8Array.of(...leafC, 0, 0x63, 1, 0x42, 0x68)
+    const coreHash = p2mrLeafHash(v1, core)
+    const dataHash = p2mrLeafHash(v1, data)
+    const leaves = [
+      { script: data, controlBlock: buildControlBlock(v1, [coreHash]), proprietary: true },
+      { script: core, controlBlock: buildControlBlock(v1, [dataHash]) },
+    ]
+    const psbt = psbtFor(p2mrBranchHash(coreHash, dataHash), leaves, [
+      encodeP2mrPsbtScriptSigField(keyC, dataHash, signatureOf(keyC)),
+    ])
+    const dataOptions = { allowDataBranches: true }
+    expect(decodePsbt(psbt).inputs[0]!.leafScripts[0]!.hasDataBranches).toBe(true)
+    expect(finalWitness(finalizeP2mrPsbt(psbt, dataOptions)).slice(-2)).toEqual([
+      hex(data),
+      hex(leaves[0]!.controlBlock),
+    ])
+    const keys = [keyA, keyB].map(pubkey => ({ inputIndex: 0, pubkey, leafHash: coreHash }))
+    // One Core signer can wait for a co-signer with Core-only selection. Under
+    // the data policy it would be unused because the data leaf is already complete.
+    validateP2mrSigningPlans({ psbt, keys: keys.slice(0, 1) })
+    expect(() => validateP2mrSigningPlans({ psbt, keys: keys.slice(0, 1), ...dataOptions })).toThrow(/would not use/)
+    validateP2mrSigningPlans({ psbt, keys, ...dataOptions })
+    const signed = sign(psbt, keys)
+    const [coreOnly] = [signed].map(finalizeP2mrPsbt)
+    for (const finalized of [coreOnly!, finalizeP2mrPsbt(signed, dataOptions)]) {
+      expect(finalWitness(finalized).slice(-2)).toEqual([hex(core), hex(leaves[1]!.controlBlock)])
+    }
+  })
+
   it('prefers the complete leaf with the smaller witness', () => {
     // mr({pk(C), {pk(A), pk(B)}}): pk(C) has a 33-byte path, pk(A) a 65-byte one.
     const inner = p2mrBranchHash(hashA, hashB)

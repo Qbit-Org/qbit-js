@@ -8,6 +8,7 @@ import {
   P2MR_CONTROL_MAX_NODE_COUNT,
   OP_0,
   OP_1,
+  OP_16,
   OP_CHECKSIGPQC,
   OP_CHECKSIGADD,
   OP_NUMEQUAL,
@@ -23,6 +24,67 @@ import {
   assertBytes,
   assertByteLength,
 } from './bytes'
+
+/** `OP_IF` and `OP_ENDIF`, for {@link isUnexecutedPushBranches}. */
+const OP_IF = 0x63
+const OP_ENDIF = 0x68
+/** Consensus limit on the size of one script push (`MAX_SCRIPT_ELEMENT_SIZE`), checked for every push, executed or not. */
+const MAX_SCRIPT_ELEMENT_BYTES = 520
+
+/**
+ * Whether `script` is one or more branches `OP_0 OP_IF <push>* OP_ENDIF` and
+ * nothing else, where every push is complete and at most 520 bytes. `OP_0`
+ * leaves the branch unexecuted, so the branches change nothing the leaf
+ * before them computes: a leaf `pk(K)` followed by them is satisfied by the
+ * same single signature, which is how a data envelope is carried in a leaf.
+ *
+ * Only push opcodes (`0x00`-`0x4e`, `OP_1NEGATE`, `OP_1`-`OP_16`) are allowed
+ * inside, so no `OP_SUCCESSx` (which `0x50` is) can make the leaf spendable by
+ * anyone, and no push can run past the script or past 520 bytes, the two cases
+ * in which consensus rejects the whole script.
+ */
+function isUnexecutedPushBranches(script: Uint8Array): boolean {
+  let offset = 0
+  while (offset < script.length) {
+    if (script[offset] !== OP_0 || script[offset + 1] !== OP_IF) return false
+    offset += 2
+    for (;;) {
+      const opcode = script[offset]
+      if (opcode === undefined) return false
+      offset += 1
+      if (opcode === OP_ENDIF) break
+      let length: number
+      if (opcode <= 0x4b) {
+        length = opcode
+      } else if (opcode >= 0x4c && opcode <= 0x4e) {
+        const width = opcode === 0x4c ? 1 : opcode === 0x4d ? 2 : 4
+        if (offset + width > script.length) return false
+        length = 0
+        for (let i = width - 1; i >= 0; i--) length = length * 256 + script[offset + i]!
+        offset += width
+      } else if (opcode === 0x4f || (opcode >= OP_1 && opcode <= OP_16)) {
+        continue
+      } else {
+        return false
+      }
+      if (length > MAX_SCRIPT_ELEMENT_BYTES || offset + length > script.length) return false
+      offset += length
+    }
+  }
+  return script.length > 0
+}
+
+/** Recognize a v1 single-key leaf followed only by unexecuted push-only branches. */
+export function isDataBranchLeaf(leafVersion: number, script: Uint8Array): boolean {
+  const pkLength = 1 + P2MR_PROGRAM_BYTES + 1
+  return (
+    leafVersion === P2MR_LEAF_VERSION_V1 &&
+    script.length > pkLength &&
+    script[0] === P2MR_PROGRAM_BYTES &&
+    script[pkLength - 1] === OP_CHECKSIGPQC &&
+    isUnexecutedPushBranches(script.subarray(pkLength))
+  )
+}
 
 /**
  * Build a P2MR single-key (`pk`) leaf script: `PUSH32 <pk32> OP_CHECKSIGPQC`.

@@ -12,7 +12,7 @@ import {
   PSBT_QBIT_IN_P2MR_SCRIPT_SIG,
 } from './constants'
 import { copyBytes, concatBytes, assertBytes, assertByteLength } from './bytes'
-import { assertLeafVersion, assertP2mrControlBlockShape } from './scripts'
+import { assertLeafVersion, assertP2mrControlBlockShape, isDataBranchLeaf } from './scripts'
 import { isValidP2mrSighashType } from './sighash'
 
 /**
@@ -62,6 +62,8 @@ export interface P2mrPsbtLeafScriptField {
   controlBlock: Uint8Array
   /** The leaf script. */
   script: Uint8Array
+  /** Present on a v1 single-key leaf with unexecuted data branches. Show its data before approving a signature. */
+  hasDataBranches?: true
   /** The leaf version, the value's last byte. */
   leafVersion: number
 }
@@ -305,12 +307,15 @@ export function decodeP2mrPsbtLeafScriptField(key: Uint8Array, value: Uint8Array
   }
   const leafVersion = value[value.length - 1]!
   assertLeafVersion(leafVersion)
-  return {
+  const script = copyBytes(value, 0, -1)
+  const field: P2mrPsbtLeafScriptField = {
     type: 'p2mrLeafScript',
     controlBlock,
-    script: copyBytes(value, 0, -1),
+    script,
     leafVersion,
   }
+  if (isDataBranchLeaf(leafVersion, script)) field.hasDataBranches = true
+  return field
 }
 
 /**

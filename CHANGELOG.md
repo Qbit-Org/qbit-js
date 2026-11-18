@@ -6,6 +6,21 @@ version (see [RELEASING.md](RELEASING.md)). Versions follow SemVer. Below 1.0,
 RELEASING.md lets a patch carry although it can make existing code fail or
 behave differently, so read those entries before taking a patch.
 
+## 0.1.2 (2026-11-18)
+
+### @qbit-oss/protocol
+
+- A partial PSBT with known input values can be inspected with
+  `decodePsbt(psbt, { allowOutputsAboveInputs: true })`. If outputs exceed
+  inputs, the summary reports the missing amount as `shortfall`. Signing and
+  plan validation require both this opt-in and `allowNonDefaultSighash`, and
+  every plan must use `ANYONECANPAY`. Finalization still requires full funding.
+
+- Decoded v1 single-key leaves carrying unexecuted push-only branches expose
+  `hasDataBranches` for wallet approval screens. The signing, plan validation
+  and finalization helpers accept these leaves with `allowDataBranches: true`.
+  A complete Core-supported leaf keeps priority over a data-bearing leaf.
+
 ## 0.1.1 (2026-10-30)
 
 This release fixes bugs, most of them where the packages did not do what qbit
