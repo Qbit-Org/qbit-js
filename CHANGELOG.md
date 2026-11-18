@@ -10,6 +10,12 @@ behave differently, so read those entries before taking a patch.
 
 ### @qbit-oss/protocol
 
+- A partial PSBT with known input values can be inspected with
+  `decodePsbt(psbt, { allowOutputsAboveInputs: true })`. If outputs exceed
+  inputs, the summary reports the missing amount as `shortfall`. Signing and
+  plan validation require both this opt-in and `allowNonDefaultSighash`, and
+  every plan must use `ANYONECANPAY`. Finalization still requires full funding.
+
 - Decoded v1 single-key leaves carrying unexecuted push-only branches expose
   `hasDataBranches` for wallet approval screens. The signing, plan validation
   and finalization helpers accept these leaves with `allowDataBranches: true`.
