@@ -6,6 +6,15 @@ version (see [RELEASING.md](RELEASING.md)). Versions follow SemVer. Below 1.0,
 RELEASING.md lets a patch carry although it can make existing code fail or
 behave differently, so read those entries before taking a patch.
 
+## Unreleased
+
+### @qbit-oss/protocol
+
+- Decoded v1 single-key leaves carrying unexecuted push-only branches expose
+  `hasDataBranches` for wallet approval screens. The signing, plan validation
+  and finalization helpers accept these leaves with `allowDataBranches: true`.
+  A complete Core-supported leaf keeps priority over a data-bearing leaf.
+
 ## 0.1.1 (2026-10-30)
 
 This release fixes bugs, most of them where the packages did not do what qbit
