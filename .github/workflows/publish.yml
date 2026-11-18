@@ -71,7 +71,7 @@ jobs:
           echo "packageManager pnpm $expected, running pnpm $actual"
           test "$actual" = "$expected"
 
-      # Both packages release in lockstep from release/X.Y (RELEASING.md), so
+      # Both packages release in lockstep from one minor line (RELEASING.md), so
       # the tag must name their shared version, CHANGELOG.md must have its
       # section, and the tagged commit must be on that release branch. Runs
       # before the dependencies are installed.
@@ -105,6 +105,9 @@ jobs:
             exit 1
           fi
           branch="release/$(cut -d. -f1,2 <<<"$version")"
+          if [[ "$branch" == "release/0.1" ]]; then
+            branch="release/0.1.x"
+          fi
           if ! git merge-base --is-ancestor HEAD "refs/remotes/origin/$branch"; then
             echo "::error::$TAG is not on $branch; release tags are cut only on release branches"
             exit 1

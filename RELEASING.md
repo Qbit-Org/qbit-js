@@ -67,6 +67,10 @@ and published. Changes are recorded in [CHANGELOG.md](CHANGELOG.md).
 
 ## Branches
 
+The active branch for SDK 0.1 is `release/0.1.x`. Use this name wherever
+this guide refers to `release/X.Y` for that line. Other minor lines use
+`release/X.Y`.
+
 - `main` is the integration branch. Feature and fix PRs target `main`.
 - `release/X.Y` stabilizes one minor line. It is cut from `main` when the line
   starts stabilizing, at a commit whose `verify` check is green (nothing
